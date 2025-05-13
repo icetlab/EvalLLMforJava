@@ -1,0 +1,10 @@
+{
+  "id": "cfc34ca",
+  "repository": "apache/kafka",
+  "commit_hash": "cfc34cace523e6d9698a892b9ec7ba4af33d00ea",
+  "source_code": "core/src/main/scala/kafka/log/LogManager.scala core/src/main/scala/kafka/utils/Pool.scala",
+  "jmh_case": "CheckpointBench",
+  "unittest": "core/src/test/scala/unit/kafka/log/LogManagerTest.scala",
+  "persona": "You are a software performance assistant. Your task is to improve the performance of the source code.",
+  "description": "For brokers with replica counts > 4000, allocations from logsByDir become substantial. logsByDir is called often by LogManager.checkpointLogRecoveryOffsets and LogManager.checkpointLogStartOffsets. allocations in log start and recovery checkpoints are high. This can be reduced."
+}

@@ -1,0 +1,10 @@
+{
+  "id": "ab8c4f2",
+  "repository": "netty",
+  "commit_hash": "ab8c4f22c6bc11b7082fddfc6890fd02f30d5524",
+  "source_code": "codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+  "jmh_case": "HpackStaticTableBenchmark",
+  "unittest": "codec-http2/src/test/java/io/netty/handler/codec/http2/HpackEncoderTest.java codec-http2/src/test/java/io/netty/handler/codec/http2/HpackStaticTableTest.java",
+  "persona": "You are a software performance assistant. Your task is to improve the performance of the source code.",
+  "description": "HPACK static table is organized in a way that fields with the same name are sequential. Which means when doing sequential scan we can short-circuit scan on name mismatch."
+}

@@ -1,0 +1,10 @@
+{
+  "id": "aecd47b",
+  "repository": "apache/kafka",
+  "commit_hash": "aecd47b3bc691c3158463dab2c698a3ba9eb2f98",
+  "source_code": "clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+  "jmh_case": "Crc32CBenchmark",
+  "unittest": "clients/src/test/java/org/apache/kafka/common/utils/ChecksumsTest.java",
+  "persona": "You are a software performance assistant. Your task is to improve the performance of the source code.",
+  "description": "Java 9 has added a new Checksum method that can makes uses of ByteBuffer(s) (see Java 9's Checksum::update): Kafka already provides specific support for Java 9's Cr32C, hence it makes sense it's going to use the most optimized version of it for direct ByteBuffers as well (read-only or not), instead of performing a byte-per-byte computation. I'm aware that currently the client's Buffer pools aren't using direct ByteBuffer, but having full support for it can open the door to future interesting optimizations on it."
+}

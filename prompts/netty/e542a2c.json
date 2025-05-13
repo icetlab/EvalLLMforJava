@@ -1,0 +1,10 @@
+{
+  "id": "e542a2c",
+  "repository": "netty",
+  "commit_hash": "e542a2cf26774885a87014f8b47ea22aa8157da0",
+  "source_code": "buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java",
+  "jmh_case": "UnsafeByteBufBenchmark",
+  "unittest": "buffer/src/test/java/io/netty/buffer/AbstractByteBufTest.java buffer/src/test/java/io/netty/buffer/AbstractReferenceCountedByteBufTest.java",
+  "persona": "You are a software performance assistant. Your task is to improve the performance of the source code.",
+  "description": "At the moment whenever ensureAccessible() is called in our ByteBuf implementations (which is basically on each operation) we will do a volatile read. That per-se is not such a bad thing but the problem here is that it will also reduce the the optimizations that the compiler / jit can do. For example as these are volatile it can not eliminate multiple loads of it when inline the methods of ByteBuf which happens quite frequently because most of them a quite small and very hot. That is especially true for all the methods that act on primitives. It gets even worse as people often call a lot of these after each other in the same method or even use method chaining here. The idea of the change is basically just ue a non-volatile read for the ensureAccessible() check as its a best-effort implementation to detect acting on already released buffers anyway as even with a volatile read it could happen that the user will release it in another thread before we actual access the buffer after the reference check."
+}

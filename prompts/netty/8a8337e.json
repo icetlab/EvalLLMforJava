@@ -1,0 +1,10 @@
+{
+  "id": "8a8337e",
+  "repository": "netty",
+  "commit_hash": "8a8337eceb34ef4ff18c37b73f8c4d2bb1eb85ef",
+  "source_code": "common/src/main/java/io/netty/util/Recycler.java",
+  "jmh_case": "RecyclerBenchmark",
+  "unittest": "common/src/test/java/io/netty/util/RecyclerTest.java",
+  "persona": "You are a software performance assistant. Your task is to improve the performance of the source code.",
+  "description": "The Recycler implementation was changed to rely on an MPSC queue implementation for delivering released objects back to their originating thread local pool. Typically, the release will often happen from the same thread that claimed the object, so the overhead of having a thread-safe release goes to waste."
+}
