@@ -1,6 +1,8 @@
 import os
 import json
 
+persona = "You are a software performance assistant. Your task is to improve the performance of the source code."
+
 def read_file(file_path):
     with open(file_path, 'r') as file:
         return file.read()
@@ -15,7 +17,6 @@ def generate_prompts(json_data, repo_dir):
     unittest_code = read_file(unittest_path)
     benchmark_code = read_file(benchmark_path)
 
-    persona = json_data["persona"]
     description = json_data["description"]
 
     prompt1 = f"{persona}\nThe source file to be improved is:\n{source_code}\nThe unit test is:\n{unittest_code}"

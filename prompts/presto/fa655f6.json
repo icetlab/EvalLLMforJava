@@ -1,10 +1,9 @@
 {
   "id": "fa655f6",
-  "repository": "prestodb/presto",
+  "repository": "presto",
   "commit_hash": "fa655f6cc8a3d92634acd26d2359ceab4abebc0b",
   "source_code": "presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java",
-  "jmh_case": "BenchmarkMapSubscript.mapSubscript",
+  "jmh_case": "presto-main/src/test/java/com/facebook/presto/operator/scalar/BenchmarkMapSubscript.mapSubscript",
   "unittest": "presto-common/src/test/java/com/facebook/presto/common/block/TestSingleMapBlockWriter.java",
-  "persona": "You are a software performance assistant. Your task is to improve the performance of the source code.",
   "description": "When seeking a key represented in Slice format, the comparison of the key value and the value in the SingleMapBlock at the position of the hashCode was done through keyBlockNativeEquals.invokeExact(), which creates a new Slice object. When there are many map subscript operations in a query, many small Slice objects are created and this causes high GC overhead which may lead to reliability problems."
 }

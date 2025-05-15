@@ -3,8 +3,7 @@
   "repository": "netty",
   "commit_hash": "687308b4de56ff77a03d731d67153947497271f5",
   "source_code": "codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java",
-  "jmh_case": "QueryStringEncoderBenchmark",
+  "jmh_case": "microbench/src/main/java/io/netty/handler/codec/http/QueryStringEncoderBenchmark",
   "unittest": "codec-http/src/test/java/io/netty/handler/codec/http/QueryStringEncoderTest.java",
-  "persona": "You are a software performance assistant. Your task is to improve the performance of the source code.",
   "description": "Currently, characters are appended to the encoded string char-by-char even when no encoding is needed. We can instead separate out codepath that appends the entire string in one go for better `StringBuilder` allocation performance."
 }

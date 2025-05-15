@@ -1,10 +1,9 @@
 {
   "id": "eb24ed8",
-  "repository": "apache/kafka",
+  "repository": "kafka",
   "commit_hash": "eb24ed893aabef0db5d3dd7e1258312be716411f",
   "source_code": "clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
-  "jmh_case": "CompressedRecordBatchValidationBenchmark.measureValidateMessagesAndAssignOffsetsCompressed",
+  "jmh_case": "jmh-benchmarks/src/main/java/org/apache/kafka/jmh/record/CompressedRecordBatchValidationBenchmark.measureValidateMessagesAndAssignOffsetsCompressed",
   "unittest": "clients/src/test/java/org/apache/kafka/common/record",
-  "persona": "You are a software performance assistant. Your task is to improve the performance of the source code.",
   "description": "Zstd-jni 1.4.5-6 allocates large internal buffers inside of ZstdInputStream and ZstdOutputStream. This caused a lot of allocation and GC activity when creating and closing the streams. It also does not buffer the reads or writes. This causes inefficiency when DefaultRecord.writeTo() does a series of small single bytes reads using various ByteUtils methods. The JNI is more efficient if the writes of uncompressed data were flushed in large pieces rather than for each byte. This is due to the the expense of context switching between the Java code and the native code. This is also the case when reading as well"
 }

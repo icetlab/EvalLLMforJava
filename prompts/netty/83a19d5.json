@@ -3,8 +3,7 @@
   "repository": "netty",
   "commit_hash": "83a19d565064ee36998eb94f946e5a4264001065",
   "source_code": "buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java common/src/main/java/io/netty/util/AbstractReferenceCounted.java",
-  "jmh_case": "AbstractReferenceCountedByteBufBenchmark",
+  "jmh_case": "microbench/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBufBenchmark",
   "unittest": "buffer/src/test/java/io/netty/buffer/AbstractReferenceCountedByteBufTest.java",
-  "persona": "You are a software performance assistant. Your task is to improve the performance of the source code.",
   "description": "Highly retained and released objects have contention on their ref count.  Currently, the ref count is updated using compareAndSet with care to make sure the count doesn't overflow, double free, or revive the object. Profiling has shown that a non trivial (~1%) of CPU time on gRPC latency benchmarks is from the ref count updating."
 }

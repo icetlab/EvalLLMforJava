@@ -1,10 +1,9 @@
 {
   "id": "9bb2f78",
-  "repository": "apache/kafka",
+  "repository": "kafka",
   "commit_hash": "9bb2f78d53a44c245775d082c1f1bf8ba6955bae",
   "source_code": "connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
-  "jmh_case": "ReplaceFieldBenchmark",
+  "jmh_case": "jmh-benchmarks/src/main/java/org/apache/kafka/jmh/connect/ReplaceFieldBenchmark",
   "unittest": "connect/transforms/src/test/java/org/apache/kafka/connect/transforms/ReplaceFieldTest.java",
-  "persona": "You are a software performance assistant. Your task is to improve the performance of the source code.",
   "description": "The ReplaceField SMT can be configured with a list of fields that are to be included or excluded during every record transformation. Currently, it uses an ArrayList for these fields which causes the filter operations to be of O(N) complexity resulting in poor performance when configured with a large number of include/exclude fields."
 }

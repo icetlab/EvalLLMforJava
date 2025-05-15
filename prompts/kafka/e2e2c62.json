@@ -1,10 +1,9 @@
 {
   "id": "e2e2c62",
-  "repository": "apache/kafka",
+  "repository": "kafka",
   "commit_hash": "e2e2c628b9f2368ca253cc00b99f85899afc9cc7",
   "source_code": "core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
-  "jmh_case": "AclAuthorizerBenchmark",
+  "jmh_case": "jmh-benchmarks/src/main/java/org/apache/kafka/jmh/acl/AclAuthorizerBenchmark",
   "unittest": "connect/mirror/src/test/java/org/apache/kafka/connect/mirror/MirrorSourceConnectorTest.java",
-  "persona": "You are a software performance assistant. Your task is to improve the performance of the source code.",
   "description": "A previous change (90bbeed) in `matchingAcls` to remove `filterKeys` in favor of filtering inside `flatMap` caused a performance regression in cases where there are large number of topics, prefix ACLs and TreeMap.from/to filtering is ineffective. In such cases, we rely on string comparisons to exclude entries from the ACL cache that are not relevant. only search the inner collections that are required to find a match (instead of searching all of them)"
 }
