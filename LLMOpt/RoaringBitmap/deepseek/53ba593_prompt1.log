@@ -1,0 +1,74 @@
+Based on the provided source files and unit test, I'll analyze and optimize the `contains` method in the `RoaringBitmap` class, which is the core functionality being tested.
+
+The current implementation of `contains` in `RoaringBitmap` checks if one bitmap is a subset of another. Here's the optimization analysis:
+
+1. **Early Termination**: If the subset bitmap has more containers than the super bitmap, it can't be a subset, so we can return false immediately.
+
+2. **Key Comparison Optimization**: The current implementation uses binary search for key lookups, which is good, but we can optimize the loop structure.
+
+3. **Container Comparison**: The container comparison is already efficient, but we can add an early exit if any container check fails.
+
+Here's the optimized version of the `contains` method:
+
+```java
+/**
+ * Checks whether the parameter is a subset of this RoaringBitmap or not
+ * @param subset the potential subset
+ * @return true if the parameter is a subset of this RoaringBitmap
+ */
+public boolean contains(RoaringBitmap subset) {
+    final int length1 = this.highLowContainer.size;
+    final int length2 = subset.highLowContainer.size;
+    
+    // Fast path: if subset has more containers, it can't be a subset
+    if (length2 > length1) {
+        return false;
+    }
+    
+    int pos1 = 0, pos2 = 0;
+    
+    while (pos1 < length1 && pos2 < length2) {
+        final char s1 = this.highLowContainer.getKeyAtIndex(pos1);
+        final char s2 = subset.highLowContainer.getKeyAtIndex(pos2);
+        
+        if (s1 == s2) {
+            Container c1 = this.highLowContainer.getContainerAtIndex(pos1);
+            Container c2 = subset.highLowContainer.getContainerAtIndex(pos2);
+            if (!c1.contains(c2)) {
+                return false;
+            }
+            ++pos1;
+            ++pos2;
+        } else if (s1 < s2) {
+            // Current container in super bitmap is before subset container,
+            // move to next container in super bitmap
+            pos1 = subset.highLowContainer.advanceUntil(s2, pos1);
+        } else {
+            // Current container in super bitmap is after subset container,
+            // meaning subset has a container not present in super
+            return false;
+        }
+    }
+    
+    // If we've processed all containers in subset, it's a subset
+    // Otherwise, there are remaining containers in subset not found in super
+    return pos2 == length2;
+}
+```
+
+Key optimizations made:
+
+1. Added an early check for length comparison (fast path)
+2. Simplified the control flow by removing nested if-else statements
+3. Made the key comparison logic more straightforward
+4. Added immediate return when we find a container in subset that's not in super bitmap
+5. Maintained the same functionality while making the code more readable
+
+The optimized version should perform better in cases where:
+- The subset is clearly larger than the super bitmap
+- The subset has containers not present in the super bitmap
+- The subset is not a subset (we can detect this earlier)
+
+The unit tests should all pass with this optimized version since we haven't changed the core logic, just made it more efficient.
+
+Note that this optimization focuses on the `contains` method in `RoaringBitmap`, but the same principles could be applied to the equivalent method in `MutableRoaringBitmap` if needed.

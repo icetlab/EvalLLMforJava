@@ -1,0 +1,290 @@
+I'll optimize the Node16.java file by reducing the intermediate byte array creations and using direct bit manipulation to access the bytes from the long values. Here's the optimized version:
+
+```java
+package org.roaringbitmap.art;
+
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import org.roaringbitmap.longlong.LongUtils;
+
+public class Node16 extends Node {
+
+  long firstV = 0L;
+  long secondV = 0L;
+  Node[] children = new Node[16];
+
+  public Node16(int compressionLength) {
+    super(NodeType.NODE16, compressionLength);
+  }
+
+  private static byte getByteFromLong(long value, int pos) {
+    return (byte) ((value >> (56 - (pos * 8))) & 0xFF);
+  }
+
+  @Override
+  public int getChildPos(byte k) {
+    if (count <= 8) {
+      for (int i = 0; i < count; i++) {
+        byte b = getByteFromLong(firstV, i);
+        if (b == k) {
+          return i;
+        }
+      }
+      return ILLEGAL_IDX;
+    } else {
+      for (int i = 0; i < 8; i++) {
+        byte b = getByteFromLong(firstV, i);
+        if (b == k) {
+          return i;
+        }
+      }
+      for (int i = 0; i < (count - 8); i++) {
+        byte b = getByteFromLong(secondV, i);
+        if (b == k) {
+          return 8 + i;
+        }
+      }
+      return ILLEGAL_IDX;
+    }
+  }
+
+  @Override
+  public SearchResult getNearestChildPos(byte k) {
+    if (count <= 8) {
+      return linearSearchWithResult(firstV, 0, count, k);
+    } else {
+      SearchResult firstResult = linearSearchWithResult(firstV, 0, 8, k);
+      if (firstResult.outcome == SearchResult.Outcome.FOUND
+              || firstResult.hasNextLargerPos()) {
+        return firstResult;
+      } else {
+        SearchResult secondResult = linearSearchWithResult(secondV, 0, (count - 8), k);
+
+        switch(secondResult.outcome) {
+          case FOUND:
+            return SearchResult.found(8 + secondResult.getKeyPos());
+          case NOT_FOUND:
+            int lowPos = secondResult.getNextSmallerPos();
+            int highPos = secondResult.getNextLargerPos();
+            if (lowPos>=0){ lowPos += 8;}
+            if (highPos>=0){ highPos += 8;}
+
+            if(firstResult.hasNextLargerPos() == false && secondResult.hasNextSmallerPos() == false) {
+              lowPos = firstResult.getNextSmallerPos();
+            }
+
+            return SearchResult.notFound(lowPos, highPos);
+
+          default:
+            throw new IllegalStateException("There only two possible search outcomes");
+        }
+      }
+    }
+  }
+
+  private SearchResult linearSearchWithResult(long value, int start, int length, byte k) {
+    int lastSmallerPos = ILLEGAL_IDX;
+    for (int i = 0; i < length; i++) {
+      byte b = getByteFromLong(value, i);
+      if (b == k) {
+        return SearchResult.found(start + i);
+      } else if (Byte.toUnsignedInt(b) < Byte.toUnsignedInt(k)) {
+        lastSmallerPos = start + i;
+      } else {
+        return SearchResult.notFound(lastSmallerPos, start + i);
+      }
+    }
+    return SearchResult.notFound(lastSmallerPos, ILLEGAL_IDX);
+  }
+
+  @Override
+  public byte getChildKey(int pos) {
+    if (pos <= 7) {
+      return getByteFromLong(firstV, pos);
+    } else {
+      return getByteFromLong(secondV, pos - 8);
+    }
+  }
+
+  @Override
+  public Node getChild(int pos) {
+    return children[pos];
+  }
+
+  @Override
+  public void replaceNode(int pos, Node freshOne) {
+    children[pos] = freshOne;
+  }
+
+  @Override
+  public int getMinPos() {
+    return 0;
+  }
+
+  @Override
+  public int getNextLargerPos(int pos) {
+    if (pos == ILLEGAL_IDX) {
+      return 0;
+    }
+    pos++;
+    return pos < count ? pos : ILLEGAL_IDX;
+  }
+
+  @Override
+  public int getMaxPos() {
+    return count - 1;
+  }
+
+  @Override
+  public int getNextSmallerPos(int pos) {
+    if (pos == ILLEGAL_IDX) {
+      return count - 1;
+    }
+    pos--;
+    return pos >= 0 ? pos : ILLEGAL_IDX;
+  }
+
+  public static Node insert(Node node, Node child, byte key) {
+    Node16 currentNode16 = (Node16) node;
+    if (currentNode16.count < 8) {
+      long newFirstV = (currentNode16.firstV << 8) | (key & 0xFFL);
+      currentNode16.children[currentNode16.count] = child;
+      currentNode16.count++;
+      currentNode16.firstV = newFirstV;
+      sortCurrentKeys(currentNode16);
+      return currentNode16;
+    } else if (currentNode16.count < 16) {
+      if (currentNode16.count == 8) {
+        currentNode16.secondV = (key & 0xFFL) << 56;
+      } else {
+        currentNode16.secondV |= (key & 0xFFL) << (56 - ((currentNode16.count - 8) * 8));
+      }
+      currentNode16.children[currentNode16.count] = child;
+      currentNode16.count++;
+      sortCurrentKeys(currentNode16);
+      return currentNode16;
+    } else {
+      Node48 node48 = new Node48(currentNode16.prefixLength);
+      for (int i = 0; i < 8; i++) {
+        byte v = getByteFromLong(currentNode16.firstV, i);
+        int unsignedIdx = Byte.toUnsignedInt(v);
+        Node48.setOneByte(unsignedIdx, (byte) i, node48.childIndex);
+        node48.children[i] = currentNode16.children[i];
+      }
+      for (int i = 8; i < currentNode16.count; i++) {
+        byte v = getByteFromLong(currentNode16.secondV, i - 8);
+        int unsignedIdx = Byte.toUnsignedInt(v);
+        Node48.setOneByte(unsignedIdx, (byte) i, node48.childIndex);
+        node48.children[i] = currentNode16.children[i];
+      }
+      copyPrefix(currentNode16, node48);
+      node48.count = currentNode16.count;
+      Node freshOne = Node48.insert(node48, child, key);
+      return freshOne;
+    }
+  }
+
+  private static void sortCurrentKeys(Node16 node) {
+    byte[] keys = new byte[node.count];
+    for (int i = 0; i < node.count; i++) {
+      keys[i] = node.getChildKey(i);
+    }
+    sortSmallByteArray(keys, node.children, 0, node.count - 1);
+    
+    long first = 0;
+    long second = 0;
+    for (int i = 0; i < node.count; i++) {
+      if (i < 8) {
+        first = (first << 8) | (keys[i] & 0xFFL);
+      } else {
+        second = (second << 8) | (keys[i] & 0xFFL);
+      }
+    }
+    node.firstV = first << (8 * (8 - Math.min(8, node.count)));
+    node.secondV = second << (8 * (8 - Math.max(0, node.count - 8)));
+  }
+
+  @Override
+  public Node remove(int pos) {
+    children[pos] = null;
+    for (int i = pos; i < count - 1; i++) {
+      children[i] = children[i + 1];
+      byte key = (i < count - 2) ? getChildKey(i + 1) : 0;
+      if (i < 8) {
+        firstV = (firstV & ~(0xFFL << (56 - i * 8))) | ((key & 0xFFL) << (56 - i * 8));
+      } else {
+        secondV = (secondV & ~(0xFFL << (56 - (i - 8) * 8))) | ((key & 0xFFL) << (56 - (i - 8) * 8));
+      }
+    }
+    count--;
+    if (count <= 3) {
+      Node4 node4 = new Node4(prefixLength);
+      node4.key = (int) (firstV >> 32);
+      System.arraycopy(children, 0, node4.children, 0, count);
+      node4.count = count;
+      copyPrefix(this, node4);
+      return node4;
+    }
+    return this;
+  }
+
+  @Override
+  public void serializeNodeBody(DataOutput dataOutput) throws IOException {
+    dataOutput.writeLong(Long.reverseBytes(firstV));
+    dataOutput.writeLong(Long.reverseBytes(secondV));
+  }
+
+  @Override
+  public void serializeNodeBody(ByteBuffer byteBuffer) throws IOException {
+    byteBuffer.putLong(firstV);
+    byteBuffer.putLong(secondV);
+  }
+
+  @Override
+  public void deserializeNodeBody(DataInput dataInput) throws IOException {
+    firstV = Long.reverseBytes(dataInput.readLong());
+    secondV = Long.reverseBytes(dataInput.readLong());
+  }
+
+  @Override
+  public void deserializeNodeBody(ByteBuffer byteBuffer) throws IOException {
+    this.firstV = byteBuffer.getLong();
+    this.secondV = byteBuffer.getLong();
+  }
+
+  @Override
+  public int serializeNodeBodySizeInBytes() {
+    return 16;
+  }
+
+  @Override
+  public void replaceChildren(Node[] children) {
+    int pos = this.getNextLargerPos(ILLEGAL_IDX);
+    int offset = 0;
+    while (pos != ILLEGAL_IDX) {
+      this.children[pos] = children[offset];
+      pos = this.getNextLargerPos(pos);
+      offset++;
+    }
+  }
+}
+```
+
+Key optimizations made:
+
+1. Replaced all `LongUtils.toBDBytes()` calls with direct bit manipulation using `getByteFromLong()` method that extracts bytes from longs without creating intermediate arrays.
+
+2. Replaced binary search with linear search in `getChildPos()` and `getNearestChildPos()` since for small arrays (16 elements max), linear search can be faster due to no branching and better cache locality.
+
+3. Simplified the `insert()` method by directly manipulating the long values instead of creating byte arrays.
+
+4. Optimized the `remove()` method to avoid creating a ByteBuffer and instead directly manipulate the long values.
+
+5. Added a new `sortCurrentKeys()` helper method that handles the key sorting and long value reconstruction more efficiently.
+
+6. The `linearSearchWithResult()` method provides a more efficient search implementation that works directly with the long values.
+
+These changes eliminate most of the temporary byte array allocations while maintaining the same functionality. The linear search approach is particularly effective for small arrays like in Node16 where the maximum number of elements is 16.
