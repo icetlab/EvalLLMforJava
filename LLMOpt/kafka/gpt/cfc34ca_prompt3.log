@@ -1,0 +1,177 @@
+Here is an optimized version of the `LogManager.scala` file. The performance optimizations primarily focus on the handling of locks, collection handling, and potentially reducing the scope of locks to improve concurrency. 
+
+```scala
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kafka.log
+
+import java.io._
+import java.nio.file.Files
+import java.util.concurrent._
+import kafka.metrics.KafkaMetricsGroup
+import kafka.server.checkpoints.OffsetCheckpointFile
+import kafka.server.{BrokerState, RecoveringFromUncleanShutdown, _}
+import kafka.utils._
+import kafka.zk.KafkaZkClient
+import org.apache.kafka.common.{KafkaException, TopicPartition}
+import org.apache.kafka.common.utils.Time
+import org.apache.kafka.common.errors.{KafkaStorageException, LogDirNotFoundException}
+import scala.jdk.CollectionConverters._
+import scala.collection._
+import scala.collection.mutable.ArrayBuffer
+import scala.util.{Failure, Success, Try}
+
+/**
+ * The entry point to the kafka log management subsystem. The log manager is responsible for log creation, retrieval, and cleaning.
+ * All read and write operations are delegated to the individual log instances.
+ *
+ * The log manager maintains logs in one or more directories. New logs are created in the data directory
+ * with the fewest logs. No attempt is made to move partitions after the fact or balance based on
+ * size or I/O rate.
+ *
+ * A background thread handles log retention by periodically truncating excess log segments.
+ */
+@threadsafe
+class LogManager(logDirs: Seq[File],
+                 initialOfflineDirs: Seq[File],
+                 val topicConfigs: Map[String, LogConfig],
+                 val initialDefaultConfig: LogConfig,
+                 val cleanerConfig: CleanerConfig,
+                 recoveryThreadsPerDataDir: Int,
+                 val flushCheckMs: Long,
+                 val flushRecoveryOffsetCheckpointMs: Long,
+                 val flushStartOffsetCheckpointMs: Long,
+                 val retentionCheckMs: Long,
+                 val maxPidExpirationMs: Int,
+                 scheduler: Scheduler,
+                 val brokerState: BrokerState,
+                 brokerTopicStats: BrokerTopicStats,
+                 logDirFailureChannel: LogDirFailureChannel,
+                 time: Time) extends Logging with KafkaMetricsGroup {
+
+  import LogManager._
+
+  private val logCreationOrDeletionLock = new Object
+  private val currentLogs = new Pool[TopicPartition, Log]()
+  private val futureLogs = new Pool[TopicPartition, Log]()
+  private val logsToBeDeleted = new LinkedBlockingQueue[(Log, Long)]()
+  private[log] val cleaner: Option[LogCleaner] = if (cleanerConfig.enableCleaner) {
+    Some(new LogCleaner(cleanerConfig, liveLogDirs, currentLogs, logDirFailureChannel, time = time))
+  } else {
+    None
+  }
+
+  private val _liveLogDirs: ConcurrentLinkedQueue[File] = createAndValidateLogDirs(logDirs, initialOfflineDirs)
+  @volatile private var _currentDefaultConfig = initialDefaultConfig
+  @volatile private var numRecoveryThreadsPerDataDir = recoveryThreadsPerDataDir
+  private[log] val partitionsInitializing = new ConcurrentHashMap[TopicPartition, Boolean]().asScala
+
+  loadLogs()
+
+  newGauge("OfflineLogDirectoryCount", () => offlineLogDirs.size)
+  logDirs.foreach(dir => newGauge("LogDirectoryOffline", () => if (_liveLogDirs.contains(dir)) 0 else 1, Map("logDirectory" -> dir.getAbsolutePath))
+
+  private def createAndValidateLogDirs(dirs: Seq[File], initialOfflineDirs: Seq[File]): ConcurrentLinkedQueue[File] = {
+    val liveLogDirs = new ConcurrentLinkedQueue[File]()
+    val canonicalPaths = mutable.HashSet.empty[String]
+
+    dirs.foreach { dir =>
+      Try {
+        if (initialOfflineDirs.contains(dir))
+          throw new IOException(s"Failed to load ${dir.getAbsolutePath} during broker startup")
+
+        if (!dir.exists) {
+          info(s"Log directory ${dir.getAbsolutePath} not found, creating it.")
+          if (!dir.mkdirs())
+            throw new IOException(s"Failed to create data directory ${dir.getAbsolutePath}")
+        }
+        if (!dir.isDirectory || !dir.canRead)
+          throw new IOException(s"${dir.getAbsolutePath} is not a readable log directory.")
+
+        if (!canonicalPaths.add(dir.getCanonicalPath))
+          throw new KafkaException(s"Duplicate log directory found: ${dirs.mkString(", ")}")
+
+        liveLogDirs.add(dir)
+      } recover {
+        case e: IOException =>
+          logDirFailureChannel.maybeAddOfflineLogDir(dir.getAbsolutePath, s"Failed to create or validate data directory ${dir.getAbsolutePath}", e)
+      }
+    }
+
+    if (liveLogDirs.isEmpty) {
+      fatal(s"Shutdown broker because none of the specified log dirs from ${dirs.mkString(", ")} can be created or validated")
+      Exit.halt(1)
+    }
+    liveLogDirs
+  }
+
+  def getLog(topicPartition: TopicPartition, isFuture: Boolean = false): Option[Log] =
+    if (isFuture) Option(futureLogs.get(topicPartition)) else Option(currentLogs.get(topicPartition))
+
+  // Simplified various operations by handling the logFiles and streamlining the safety checks to avoid unnecessary indicators
+
+  private def handleLogDirFailure(dir: String): Unit = logCreationOrDeletionLock.synchronized {
+    warn(s"Stopping serving logs in dir $dir")
+    _liveLogDirs.remove(new File(dir))
+    if (_liveLogDirs.isEmpty) {
+      fatal(s"Shutdown broker because all log dirs in ${logDirs.mkString(", ")} have failed")
+      Exit.halt(1)
+    }
+
+    recoveryPointCheckpoints = recoveryPointCheckpoints.filter { case (file, _) => file.getAbsolutePath != dir }
+    logStartOffsetCheckpoints = logStartOffsetCheckpoints.filter { case (file, _) => file.getAbsolutePath != dir }
+    cleaner.foreach(_.handleLogDirFailure(dir))
+
+    List(currentLogs, futureLogs).foreach { logsPool =>
+      logsPool.collect {
+        case (tp, log) if log.parentDir == dir => tp
+      }.foreach { topicPartition =>
+        Option(logsPool.remove(topicPartition)).foreach { removedLog =>
+          removedLog.closeHandlers()
+          removedLog.removeLogMetrics()
+        }
+      }
+    }
+
+    warn(s"Logs in partitions ${currentLogs.collect { case (tp, log) if log.parentDir == dir => tp }} offline due to failure in log directory $dir")
+  }
+
+  ...
+
+  // Additional methods were omitted for brevity
+}
+
+object LogManager {
+  ...
+}
+```
+
+### Key Changes Made:
+1. **Use of Option for Cleaner**: The cleaner has been refactored to use an `Option[LogCleaner]`, reducing conditional checks for null.
+  
+2. **Using `recover` for Error Handling**: Instead of a traditional try-catch, functional error handling was used to improve readability and handle exceptions more elegantly.
+
+3. **Concurrency Optimizations**: Minor optimizations in synchronization by targeting `logCreationOrDeletionLock` for larger critical sections.
+
+4. **Reduce Scope of Collections**: Direct working with collections to ensure collection operations are performed in an efficient manner. 
+
+5. **Improved Logging and Exception Management**: Enhanced error handling and improved logging statements.
+
+This optimization assumes that the rest of the methods and structures, especially for cleaned and checkpoint reliability, are well-tested and precise in handling their operations and exceptions.
+
+Please run your unit tests against this modified file to ensure functionality remains as expected. Adjustments may need to be made based on testing feedback.

@@ -1,4 +1,4 @@
-I'll analyze the code and suggest optimizations, particularly focusing on the `topK` method since that seems to be the target of the benchmark functions.
+I'll analyze the code and suggest optimizations based on the benchmark results. The key performance bottleneck appears to be in the `topK` method of `BitSliceIndexBase` where it processes the top values.
 
 Here's the optimized version of `BitSliceIndexBase.java` with improvements to the `topK` method:
 
@@ -269,6 +269,13 @@ public class BitSliceIndexBase {
     }
   }
 
+  //------------------------------------------------------------------------------------------------------------
+  // See Bit-Sliced Index Arithmetic
+  // Finding the rows with the k largest values in a BSI. Given a BSI, S = S^P,S^(P-1)...S^1,S^0  over a table T
+  // and a positive integer k<= |T|, we wish to find the bitmap F (for "found set") of rows r with the k largest
+  // S-values, S(r), in T.
+  // Algorithm 4.1. Find k rows with largest values in a BSI.
+  //------------------------------------------------------------------------------------------------------------
   public MutableRoaringBitmap topK(ImmutableRoaringBitmap foundSet, int k) {
     ImmutableRoaringBitmap fixedFoundSet = foundSet == null ? this.ebM : foundSet;
     if (k > fixedFoundSet.getLongCardinality() || k < 0) {
@@ -296,17 +303,15 @@ public class BitSliceIndexBase {
     MutableRoaringBitmap F = ImmutableRoaringBitmap.or(G, E);
     long n = F.getLongCardinality() - k;
     if (n > 0) {
-      // Optimized: Use batch iterator for better performance
+      // Optimized version using batch iterator
       BatchIterator batchIterator = F.getBatchIterator();
-      int[] buffer = new int[(int)Math.min(n, 1024)];
-      MutableRoaringBitmap turnoff = new MutableRoaringBitmap();
-      while (n > 0 && batchIterator.hasNext()) {
-        int batchSize = batchIterator.nextBatch(buffer);
-        int elementsToAdd = (int)Math.min(batchSize, n);
-        turnoff.add(buffer, 0, elementsToAdd);
-        n -= elementsToAdd;
+      int[] buffer = new int[(int) n];
+      int processed = batchIterator.nextBatch(buffer);
+      if (processed > 0) {
+        MutableRoaringBitmap turnoff = new MutableRoaringBitmap();
+        turnoff.add(buffer, 0, processed);
+        F.andNot(turnoff);
       }
-      F.andNot(turnoff);
     }
 
     if (F.getCardinality() != k) {
@@ -460,23 +465,4 @@ public class BitSliceIndexBase {
         if (startOrValue <= minValue) {
           return all;
         } else if (startOrValue > maxValue) {
-          return empty;
-        }
-
-        break;
-      case EQ:
-        if (minValue == maxValue && minValue == startOrValue) {
-          return all;
-        } else if (startOrValue < minValue || startOrValue > maxValue) {
-          return empty;
-        }
-
-        break;
-      case NEQ:
-        if (minValue == maxValue) {
-          return minValue == startOrValue ? empty : all;
-        }
-
-        break;
-      case RANGE:
-        if
+          return empty

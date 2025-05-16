@@ -1,0 +1,178 @@
+Here's an optimized version of the `CompressionType.java` file. The changes primarily focus on reducing redundancy, improving error handling, and slightly enhancing readability while preserving the functionality.
+
+```java
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.kafka.common.record;
+
+import org.apache.kafka.common.KafkaException;
+import org.apache.kafka.common.utils.ByteBufferInputStream;
+import org.apache.kafka.common.utils.ByteBufferOutputStream;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
+import java.nio.ByteBuffer;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
+
+/**
+ * The compression type to use
+ */
+public enum CompressionType {
+    NONE(0, "none", 1.0f) {
+        @Override
+        public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {
+            return buffer;
+        }
+
+        @Override
+        public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {
+            return new ByteBufferInputStream(buffer);
+        }
+    },
+
+    GZIP(1, "gzip", 1.0f) {
+        @Override
+        public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {
+            return createBufferedOutputStream(new GZIPOutputStream(buffer, 8 * 1024), 16 * 1024);
+        }
+
+        @Override
+        public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {
+            return createBufferedInputStream(new GZIPInputStream(new ByteBufferInputStream(buffer), 8 * 1024), 16 * 1024);
+        }
+    },
+
+    SNAPPY(2, "snappy", 1.0f) {
+        @Override
+        public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {
+            return invokeConstructor(SnappyConstructors.OUTPUT, buffer);
+        }
+
+        @Override
+        public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {
+            return invokeConstructor(SnappyConstructors.INPUT, new ByteBufferInputStream(buffer));
+        }
+    },
+
+    LZ4(3, "lz4", 1.0f) {
+        @Override
+        public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {
+            return new KafkaLZ4BlockOutputStream(buffer, messageVersion == RecordBatch.MAGIC_VALUE_V0);
+        }
+
+        @Override
+        public InputStream wrapForInput(ByteBuffer inputBuffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {
+            return new KafkaLZ4BlockInputStream(inputBuffer, decompressionBufferSupplier, messageVersion == RecordBatch.MAGIC_VALUE_V0);
+        }
+    },
+
+    ZSTD(4, "zstd", 1.0f) {
+        @Override
+        public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {
+            return invokeConstructor(ZstdConstructors.OUTPUT, buffer);
+        }
+
+        @Override
+        public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {
+            return invokeConstructor(ZstdConstructors.INPUT, new ByteBufferInputStream(buffer));
+        }
+    };
+
+    public final int id;
+    public final String name;
+    public final float rate;
+
+    CompressionType(int id, String name, float rate) {
+        this.id = id;
+        this.name = name;
+        this.rate = rate;
+    }
+
+    public abstract OutputStream wrapForOutput(ByteBufferOutputStream bufferStream, byte messageVersion);
+    public abstract InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier);
+
+    public static CompressionType forId(int id) {
+        for (CompressionType type : values()) {
+            if (type.id == id) {
+                return type;
+            }
+        }
+        throw new IllegalArgumentException("Unknown compression type id: " + id);
+    }
+
+    public static CompressionType forName(String name) {
+        for (CompressionType type : values()) {
+            if (type.name.equals(name)) {
+                return type;
+            }
+        }
+        throw new IllegalArgumentException("Unknown compression name: " + name);
+    }
+
+    private static OutputStream createBufferedOutputStream(OutputStream stream, int bufferSize) {
+        return new BufferedOutputStream(stream, bufferSize);
+    }
+
+    private static InputStream createBufferedInputStream(InputStream stream, int bufferSize) {
+        return new BufferedInputStream(stream, bufferSize);
+    }
+
+    private static <T> T invokeConstructor(MethodHandle methodHandle, Object parameter) {
+        try {
+            return (T) methodHandle.invoke(parameter);
+        } catch (Throwable e) {
+            throw new KafkaException(e);
+        }
+    }
+
+    private static class SnappyConstructors {
+        static final MethodHandle INPUT = findConstructor("org.xerial.snappy.SnappyInputStream",
+                MethodType.methodType(void.class, InputStream.class));
+        static final MethodHandle OUTPUT = findConstructor("org.xerial.snappy.SnappyOutputStream",
+                MethodType.methodType(void.class, OutputStream.class));
+    }
+
+    private static class ZstdConstructors {
+        static final MethodHandle INPUT = findConstructor("com.github.luben.zstd.ZstdInputStream",
+            MethodType.methodType(void.class, InputStream.class));
+        static final MethodHandle OUTPUT = findConstructor("com.github.luben.zstd.ZstdOutputStream",
+            MethodType.methodType(void.class, OutputStream.class));
+    }
+
+    private static MethodHandle findConstructor(String className, MethodType methodType) {
+        try {
+            return MethodHandles.publicLookup().findConstructor(Class.forName(className), methodType);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+    }
+}
+```
+
+### Changes Made:
+1. **Buffered Streams:** Extracted the creation of buffered streams into utility methods (`createBufferedOutputStream` and `createBufferedInputStream`) to avoid repetitive code.
+2. **Constructor Invocation:** Created a generic `invokeConstructor` method to handle invoking method handles and exception handling in one place.
+3. **Switch to Loop in forId and forName:** Replaced the `switch` case with a loop over `values()` for better maintainability and performance (as there might be less branching in modern JVMs).
+4. **Minor Readability Improvements:** Cleaned up comments and whitespace for improved readability.
+
+The optimizations should maintain the functionality while improving the overall maintainability and potentially performance, especially regarding the invocation of method handles and creating buffered streams. The unit tests would still be valid as there are no changes to the public API or behavior.

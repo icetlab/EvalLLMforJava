@@ -1,0 +1,2151 @@
+The performance issue is:
+zipWithIndex causes tuple allocation in hot path
+---------
+The source files are:
+../kafka/core/src/main/scala/kafka/log/LogValidator.scala
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package kafka.log
+
+import java.nio.ByteBuffer
+
+import kafka.api.{ApiVersion, KAFKA_2_1_IV0}
+import kafka.common.{LongRef, RecordValidationException}
+import kafka.message.{CompressionCodec, NoCompressionCodec, ZStdCompressionCodec}
+import kafka.server.BrokerTopicStats
+import kafka.utils.Logging
+import org.apache.kafka.common.errors.{CorruptRecordException, InvalidTimestampException, UnsupportedCompressionTypeException, UnsupportedForMessageFormatException}
+import org.apache.kafka.common.record.{AbstractRecords, BufferSupplier, CompressionType, MemoryRecords, Record, RecordBatch, RecordConversionStats, TimestampType}
+import org.apache.kafka.common.InvalidRecordException
+import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.protocol.Errors
+import org.apache.kafka.common.requests.ProduceResponse.RecordError
+import org.apache.kafka.common.utils.Time
+
+import scala.collection.{Seq, mutable}
+import scala.jdk.CollectionConverters._
+import scala.collection.mutable.ArrayBuffer
+
+/**
+ * The source of an append to the log. This is used when determining required validations.
+ */
+private[kafka] sealed trait AppendOrigin
+private[kafka] object AppendOrigin {
+
+  /**
+   * The log append came through replication from the leader. This typically implies minimal validation.
+   * Particularly, we do not decompress record batches in order to validate records individually.
+   */
+  case object Replication extends AppendOrigin
+
+  /**
+   * The log append came from either the group coordinator or the transaction coordinator. We validate
+   * producer epochs for normal log entries (specifically offset commits from the group coordinator) and
+   * we validate coordinate end transaction markers from the transaction coordinator.
+   */
+  case object Coordinator extends AppendOrigin
+
+  /**
+   * The log append came from the client, which implies full validation.
+   */
+  case object Client extends AppendOrigin
+}
+
+private[log] object LogValidator extends Logging {
+
+  /**
+   * Update the offsets for this message set and do further validation on messages including:
+   * 1. Messages for compacted topics must have keys
+   * 2. When magic value >= 1, inner messages of a compressed message set must have monotonically increasing offsets
+   *    starting from 0.
+   * 3. When magic value >= 1, validate and maybe overwrite timestamps of messages.
+   * 4. Declared count of records in DefaultRecordBatch must match number of valid records contained therein.
+   *
+   * This method will convert messages as necessary to the topic's configured message format version. If no format
+   * conversion or value overwriting is required for messages, this method will perform in-place operations to
+   * avoid expensive re-compression.
+   *
+   * Returns a ValidationAndOffsetAssignResult containing the validated message set, maximum timestamp, the offset
+   * of the shallow message with the max timestamp and a boolean indicating whether the message sizes may have changed.
+   */
+  private[log] def validateMessagesAndAssignOffsets(records: MemoryRecords,
+                                                    topicPartition: TopicPartition,
+                                                    offsetCounter: LongRef,
+                                                    time: Time,
+                                                    now: Long,
+                                                    sourceCodec: CompressionCodec,
+                                                    targetCodec: CompressionCodec,
+                                                    compactedTopic: Boolean,
+                                                    magic: Byte,
+                                                    timestampType: TimestampType,
+                                                    timestampDiffMaxMs: Long,
+                                                    partitionLeaderEpoch: Int,
+                                                    origin: AppendOrigin,
+                                                    interBrokerProtocolVersion: ApiVersion,
+                                                    brokerTopicStats: BrokerTopicStats): ValidationAndOffsetAssignResult = {
+    if (sourceCodec == NoCompressionCodec && targetCodec == NoCompressionCodec) {
+      // check the magic value
+      if (!records.hasMatchingMagic(magic))
+        convertAndAssignOffsetsNonCompressed(records, topicPartition, offsetCounter, compactedTopic, time, now, timestampType,
+          timestampDiffMaxMs, magic, partitionLeaderEpoch, origin, brokerTopicStats)
+      else
+        // Do in-place validation, offset assignment and maybe set timestamp
+        assignOffsetsNonCompressed(records, topicPartition, offsetCounter, now, compactedTopic, timestampType, timestampDiffMaxMs,
+          partitionLeaderEpoch, origin, magic, brokerTopicStats)
+    } else {
+      validateMessagesAndAssignOffsetsCompressed(records, topicPartition, offsetCounter, time, now, sourceCodec, targetCodec, compactedTopic,
+        magic, timestampType, timestampDiffMaxMs, partitionLeaderEpoch, origin, interBrokerProtocolVersion, brokerTopicStats)
+    }
+  }
+
+  private def getFirstBatchAndMaybeValidateNoMoreBatches(records: MemoryRecords, sourceCodec: CompressionCodec): RecordBatch = {
+    val batchIterator = records.batches.iterator
+
+    if (!batchIterator.hasNext) {
+      throw new InvalidRecordException("Record batch has no batches at all")
+    }
+
+    val batch = batchIterator.next()
+
+    // if the format is v2 and beyond, or if the messages are compressed, we should check there's only one batch.
+    if (batch.magic() >= RecordBatch.MAGIC_VALUE_V2 || sourceCodec != NoCompressionCodec) {
+      if (batchIterator.hasNext) {
+        throw new InvalidRecordException("Compressed outer record has more than one batch")
+      }
+    }
+
+    batch
+  }
+
+  private def validateBatch(topicPartition: TopicPartition,
+                            firstBatch: RecordBatch,
+                            batch: RecordBatch,
+                            origin: AppendOrigin,
+                            toMagic: Byte,
+                            brokerTopicStats: BrokerTopicStats): Unit = {
+    // batch magic byte should have the same magic as the first batch
+    if (firstBatch.magic() != batch.magic()) {
+      brokerTopicStats.allTopicsStats.invalidMagicNumberRecordsPerSec.mark()
+      throw new InvalidRecordException(s"Batch magic ${batch.magic()} is not the same as the first batch'es magic byte ${firstBatch.magic()} in topic partition $topicPartition.")
+    }
+
+    if (origin == AppendOrigin.Client) {
+      if (batch.magic >= RecordBatch.MAGIC_VALUE_V2) {
+        val countFromOffsets = batch.lastOffset - batch.baseOffset + 1
+        if (countFromOffsets <= 0) {
+          brokerTopicStats.allTopicsStats.invalidOffsetOrSequenceRecordsPerSec.mark()
+          throw new InvalidRecordException(s"Batch has an invalid offset range: [${batch.baseOffset}, ${batch.lastOffset}] in topic partition $topicPartition.")
+        }
+
+        // v2 and above messages always have a non-null count
+        val count = batch.countOrNull
+        if (count <= 0) {
+          brokerTopicStats.allTopicsStats.invalidOffsetOrSequenceRecordsPerSec.mark()
+          throw new InvalidRecordException(s"Invalid reported count for record batch: $count in topic partition $topicPartition.")
+        }
+
+        if (countFromOffsets != batch.countOrNull) {
+          brokerTopicStats.allTopicsStats.invalidOffsetOrSequenceRecordsPerSec.mark()
+          throw new InvalidRecordException(s"Inconsistent batch offset range [${batch.baseOffset}, ${batch.lastOffset}] " +
+            s"and count of records $count in topic partition $topicPartition.")
+        }
+      }
+
+      if (batch.isControlBatch) {
+        brokerTopicStats.allTopicsStats.invalidOffsetOrSequenceRecordsPerSec.mark()
+        throw new InvalidRecordException(s"Clients are not allowed to write control records in topic partition $topicPartition.")
+      }
+
+      if (batch.hasProducerId && batch.baseSequence < 0) {
+        brokerTopicStats.allTopicsStats.invalidOffsetOrSequenceRecordsPerSec.mark()
+        throw new InvalidRecordException(s"Invalid sequence number ${batch.baseSequence} in record batch " +
+          s"with producerId ${batch.producerId} in topic partition $topicPartition.")
+      }
+    }
+
+    if (batch.isTransactional && toMagic < RecordBatch.MAGIC_VALUE_V2)
+      throw new UnsupportedForMessageFormatException(s"Transactional records cannot be used with magic version $toMagic")
+
+    if (batch.hasProducerId && toMagic < RecordBatch.MAGIC_VALUE_V2)
+      throw new UnsupportedForMessageFormatException(s"Idempotent records cannot be used with magic version $toMagic")
+  }
+
+  private def validateRecord(batch: RecordBatch, topicPartition: TopicPartition, record: Record, batchIndex: Int, now: Long,
+                             timestampType: TimestampType, timestampDiffMaxMs: Long, compactedTopic: Boolean,
+                             brokerTopicStats: BrokerTopicStats): Option[ApiRecordError] = {
+    if (!record.hasMagic(batch.magic)) {
+      brokerTopicStats.allTopicsStats.invalidMagicNumberRecordsPerSec.mark()
+      return Some(ApiRecordError(Errors.INVALID_RECORD, new RecordError(batchIndex,
+        s"Record $record's magic does not match outer magic ${batch.magic} in topic partition $topicPartition.")))
+    }
+
+    // verify the record-level CRC only if this is one of the deep entries of a compressed message
+    // set for magic v0 and v1. For non-compressed messages, there is no inner record for magic v0 and v1,
+    // so we depend on the batch-level CRC check in Log.analyzeAndValidateRecords(). For magic v2 and above,
+    // there is no record-level CRC to check.
+    if (batch.magic <= RecordBatch.MAGIC_VALUE_V1 && batch.isCompressed) {
+      try {
+        record.ensureValid()
+      } catch {
+        case e: InvalidRecordException =>
+          brokerTopicStats.allTopicsStats.invalidMessageCrcRecordsPerSec.mark()
+          throw new CorruptRecordException(e.getMessage + s" in topic partition $topicPartition.")
+      }
+    }
+
+    validateKey(record, batchIndex, topicPartition, compactedTopic, brokerTopicStats).orElse {
+      validateTimestamp(batch, record, batchIndex, now, timestampType, timestampDiffMaxMs)
+    }
+  }
+
+  private def convertAndAssignOffsetsNonCompressed(records: MemoryRecords,
+                                                   topicPartition: TopicPartition,
+                                                   offsetCounter: LongRef,
+                                                   compactedTopic: Boolean,
+                                                   time: Time,
+                                                   now: Long,
+                                                   timestampType: TimestampType,
+                                                   timestampDiffMaxMs: Long,
+                                                   toMagicValue: Byte,
+                                                   partitionLeaderEpoch: Int,
+                                                   origin: AppendOrigin,
+                                                   brokerTopicStats: BrokerTopicStats): ValidationAndOffsetAssignResult = {
+    val startNanos = time.nanoseconds
+    val sizeInBytesAfterConversion = AbstractRecords.estimateSizeInBytes(toMagicValue, offsetCounter.value,
+      CompressionType.NONE, records.records)
+
+    val (producerId, producerEpoch, sequence, isTransactional) = {
+      val first = records.batches.asScala.head
+      (first.producerId, first.producerEpoch, first.baseSequence, first.isTransactional)
+    }
+
+    val newBuffer = ByteBuffer.allocate(sizeInBytesAfterConversion)
+    val builder = MemoryRecords.builder(newBuffer, toMagicValue, CompressionType.NONE, timestampType,
+      offsetCounter.value, now, producerId, producerEpoch, sequence, isTransactional, partitionLeaderEpoch)
+
+    val firstBatch = getFirstBatchAndMaybeValidateNoMoreBatches(records, NoCompressionCodec)
+
+    for (batch <- records.batches.asScala) {
+      validateBatch(topicPartition, firstBatch, batch, origin, toMagicValue, brokerTopicStats)
+
+      val recordErrors = new ArrayBuffer[ApiRecordError](0)
+      for ((record, batchIndex) <- batch.asScala.view.zipWithIndex) {
+        validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,
+          timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)
+        // we fail the batch if any record fails, so we stop appending if any record fails
+        if (recordErrors.isEmpty)
+          builder.appendWithOffset(offsetCounter.getAndIncrement(), record)
+      }
+
+      processRecordErrors(recordErrors)
+    }
+
+    val convertedRecords = builder.build()
+
+    val info = builder.info
+    val recordConversionStats = new RecordConversionStats(builder.uncompressedBytesWritten,
+      builder.numRecords, time.nanoseconds - startNanos)
+    ValidationAndOffsetAssignResult(
+      validatedRecords = convertedRecords,
+      maxTimestamp = info.maxTimestamp,
+      shallowOffsetOfMaxTimestamp = info.shallowOffsetOfMaxTimestamp,
+      messageSizeMaybeChanged = true,
+      recordConversionStats = recordConversionStats)
+  }
+
+  def assignOffsetsNonCompressed(records: MemoryRecords,
+                                         topicPartition: TopicPartition,
+                                         offsetCounter: LongRef,
+                                         now: Long,
+                                         compactedTopic: Boolean,
+                                         timestampType: TimestampType,
+                                         timestampDiffMaxMs: Long,
+                                         partitionLeaderEpoch: Int,
+                                         origin: AppendOrigin,
+                                         magic: Byte,
+                                         brokerTopicStats: BrokerTopicStats): ValidationAndOffsetAssignResult = {
+    var maxTimestamp = RecordBatch.NO_TIMESTAMP
+    var offsetOfMaxTimestamp = -1L
+    val initialOffset = offsetCounter.value
+
+    val firstBatch = getFirstBatchAndMaybeValidateNoMoreBatches(records, NoCompressionCodec)
+
+    for (batch <- records.batches.asScala) {
+      validateBatch(topicPartition, firstBatch, batch, origin, magic, brokerTopicStats)
+
+      var maxBatchTimestamp = RecordBatch.NO_TIMESTAMP
+      var offsetOfMaxBatchTimestamp = -1L
+
+      val recordErrors = new ArrayBuffer[ApiRecordError](0)
+      for ((record, batchIndex) <- batch.asScala.view.zipWithIndex) {
+        validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,
+          timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)
+
+        val offset = offsetCounter.getAndIncrement()
+        if (batch.magic > RecordBatch.MAGIC_VALUE_V0 && record.timestamp > maxBatchTimestamp) {
+          maxBatchTimestamp = record.timestamp
+          offsetOfMaxBatchTimestamp = offset
+        }
+      }
+
+      processRecordErrors(recordErrors)
+
+      if (batch.magic > RecordBatch.MAGIC_VALUE_V0 && maxBatchTimestamp > maxTimestamp) {
+        maxTimestamp = maxBatchTimestamp
+        offsetOfMaxTimestamp = offsetOfMaxBatchTimestamp
+      }
+
+      batch.setLastOffset(offsetCounter.value - 1)
+
+      if (batch.magic >= RecordBatch.MAGIC_VALUE_V2)
+        batch.setPartitionLeaderEpoch(partitionLeaderEpoch)
+
+      if (batch.magic > RecordBatch.MAGIC_VALUE_V0) {
+        if (timestampType == TimestampType.LOG_APPEND_TIME)
+          batch.setMaxTimestamp(TimestampType.LOG_APPEND_TIME, now)
+        else
+          batch.setMaxTimestamp(timestampType, maxBatchTimestamp)
+      }
+    }
+
+    if (timestampType == TimestampType.LOG_APPEND_TIME) {
+      maxTimestamp = now
+      if (magic >= RecordBatch.MAGIC_VALUE_V2)
+        offsetOfMaxTimestamp = offsetCounter.value - 1
+      else
+        offsetOfMaxTimestamp = initialOffset
+    }
+
+    ValidationAndOffsetAssignResult(
+      validatedRecords = records,
+      maxTimestamp = maxTimestamp,
+      shallowOffsetOfMaxTimestamp = offsetOfMaxTimestamp,
+      messageSizeMaybeChanged = false,
+      recordConversionStats = RecordConversionStats.EMPTY)
+  }
+
+  /**
+   * We cannot do in place assignment in one of the following situations:
+   * 1. Source and target compression codec are different
+   * 2. When the target magic is not equal to batches' magic, meaning format conversion is needed.
+   * 3. When the target magic is equal to V0, meaning absolute offsets need to be re-assigned.
+   */
+  def validateMessagesAndAssignOffsetsCompressed(records: MemoryRecords,
+                                                 topicPartition: TopicPartition,
+                                                 offsetCounter: LongRef,
+                                                 time: Time,
+                                                 now: Long,
+                                                 sourceCodec: CompressionCodec,
+                                                 targetCodec: CompressionCodec,
+                                                 compactedTopic: Boolean,
+                                                 toMagic: Byte,
+                                                 timestampType: TimestampType,
+                                                 timestampDiffMaxMs: Long,
+                                                 partitionLeaderEpoch: Int,
+                                                 origin: AppendOrigin,
+                                                 interBrokerProtocolVersion: ApiVersion,
+                                                 brokerTopicStats: BrokerTopicStats): ValidationAndOffsetAssignResult = {
+
+    if (targetCodec == ZStdCompressionCodec && interBrokerProtocolVersion < KAFKA_2_1_IV0)
+      throw new UnsupportedCompressionTypeException("Produce requests to inter.broker.protocol.version < 2.1 broker " +
+        "are not allowed to use ZStandard compression")
+
+    def validateRecordCompression(batchIndex: Int, record: Record): Option[ApiRecordError] = {
+      if (sourceCodec != NoCompressionCodec && record.isCompressed)
+        Some(ApiRecordError(Errors.INVALID_RECORD, new RecordError(batchIndex,
+          s"Compressed outer record should not have an inner record with a compression attribute set: $record")))
+      else None
+    }
+
+    // No in place assignment situation 1
+    var inPlaceAssignment = sourceCodec == targetCodec
+
+    var maxTimestamp = RecordBatch.NO_TIMESTAMP
+    val expectedInnerOffset = new LongRef(0)
+    val validatedRecords = new mutable.ArrayBuffer[Record]
+
+    var uncompressedSizeInBytes = 0
+
+    // Assume there's only one batch with compressed memory records; otherwise, return InvalidRecordException
+    // One exception though is that with format smaller than v2, if sourceCodec is noCompression, then each batch is actually
+    // a single record so we'd need to special handle it by creating a single wrapper batch that includes all the records
+    val firstBatch = getFirstBatchAndMaybeValidateNoMoreBatches(records, sourceCodec)
+
+    // No in place assignment situation 2 and 3: we only need to check for the first batch because:
+    //  1. For most cases (compressed records, v2, for example), there's only one batch anyways.
+    //  2. For cases that there may be multiple batches, all batches' magic should be the same.
+    if (firstBatch.magic != toMagic || toMagic == RecordBatch.MAGIC_VALUE_V0)
+      inPlaceAssignment = false
+
+    // Do not compress control records unless they are written compressed
+    if (sourceCodec == NoCompressionCodec && firstBatch.isControlBatch)
+      inPlaceAssignment = true
+
+    val batches = records.batches.asScala
+    for (batch <- batches) {
+      validateBatch(topicPartition, firstBatch, batch, origin, toMagic, brokerTopicStats)
+      uncompressedSizeInBytes += AbstractRecords.recordBatchHeaderSizeInBytes(toMagic, batch.compressionType())
+
+      // if we are on version 2 and beyond, and we know we are going for in place assignment,
+      // then we can optimize the iterator to skip key / value / headers since they would not be used at all
+      val recordsIterator = if (inPlaceAssignment && firstBatch.magic >= RecordBatch.MAGIC_VALUE_V2)
+        batch.skipKeyValueIterator(BufferSupplier.NO_CACHING)
+      else
+        batch.streamingIterator(BufferSupplier.NO_CACHING)
+
+      try {
+        val recordErrors = new ArrayBuffer[ApiRecordError](0)
+        var batchIndex = 0
+        for (record <- recordsIterator.asScala) {
+          val expectedOffset = expectedInnerOffset.getAndIncrement()
+          val recordError = validateRecordCompression(batchIndex, record).orElse {
+            validateRecord(batch, topicPartition, record, batchIndex, now,
+              timestampType, timestampDiffMaxMs, compactedTopic, brokerTopicStats).orElse {
+              if (batch.magic > RecordBatch.MAGIC_VALUE_V0 && toMagic > RecordBatch.MAGIC_VALUE_V0) {
+                if (record.timestamp > maxTimestamp)
+                  maxTimestamp = record.timestamp
+
+                // Some older clients do not implement the V1 internal offsets correctly.
+                // Historically the broker handled this by rewriting the batches rather
+                // than rejecting the request. We must continue this handling here to avoid
+                // breaking these clients.
+                if (record.offset != expectedOffset)
+                  inPlaceAssignment = false
+              }
+              None
+            }
+          }
+
+          recordError match {
+            case Some(e) => recordErrors += e
+            case None =>
+              uncompressedSizeInBytes += record.sizeInBytes()
+              validatedRecords += record
+          }
+         batchIndex += 1
+        }
+        processRecordErrors(recordErrors)
+      } finally {
+        recordsIterator.close()
+      }
+    }
+
+    if (!inPlaceAssignment) {
+      val (producerId, producerEpoch, sequence, isTransactional) = {
+        // note that we only reassign offsets for requests coming straight from a producer. For records with magic V2,
+        // there should be exactly one RecordBatch per request, so the following is all we need to do. For Records
+        // with older magic versions, there will never be a producer id, etc.
+        val first = records.batches.asScala.head
+        (first.producerId, first.producerEpoch, first.baseSequence, first.isTransactional)
+      }
+      buildRecordsAndAssignOffsets(toMagic, offsetCounter, time, timestampType, CompressionType.forId(targetCodec.codec),
+        now, validatedRecords, producerId, producerEpoch, sequence, isTransactional, partitionLeaderEpoch,
+        uncompressedSizeInBytes)
+    } else {
+      // we can update the batch only and write the compressed payload as is;
+      // again we assume only one record batch within the compressed set
+      val batch = records.batches.iterator.next()
+      val lastOffset = offsetCounter.addAndGet(validatedRecords.size) - 1
+
+      batch.setLastOffset(lastOffset)
+
+      if (timestampType == TimestampType.LOG_APPEND_TIME)
+        maxTimestamp = now
+
+      if (toMagic >= RecordBatch.MAGIC_VALUE_V1)
+        batch.setMaxTimestamp(timestampType, maxTimestamp)
+
+      if (toMagic >= RecordBatch.MAGIC_VALUE_V2)
+        batch.setPartitionLeaderEpoch(partitionLeaderEpoch)
+
+      val recordConversionStats = new RecordConversionStats(uncompressedSizeInBytes, 0, 0)
+      ValidationAndOffsetAssignResult(validatedRecords = records,
+        maxTimestamp = maxTimestamp,
+        shallowOffsetOfMaxTimestamp = lastOffset,
+        messageSizeMaybeChanged = false,
+        recordConversionStats = recordConversionStats)
+    }
+  }
+
+  private def buildRecordsAndAssignOffsets(magic: Byte,
+                                           offsetCounter: LongRef,
+                                           time: Time,
+                                           timestampType: TimestampType,
+                                           compressionType: CompressionType,
+                                           logAppendTime: Long,
+                                           validatedRecords: Seq[Record],
+                                           producerId: Long,
+                                           producerEpoch: Short,
+                                           baseSequence: Int,
+                                           isTransactional: Boolean,
+                                           partitionLeaderEpoch: Int,
+                                           uncompressedSizeInBytes: Int): ValidationAndOffsetAssignResult = {
+    val startNanos = time.nanoseconds
+    val estimatedSize = AbstractRecords.estimateSizeInBytes(magic, offsetCounter.value, compressionType,
+      validatedRecords.asJava)
+    val buffer = ByteBuffer.allocate(estimatedSize)
+    val builder = MemoryRecords.builder(buffer, magic, compressionType, timestampType, offsetCounter.value,
+      logAppendTime, producerId, producerEpoch, baseSequence, isTransactional, partitionLeaderEpoch)
+
+    validatedRecords.foreach { record =>
+      builder.appendWithOffset(offsetCounter.getAndIncrement(), record)
+    }
+
+    val records = builder.build()
+
+    val info = builder.info
+
+    // This is not strictly correct, it represents the number of records where in-place assignment is not possible
+    // instead of the number of records that were converted. It will over-count cases where the source and target are
+    // message format V0 or if the inner offsets are not consecutive. This is OK since the impact is the same: we have
+    // to rebuild the records (including recompression if enabled).
+    val conversionCount = builder.numRecords
+    val recordConversionStats = new RecordConversionStats(uncompressedSizeInBytes + builder.uncompressedBytesWritten,
+      conversionCount, time.nanoseconds - startNanos)
+
+    ValidationAndOffsetAssignResult(
+      validatedRecords = records,
+      maxTimestamp = info.maxTimestamp,
+      shallowOffsetOfMaxTimestamp = info.shallowOffsetOfMaxTimestamp,
+      messageSizeMaybeChanged = true,
+      recordConversionStats = recordConversionStats)
+  }
+
+  private def validateKey(record: Record,
+                          batchIndex: Int,
+                          topicPartition: TopicPartition,
+                          compactedTopic: Boolean,
+                          brokerTopicStats: BrokerTopicStats): Option[ApiRecordError] = {
+    if (compactedTopic && !record.hasKey) {
+      brokerTopicStats.allTopicsStats.noKeyCompactedTopicRecordsPerSec.mark()
+      Some(ApiRecordError(Errors.INVALID_RECORD, new RecordError(batchIndex,
+        s"Compacted topic cannot accept message without key in topic partition $topicPartition.")))
+    } else None
+  }
+
+  private def validateTimestamp(batch: RecordBatch,
+                                record: Record,
+                                batchIndex: Int,
+                                now: Long,
+                                timestampType: TimestampType,
+                                timestampDiffMaxMs: Long): Option[ApiRecordError] = {
+    if (timestampType == TimestampType.CREATE_TIME
+      && record.timestamp != RecordBatch.NO_TIMESTAMP
+      && math.abs(record.timestamp - now) > timestampDiffMaxMs)
+      Some(ApiRecordError(Errors.INVALID_TIMESTAMP, new RecordError(batchIndex,
+        s"Timestamp ${record.timestamp} of message with offset ${record.offset} is " +
+          s"out of range. The timestamp should be within [${now - timestampDiffMaxMs}, " +
+          s"${now + timestampDiffMaxMs}]")))
+    else if (batch.timestampType == TimestampType.LOG_APPEND_TIME)
+      Some(ApiRecordError(Errors.INVALID_TIMESTAMP, new RecordError(batchIndex,
+        s"Invalid timestamp type in message $record. Producer should not set timestamp " +
+          "type to LogAppendTime.")))
+    else None
+  }
+
+  private def processRecordErrors(recordErrors: Seq[ApiRecordError]): Unit = {
+    if (recordErrors.nonEmpty) {
+      val errors = recordErrors.map(_.recordError)
+      if (recordErrors.exists(_.apiError == Errors.INVALID_TIMESTAMP)) {
+        throw new RecordValidationException(new InvalidTimestampException(
+          "One or more records have been rejected due to invalid timestamp"), errors)
+      } else {
+        throw new RecordValidationException(new InvalidRecordException(
+          "One or more records have been rejected"), errors)
+      }
+    }
+  }
+
+  case class ValidationAndOffsetAssignResult(validatedRecords: MemoryRecords,
+                                             maxTimestamp: Long,
+                                             shallowOffsetOfMaxTimestamp: Long,
+                                             messageSizeMaybeChanged: Boolean,
+                                             recordConversionStats: RecordConversionStats)
+
+  private case class ApiRecordError(apiError: Errors, recordError: RecordError)
+}
+
+---------
+The unit test is:
+../kafka/core/src/test/scala/unit/kafka/log/LogValidatorTest.scala
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package kafka.log
+
+import java.nio.ByteBuffer
+import java.util.concurrent.TimeUnit
+
+import kafka.api.{ApiVersion, KAFKA_2_0_IV1, KAFKA_2_3_IV1}
+import kafka.common.{LongRef, RecordValidationException}
+import kafka.log.LogValidator.ValidationAndOffsetAssignResult
+import kafka.message._
+import kafka.metrics.KafkaYammerMetrics
+import kafka.server.BrokerTopicStats
+import kafka.utils.TestUtils.meterCount
+import org.apache.kafka.common.errors.{InvalidTimestampException, UnsupportedCompressionTypeException, UnsupportedForMessageFormatException}
+import org.apache.kafka.common.record._
+import org.apache.kafka.common.utils.Time
+import org.apache.kafka.common.{InvalidRecordException, TopicPartition}
+import org.apache.kafka.test.TestUtils
+import org.junit.Assert._
+import org.junit.Test
+import org.scalatest.Assertions.{assertThrows, intercept}
+
+import scala.jdk.CollectionConverters._
+
+class LogValidatorTest {
+
+  val time = Time.SYSTEM
+  val topicPartition = new TopicPartition("topic", 0)
+  val brokerTopicStats = new BrokerTopicStats
+  val metricsKeySet = KafkaYammerMetrics.defaultRegistry.allMetrics.keySet.asScala
+
+  @Test
+  def testOnlyOneBatch(): Unit = {
+    checkOnlyOneBatch(RecordBatch.MAGIC_VALUE_V0, CompressionType.GZIP, CompressionType.GZIP)
+    checkOnlyOneBatch(RecordBatch.MAGIC_VALUE_V1, CompressionType.GZIP, CompressionType.GZIP)
+    checkOnlyOneBatch(RecordBatch.MAGIC_VALUE_V2, CompressionType.GZIP, CompressionType.GZIP)
+    checkOnlyOneBatch(RecordBatch.MAGIC_VALUE_V0, CompressionType.GZIP, CompressionType.NONE)
+    checkOnlyOneBatch(RecordBatch.MAGIC_VALUE_V1, CompressionType.GZIP, CompressionType.NONE)
+    checkOnlyOneBatch(RecordBatch.MAGIC_VALUE_V2, CompressionType.GZIP, CompressionType.NONE)
+    checkOnlyOneBatch(RecordBatch.MAGIC_VALUE_V2, CompressionType.NONE, CompressionType.NONE)
+    checkOnlyOneBatch(RecordBatch.MAGIC_VALUE_V2, CompressionType.NONE, CompressionType.GZIP)
+  }
+
+  @Test
+  def testAllowMultiBatch(): Unit = {
+    checkAllowMultiBatch(RecordBatch.MAGIC_VALUE_V0, CompressionType.NONE, CompressionType.NONE)
+    checkAllowMultiBatch(RecordBatch.MAGIC_VALUE_V1, CompressionType.NONE, CompressionType.NONE)
+    checkAllowMultiBatch(RecordBatch.MAGIC_VALUE_V0, CompressionType.NONE, CompressionType.GZIP)
+    checkAllowMultiBatch(RecordBatch.MAGIC_VALUE_V1, CompressionType.NONE, CompressionType.GZIP)
+  }
+
+  @Test
+  def testValidationOfBatchesWithNonSequentialInnerOffsets(): Unit = {
+    def testMessageValidation(magicValue: Byte): Unit = {
+      val numRecords = 20
+      val invalidRecords = recordsWithNonSequentialInnerOffsets(magicValue, CompressionType.GZIP, numRecords)
+
+      // Validation for v2 and above is strict for this case. For older formats, we fix invalid
+      // internal offsets by rewriting the batch.
+      if (magicValue >= RecordBatch.MAGIC_VALUE_V2) {
+        assertThrows[InvalidRecordException] {
+          validateMessages(invalidRecords, magicValue, CompressionType.GZIP, CompressionType.GZIP)
+        }
+      } else {
+        val result = validateMessages(invalidRecords, magicValue, CompressionType.GZIP, CompressionType.GZIP)
+        assertEquals(0 until numRecords, result.validatedRecords.records.asScala.map(_.offset))
+      }
+    }
+
+    for (version <- RecordVersion.values) {
+      testMessageValidation(version.value)
+    }
+  }
+
+  @Test
+  def testMisMatchMagic(): Unit = {
+    checkMismatchMagic(RecordBatch.MAGIC_VALUE_V0, RecordBatch.MAGIC_VALUE_V1, CompressionType.GZIP)
+    checkMismatchMagic(RecordBatch.MAGIC_VALUE_V1, RecordBatch.MAGIC_VALUE_V0, CompressionType.GZIP)
+  }
+
+  private def checkOnlyOneBatch(magic: Byte, sourceCompressionType: CompressionType, targetCompressionType: CompressionType): Unit = {
+    assertThrows[InvalidRecordException] {
+      validateMessages(createTwoBatchedRecords(magic, 0L, sourceCompressionType), magic, sourceCompressionType, targetCompressionType)
+    }
+  }
+
+  private def checkAllowMultiBatch(magic: Byte, sourceCompressionType: CompressionType, targetCompressionType: CompressionType): Unit = {
+    validateMessages(createTwoBatchedRecords(magic, 0L, sourceCompressionType), magic, sourceCompressionType, targetCompressionType)
+  }
+
+  private def checkMismatchMagic(batchMagic: Byte, recordMagic: Byte, compressionType: CompressionType): Unit = {
+    assertThrows[RecordValidationException] {
+      validateMessages(recordsWithInvalidInnerMagic(batchMagic, recordMagic, compressionType), batchMagic, compressionType, compressionType)
+    }
+    assertEquals(metricsKeySet.count(_.getMBeanName.endsWith(s"${BrokerTopicStats.InvalidMagicNumberRecordsPerSec}")), 1)
+    assertTrue(meterCount(s"${BrokerTopicStats.InvalidMagicNumberRecordsPerSec}") > 0)
+  }
+
+  private def validateMessages(records: MemoryRecords,
+                               magic: Byte,
+                               sourceCompressionType: CompressionType,
+                               targetCompressionType: CompressionType): ValidationAndOffsetAssignResult = {
+    LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      new LongRef(0L),
+      time,
+      now = 0L,
+      CompressionCodec.getCompressionCodec(sourceCompressionType.name),
+      CompressionCodec.getCompressionCodec(targetCompressionType.name),
+      compactedTopic = false,
+      magic,
+      TimestampType.CREATE_TIME,
+      1000L,
+      RecordBatch.NO_PRODUCER_EPOCH,
+      origin = AppendOrigin.Client,
+      KAFKA_2_3_IV1,
+      brokerTopicStats
+    )
+  }
+
+  @Test
+  def testLogAppendTimeNonCompressedV1(): Unit = {
+    checkLogAppendTimeNonCompressed(RecordBatch.MAGIC_VALUE_V1)
+  }
+
+  @Test
+  def testLogAppendTimeNonCompressedV2(): Unit = {
+    checkLogAppendTimeNonCompressed(RecordBatch.MAGIC_VALUE_V2)
+  }
+
+  private def checkLogAppendTimeNonCompressed(magic: Byte): Unit = {
+    val now = System.currentTimeMillis()
+    // The timestamps should be overwritten
+    val records = createRecords(magicValue = magic, timestamp = 1234L, codec = CompressionType.NONE)
+    val validatedResults = LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(0),
+      time= time,
+      now = now,
+      sourceCodec = NoCompressionCodec,
+      targetCodec = NoCompressionCodec,
+      compactedTopic = false,
+      magic = magic,
+      timestampType = TimestampType.LOG_APPEND_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+    val validatedRecords = validatedResults.validatedRecords
+    assertEquals("message set size should not change", records.records.asScala.size, validatedRecords.records.asScala.size)
+    validatedRecords.batches.forEach(batch => validateLogAppendTime(now, 1234L, batch))
+    assertEquals(s"Max timestamp should be $now", now, validatedResults.maxTimestamp)
+    assertFalse("Message size should not have been changed", validatedResults.messageSizeMaybeChanged)
+
+    // we index from last offset in version 2 instead of base offset
+    val expectedMaxTimestampOffset = if (magic >= RecordBatch.MAGIC_VALUE_V2) 2 else 0
+    assertEquals(s"The offset of max timestamp should be $expectedMaxTimestampOffset",
+      expectedMaxTimestampOffset, validatedResults.shallowOffsetOfMaxTimestamp)
+    verifyRecordConversionStats(validatedResults.recordConversionStats, numConvertedRecords = 0, records,
+      compressed = false)
+  }
+
+  @Test
+  def testLogAppendTimeWithRecompressionV1(): Unit = {
+    checkLogAppendTimeWithRecompression(RecordBatch.MAGIC_VALUE_V1)
+  }
+
+  private def checkLogAppendTimeWithRecompression(targetMagic: Byte): Unit = {
+    val now = System.currentTimeMillis()
+    // The timestamps should be overwritten
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V0, codec = CompressionType.GZIP)
+    val validatedResults = LogValidator.validateMessagesAndAssignOffsets(
+      records,
+      topicPartition,
+      offsetCounter = new LongRef(0),
+      time = time,
+      now = now,
+      sourceCodec = DefaultCompressionCodec,
+      targetCodec = DefaultCompressionCodec,
+      compactedTopic = false,
+      magic = targetMagic,
+      timestampType = TimestampType.LOG_APPEND_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+    val validatedRecords = validatedResults.validatedRecords
+
+    assertEquals("message set size should not change", records.records.asScala.size, validatedRecords.records.asScala.size)
+    validatedRecords.batches.forEach(batch => validateLogAppendTime(now, -1, batch))
+    assertTrue("MessageSet should still valid", validatedRecords.batches.iterator.next().isValid)
+    assertEquals(s"Max timestamp should be $now", now, validatedResults.maxTimestamp)
+    assertEquals(s"The offset of max timestamp should be ${records.records.asScala.size - 1}",
+      records.records.asScala.size - 1, validatedResults.shallowOffsetOfMaxTimestamp)
+    assertTrue("Message size may have been changed", validatedResults.messageSizeMaybeChanged)
+
+    val stats = validatedResults.recordConversionStats
+    verifyRecordConversionStats(stats, numConvertedRecords = 3, records, compressed = true)
+  }
+
+  @Test
+  def testLogAppendTimeWithRecompressionV2(): Unit = {
+    checkLogAppendTimeWithRecompression(RecordBatch.MAGIC_VALUE_V2)
+  }
+
+  @Test
+  def testLogAppendTimeWithoutRecompressionV1(): Unit = {
+    checkLogAppendTimeWithoutRecompression(RecordBatch.MAGIC_VALUE_V1)
+  }
+
+  private def checkLogAppendTimeWithoutRecompression(magic: Byte): Unit = {
+    val now = System.currentTimeMillis()
+    // The timestamps should be overwritten
+    val records = createRecords(magicValue = magic, timestamp = 1234L, codec = CompressionType.GZIP)
+    val validatedResults = LogValidator.validateMessagesAndAssignOffsets(
+      records,
+      topicPartition,
+      offsetCounter = new LongRef(0),
+      time = time,
+      now = now,
+      sourceCodec = DefaultCompressionCodec,
+      targetCodec = DefaultCompressionCodec,
+      compactedTopic = false,
+      magic = magic,
+      timestampType = TimestampType.LOG_APPEND_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+    val validatedRecords = validatedResults.validatedRecords
+
+    assertEquals("message set size should not change", records.records.asScala.size,
+      validatedRecords.records.asScala.size)
+    validatedRecords.batches.forEach(batch => validateLogAppendTime(now, 1234L, batch))
+    assertTrue("MessageSet should still valid", validatedRecords.batches.iterator.next().isValid)
+    assertEquals(s"Max timestamp should be $now", now, validatedResults.maxTimestamp)
+    assertEquals(s"The offset of max timestamp should be ${records.records.asScala.size - 1}",
+      records.records.asScala.size - 1, validatedResults.shallowOffsetOfMaxTimestamp)
+    assertFalse("Message size should not have been changed", validatedResults.messageSizeMaybeChanged)
+
+    verifyRecordConversionStats(validatedResults.recordConversionStats, numConvertedRecords = 0, records,
+      compressed = true)
+  }
+
+  @Test
+  def testInvalidOffsetRangeAndRecordCount(): Unit = {
+    // The batch to be written contains 3 records, so the correct lastOffsetDelta is 2
+    validateRecordBatchWithCountOverrides(lastOffsetDelta = 2, count = 3)
+
+    // Count and offset range are inconsistent or invalid
+    assertInvalidBatchCountOverrides(lastOffsetDelta = 0, count = 3)
+    assertInvalidBatchCountOverrides(lastOffsetDelta = 15, count = 3)
+    assertInvalidBatchCountOverrides(lastOffsetDelta = -3, count = 3)
+    assertInvalidBatchCountOverrides(lastOffsetDelta = 2, count = -3)
+    assertInvalidBatchCountOverrides(lastOffsetDelta = 2, count = 6)
+    assertInvalidBatchCountOverrides(lastOffsetDelta = 2, count = 0)
+    assertInvalidBatchCountOverrides(lastOffsetDelta = -3, count = -2)
+
+    // Count and offset range are consistent, but do not match the actual number of records
+    assertInvalidBatchCountOverrides(lastOffsetDelta = 5, count = 6)
+    assertInvalidBatchCountOverrides(lastOffsetDelta = 1, count = 2)
+  }
+
+  private def assertInvalidBatchCountOverrides(lastOffsetDelta: Int, count: Int): Unit = {
+    intercept[InvalidRecordException] {
+      validateRecordBatchWithCountOverrides(lastOffsetDelta, count)
+    }
+  }
+
+  private def validateRecordBatchWithCountOverrides(lastOffsetDelta: Int, count: Int): Unit = {
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V2, timestamp = 1234L, codec = CompressionType.NONE)
+    records.buffer.putInt(DefaultRecordBatch.RECORDS_COUNT_OFFSET, count)
+    records.buffer.putInt(DefaultRecordBatch.LAST_OFFSET_DELTA_OFFSET, lastOffsetDelta)
+    LogValidator.validateMessagesAndAssignOffsets(
+      records,
+      topicPartition,
+      offsetCounter = new LongRef(0),
+      time = time,
+      now = time.milliseconds(),
+      sourceCodec = DefaultCompressionCodec,
+      targetCodec = DefaultCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V2,
+      timestampType = TimestampType.LOG_APPEND_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+  }
+
+  @Test
+  def testLogAppendTimeWithoutRecompressionV2(): Unit = {
+    checkLogAppendTimeWithoutRecompression(RecordBatch.MAGIC_VALUE_V2)
+  }
+
+  @Test
+  def testNonCompressedV1(): Unit = {
+    checkNonCompressed(RecordBatch.MAGIC_VALUE_V1)
+  }
+
+  private def checkNonCompressed(magic: Byte): Unit = {
+    val now = System.currentTimeMillis()
+    val timestampSeq = Seq(now - 1, now + 1, now)
+
+    val (producerId, producerEpoch, baseSequence, isTransactional, partitionLeaderEpoch) =
+      if (magic >= RecordBatch.MAGIC_VALUE_V2)
+        (1324L, 10.toShort, 984, true, 40)
+      else
+        (RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, false,
+          RecordBatch.NO_PARTITION_LEADER_EPOCH)
+
+    val records = MemoryRecords.withRecords(magic, 0L, CompressionType.GZIP, TimestampType.CREATE_TIME, producerId,
+      producerEpoch, baseSequence, partitionLeaderEpoch, isTransactional,
+      new SimpleRecord(timestampSeq(0), "hello".getBytes),
+      new SimpleRecord(timestampSeq(1), "there".getBytes),
+      new SimpleRecord(timestampSeq(2), "beautiful".getBytes))
+
+    val validatingResults = LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(0),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = NoCompressionCodec,
+      targetCodec = NoCompressionCodec,
+      compactedTopic = false,
+      magic = magic,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = partitionLeaderEpoch,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+    val validatedRecords = validatingResults.validatedRecords
+
+    var i = 0
+    for (batch <- validatedRecords.batches.asScala) {
+      assertTrue(batch.isValid)
+      assertEquals(batch.timestampType, TimestampType.CREATE_TIME)
+      maybeCheckBaseTimestamp(timestampSeq(0), batch)
+      assertEquals(batch.maxTimestamp, batch.asScala.map(_.timestamp).max)
+      assertEquals(producerEpoch, batch.producerEpoch)
+      assertEquals(producerId, batch.producerId)
+      assertEquals(baseSequence, batch.baseSequence)
+      assertEquals(isTransactional, batch.isTransactional)
+      assertEquals(partitionLeaderEpoch, batch.partitionLeaderEpoch)
+      for (record <- batch.asScala) {
+        assertTrue(record.isValid)
+        assertEquals(timestampSeq(i), record.timestamp)
+        i += 1
+      }
+    }
+    assertEquals(s"Max timestamp should be ${now + 1}", now + 1, validatingResults.maxTimestamp)
+    assertEquals(s"Offset of max timestamp should be 1", 1, validatingResults.shallowOffsetOfMaxTimestamp)
+    assertFalse("Message size should not have been changed", validatingResults.messageSizeMaybeChanged)
+
+    verifyRecordConversionStats(validatingResults.recordConversionStats, numConvertedRecords = 0, records,
+      compressed = false)
+  }
+
+  @Test
+  def testNonCompressedV2(): Unit = {
+    checkNonCompressed(RecordBatch.MAGIC_VALUE_V2)
+  }
+
+  @Test
+  def testRecompressionV1(): Unit = {
+    checkRecompression(RecordBatch.MAGIC_VALUE_V1)
+  }
+
+  private def checkRecompression(magic: Byte): Unit = {
+    val now = System.currentTimeMillis()
+    val timestampSeq = Seq(now - 1, now + 1, now)
+
+    val (producerId, producerEpoch, baseSequence, isTransactional, partitionLeaderEpoch) =
+      if (magic >= RecordBatch.MAGIC_VALUE_V2)
+        (1324L, 10.toShort, 984, true, 40)
+      else
+        (RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, false,
+          RecordBatch.NO_PARTITION_LEADER_EPOCH)
+
+    val records = MemoryRecords.withRecords(magic, 0L, CompressionType.GZIP, TimestampType.CREATE_TIME, producerId,
+      producerEpoch, baseSequence, partitionLeaderEpoch, isTransactional,
+      new SimpleRecord(timestampSeq(0), "hello".getBytes),
+      new SimpleRecord(timestampSeq(1), "there".getBytes),
+      new SimpleRecord(timestampSeq(2), "beautiful".getBytes))
+
+    val validatingResults = LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(0),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = NoCompressionCodec,
+      targetCodec = GZIPCompressionCodec,
+      compactedTopic = false,
+      magic = magic,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = partitionLeaderEpoch,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+    val validatedRecords = validatingResults.validatedRecords
+
+    var i = 0
+    for (batch <- validatedRecords.batches.asScala) {
+      assertTrue(batch.isValid)
+      assertEquals(batch.timestampType, TimestampType.CREATE_TIME)
+      maybeCheckBaseTimestamp(timestampSeq(0), batch)
+      assertEquals(batch.maxTimestamp, batch.asScala.map(_.timestamp).max)
+      assertEquals(producerEpoch, batch.producerEpoch)
+      assertEquals(producerId, batch.producerId)
+      assertEquals(baseSequence, batch.baseSequence)
+      assertEquals(partitionLeaderEpoch, batch.partitionLeaderEpoch)
+      for (record <- batch.asScala) {
+        assertTrue(record.isValid)
+        assertEquals(timestampSeq(i), record.timestamp)
+        i += 1
+      }
+    }
+    assertEquals(s"Max timestamp should be ${now + 1}", now + 1, validatingResults.maxTimestamp)
+    assertEquals("Offset of max timestamp should be 2", 2, validatingResults.shallowOffsetOfMaxTimestamp)
+    assertTrue("Message size should have been changed", validatingResults.messageSizeMaybeChanged)
+
+    verifyRecordConversionStats(validatingResults.recordConversionStats, numConvertedRecords = 3, records,
+      compressed = true)
+  }
+
+  @Test
+  def testRecompressionV2(): Unit = {
+    checkRecompression(RecordBatch.MAGIC_VALUE_V2)
+  }
+
+  @Test
+  def testCreateTimeUpConversionV0ToV1(): Unit = {
+    checkCreateTimeUpConversionFromV0(RecordBatch.MAGIC_VALUE_V1)
+  }
+
+  private def checkCreateTimeUpConversionFromV0(toMagic: Byte): Unit = {
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V0, codec = CompressionType.GZIP)
+    val validatedResults = LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(0),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = DefaultCompressionCodec,
+      targetCodec = DefaultCompressionCodec,
+      magic = toMagic,
+      compactedTopic = false,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+    val validatedRecords = validatedResults.validatedRecords
+
+    for (batch <- validatedRecords.batches.asScala) {
+      assertTrue(batch.isValid)
+      maybeCheckBaseTimestamp(RecordBatch.NO_TIMESTAMP, batch)
+      assertEquals(RecordBatch.NO_TIMESTAMP, batch.maxTimestamp)
+      assertEquals(TimestampType.CREATE_TIME, batch.timestampType)
+      assertEquals(RecordBatch.NO_PRODUCER_EPOCH, batch.producerEpoch)
+      assertEquals(RecordBatch.NO_PRODUCER_ID, batch.producerId)
+      assertEquals(RecordBatch.NO_SEQUENCE, batch.baseSequence)
+    }
+    assertEquals(s"Max timestamp should be ${RecordBatch.NO_TIMESTAMP}", RecordBatch.NO_TIMESTAMP, validatedResults.maxTimestamp)
+    assertEquals(s"Offset of max timestamp should be ${validatedRecords.records.asScala.size - 1}",
+      validatedRecords.records.asScala.size - 1, validatedResults.shallowOffsetOfMaxTimestamp)
+    assertTrue("Message size should have been changed", validatedResults.messageSizeMaybeChanged)
+
+    verifyRecordConversionStats(validatedResults.recordConversionStats, numConvertedRecords = 3, records,
+      compressed = true)
+  }
+
+  @Test
+  def testCreateTimeUpConversionV0ToV2(): Unit = {
+    checkCreateTimeUpConversionFromV0(RecordBatch.MAGIC_VALUE_V2)
+  }
+
+  @Test
+  def testCreateTimeUpConversionV1ToV2(): Unit = {
+    val timestamp = System.currentTimeMillis()
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V1, codec = CompressionType.GZIP, timestamp = timestamp)
+    val validatedResults = LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(0),
+      time = time,
+      now = timestamp,
+      sourceCodec = DefaultCompressionCodec,
+      targetCodec = DefaultCompressionCodec,
+      magic = RecordBatch.MAGIC_VALUE_V2,
+      compactedTopic = false,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+    val validatedRecords = validatedResults.validatedRecords
+
+    for (batch <- validatedRecords.batches.asScala) {
+      assertTrue(batch.isValid)
+      maybeCheckBaseTimestamp(timestamp, batch)
+      assertEquals(timestamp, batch.maxTimestamp)
+      assertEquals(TimestampType.CREATE_TIME, batch.timestampType)
+      assertEquals(RecordBatch.NO_PRODUCER_EPOCH, batch.producerEpoch)
+      assertEquals(RecordBatch.NO_PRODUCER_ID, batch.producerId)
+      assertEquals(RecordBatch.NO_SEQUENCE, batch.baseSequence)
+    }
+    assertEquals(timestamp, validatedResults.maxTimestamp)
+    assertEquals(s"Offset of max timestamp should be ${validatedRecords.records.asScala.size - 1}",
+      validatedRecords.records.asScala.size - 1, validatedResults.shallowOffsetOfMaxTimestamp)
+    assertTrue("Message size should have been changed", validatedResults.messageSizeMaybeChanged)
+
+    verifyRecordConversionStats(validatedResults.recordConversionStats, numConvertedRecords = 3, records,
+      compressed = true)
+  }
+
+  @Test
+  def testCompressedV1(): Unit = {
+    checkCompressed(RecordBatch.MAGIC_VALUE_V1)
+  }
+
+  private def checkCompressed(magic: Byte): Unit = {
+    val now = System.currentTimeMillis()
+    val timestampSeq = Seq(now - 1, now + 1, now)
+
+    val (producerId, producerEpoch, baseSequence, isTransactional, partitionLeaderEpoch) =
+      if (magic >= RecordBatch.MAGIC_VALUE_V2)
+        (1324L, 10.toShort, 984, true, 40)
+      else
+        (RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, false,
+          RecordBatch.NO_PARTITION_LEADER_EPOCH)
+
+    val records = MemoryRecords.withRecords(magic, 0L, CompressionType.GZIP, TimestampType.CREATE_TIME, producerId,
+      producerEpoch, baseSequence, partitionLeaderEpoch, isTransactional,
+      new SimpleRecord(timestampSeq(0), "hello".getBytes),
+      new SimpleRecord(timestampSeq(1), "there".getBytes),
+      new SimpleRecord(timestampSeq(2), "beautiful".getBytes))
+
+    val validatedResults = LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(0),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = DefaultCompressionCodec,
+      targetCodec = DefaultCompressionCodec,
+      magic = magic,
+      compactedTopic = false,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = partitionLeaderEpoch,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+    val validatedRecords = validatedResults.validatedRecords
+
+    var i = 0
+    for (batch <- validatedRecords.batches.asScala) {
+      assertTrue(batch.isValid)
+      assertEquals(batch.timestampType, TimestampType.CREATE_TIME)
+      maybeCheckBaseTimestamp(timestampSeq(0), batch)
+      assertEquals(batch.maxTimestamp, batch.asScala.map(_.timestamp).max)
+      assertEquals(producerEpoch, batch.producerEpoch)
+      assertEquals(producerId, batch.producerId)
+      assertEquals(baseSequence, batch.baseSequence)
+      assertEquals(partitionLeaderEpoch, batch.partitionLeaderEpoch)
+      for (record <- batch.asScala) {
+        assertTrue(record.isValid)
+        assertEquals(timestampSeq(i), record.timestamp)
+        i += 1
+      }
+    }
+    assertEquals(s"Max timestamp should be ${now + 1}", now + 1, validatedResults.maxTimestamp)
+    assertEquals(s"Offset of max timestamp should be ${validatedRecords.records.asScala.size - 1}",
+      validatedRecords.records.asScala.size - 1, validatedResults.shallowOffsetOfMaxTimestamp)
+    assertFalse("Message size should not have been changed", validatedResults.messageSizeMaybeChanged)
+
+    verifyRecordConversionStats(validatedResults.recordConversionStats, numConvertedRecords = 0, records,
+      compressed = true)
+  }
+
+  @Test
+  def testCompressedV2(): Unit = {
+    checkCompressed(RecordBatch.MAGIC_VALUE_V2)
+  }
+
+  @Test(expected = classOf[RecordValidationException])
+  def testInvalidCreateTimeNonCompressedV1(): Unit = {
+    val now = System.currentTimeMillis()
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V1, timestamp = now - 1001L,
+      codec = CompressionType.NONE)
+    LogValidator.validateMessagesAndAssignOffsets(
+      records,
+      topicPartition,
+      offsetCounter = new LongRef(0),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = NoCompressionCodec,
+      targetCodec = NoCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V1,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+  }
+
+  @Test(expected = classOf[RecordValidationException])
+  def testInvalidCreateTimeNonCompressedV2(): Unit = {
+    val now = System.currentTimeMillis()
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V2, timestamp = now - 1001L,
+      codec = CompressionType.NONE)
+    LogValidator.validateMessagesAndAssignOffsets(
+      records,
+      topicPartition,
+      offsetCounter = new LongRef(0),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = NoCompressionCodec,
+      targetCodec = NoCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V2,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+  }
+
+  @Test(expected = classOf[RecordValidationException])
+  def testInvalidCreateTimeCompressedV1(): Unit = {
+    val now = System.currentTimeMillis()
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V1, timestamp = now - 1001L,
+      codec = CompressionType.GZIP)
+    LogValidator.validateMessagesAndAssignOffsets(
+      records,
+      topicPartition,
+      offsetCounter = new LongRef(0),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = DefaultCompressionCodec,
+      targetCodec = DefaultCompressionCodec,
+      magic = RecordBatch.MAGIC_VALUE_V1,
+      compactedTopic = false,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+  }
+
+  @Test(expected = classOf[RecordValidationException])
+  def testInvalidCreateTimeCompressedV2(): Unit = {
+    val now = System.currentTimeMillis()
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V2, timestamp = now - 1001L,
+      codec = CompressionType.GZIP)
+    LogValidator.validateMessagesAndAssignOffsets(
+      records,
+      topicPartition,
+      offsetCounter = new LongRef(0),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = DefaultCompressionCodec,
+      targetCodec = DefaultCompressionCodec,
+      magic = RecordBatch.MAGIC_VALUE_V1,
+      compactedTopic = false,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+  }
+
+  @Test
+  def testAbsoluteOffsetAssignmentNonCompressed(): Unit = {
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V0, codec = CompressionType.NONE)
+    val offset = 1234567
+    checkOffsets(records, 0)
+    checkOffsets(LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = NoCompressionCodec,
+      targetCodec = NoCompressionCodec,
+      magic = RecordBatch.MAGIC_VALUE_V0,
+      compactedTopic = false,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats).validatedRecords, offset)
+  }
+
+  @Test
+  def testAbsoluteOffsetAssignmentCompressed(): Unit = {
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V0, codec = CompressionType.GZIP)
+    val offset = 1234567
+    checkOffsets(records, 0)
+    checkOffsets(LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = DefaultCompressionCodec,
+      targetCodec = DefaultCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V0,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats).validatedRecords, offset)
+  }
+
+  @Test
+  def testRelativeOffsetAssignmentNonCompressedV1(): Unit = {
+    val now = System.currentTimeMillis()
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V1, timestamp = now, codec = CompressionType.NONE)
+    val offset = 1234567
+    checkOffsets(records, 0)
+    val messageWithOffset = LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = NoCompressionCodec,
+      targetCodec = NoCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V1,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 5000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats).validatedRecords
+    checkOffsets(messageWithOffset, offset)
+  }
+
+  @Test
+  def testRelativeOffsetAssignmentNonCompressedV2(): Unit = {
+    val now = System.currentTimeMillis()
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V2, timestamp = now, codec = CompressionType.NONE)
+    val offset = 1234567
+    checkOffsets(records, 0)
+    val messageWithOffset = LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = NoCompressionCodec,
+      targetCodec = NoCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V2,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 5000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats).validatedRecords
+    checkOffsets(messageWithOffset, offset)
+  }
+
+  @Test
+  def testRelativeOffsetAssignmentCompressedV1(): Unit = {
+    val now = System.currentTimeMillis()
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V1, timestamp = now, codec = CompressionType.GZIP)
+    val offset = 1234567
+    checkOffsets(records, 0)
+    val compressedMessagesWithOffset = LogValidator.validateMessagesAndAssignOffsets(
+      records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = DefaultCompressionCodec,
+      targetCodec = DefaultCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V1,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 5000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats).validatedRecords
+    checkOffsets(compressedMessagesWithOffset, offset)
+  }
+
+  @Test
+  def testRelativeOffsetAssignmentCompressedV2(): Unit = {
+    val now = System.currentTimeMillis()
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V2, timestamp = now, codec = CompressionType.GZIP)
+    val offset = 1234567
+    checkOffsets(records, 0)
+    val compressedMessagesWithOffset = LogValidator.validateMessagesAndAssignOffsets(
+      records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = DefaultCompressionCodec,
+      targetCodec = DefaultCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V2,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 5000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats).validatedRecords
+    checkOffsets(compressedMessagesWithOffset, offset)
+  }
+
+  @Test
+  def testOffsetAssignmentAfterUpConversionV0ToV1NonCompressed(): Unit = {
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V0, codec = CompressionType.NONE)
+    checkOffsets(records, 0)
+    val offset = 1234567
+    val validatedResults = LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = NoCompressionCodec,
+      targetCodec = NoCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V1,
+      timestampType = TimestampType.LOG_APPEND_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+    checkOffsets(validatedResults.validatedRecords, offset)
+    verifyRecordConversionStats(validatedResults.recordConversionStats, numConvertedRecords = 3, records,
+      compressed = false)
+  }
+
+  @Test
+  def testOffsetAssignmentAfterUpConversionV0ToV2NonCompressed(): Unit = {
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V0, codec = CompressionType.NONE)
+    checkOffsets(records, 0)
+    val offset = 1234567
+    val validatedResults = LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = NoCompressionCodec,
+      targetCodec = NoCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V2,
+      timestampType = TimestampType.LOG_APPEND_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+    checkOffsets(validatedResults.validatedRecords, offset)
+    verifyRecordConversionStats(validatedResults.recordConversionStats, numConvertedRecords = 3, records,
+      compressed = false)
+  }
+
+  @Test
+  def testOffsetAssignmentAfterUpConversionV0ToV1Compressed(): Unit = {
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V0, codec = CompressionType.GZIP)
+    val offset = 1234567
+    checkOffsets(records, 0)
+    val validatedResults = LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = DefaultCompressionCodec,
+      targetCodec = DefaultCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V1,
+      timestampType = TimestampType.LOG_APPEND_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+    checkOffsets(validatedResults.validatedRecords, offset)
+    verifyRecordConversionStats(validatedResults.recordConversionStats, numConvertedRecords = 3, records,
+      compressed = true)
+  }
+
+  @Test
+  def testOffsetAssignmentAfterUpConversionV0ToV2Compressed(): Unit = {
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V0, codec = CompressionType.GZIP)
+    val offset = 1234567
+    checkOffsets(records, 0)
+    val validatedResults = LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = DefaultCompressionCodec,
+      targetCodec = DefaultCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V2,
+      timestampType = TimestampType.LOG_APPEND_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+    checkOffsets(validatedResults.validatedRecords, offset)
+    verifyRecordConversionStats(validatedResults.recordConversionStats, numConvertedRecords = 3, records,
+      compressed = true)
+  }
+
+  @Test(expected = classOf[InvalidRecordException])
+  def testControlRecordsNotAllowedFromClients(): Unit = {
+    val offset = 1234567
+    val endTxnMarker = new EndTransactionMarker(ControlRecordType.COMMIT, 0)
+    val records = MemoryRecords.withEndTransactionMarker(23423L, 5, endTxnMarker)
+    LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = NoCompressionCodec,
+      targetCodec = NoCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.CURRENT_MAGIC_VALUE,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 5000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+  }
+
+  @Test
+  def testControlRecordsNotCompressed(): Unit = {
+    val offset = 1234567
+    val endTxnMarker = new EndTransactionMarker(ControlRecordType.COMMIT, 0)
+    val records = MemoryRecords.withEndTransactionMarker(23423L, 5, endTxnMarker)
+    val result = LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = NoCompressionCodec,
+      targetCodec = SnappyCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.CURRENT_MAGIC_VALUE,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 5000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Coordinator,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+    val batches = TestUtils.toList(result.validatedRecords.batches)
+    assertEquals(1, batches.size)
+    val batch = batches.get(0)
+    assertFalse(batch.isCompressed)
+  }
+
+  @Test
+  def testOffsetAssignmentAfterDownConversionV1ToV0NonCompressed(): Unit = {
+    val offset = 1234567
+    val now = System.currentTimeMillis()
+    val records = createRecords(RecordBatch.MAGIC_VALUE_V1, now, codec = CompressionType.NONE)
+    checkOffsets(records, 0)
+    checkOffsets(LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = NoCompressionCodec,
+      targetCodec = NoCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V0,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 5000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats).validatedRecords, offset)
+  }
+
+  @Test
+  def testOffsetAssignmentAfterDownConversionV1ToV0Compressed(): Unit = {
+    val offset = 1234567
+    val now = System.currentTimeMillis()
+    val records = createRecords(RecordBatch.MAGIC_VALUE_V1, now, CompressionType.GZIP)
+    checkOffsets(records, 0)
+    checkOffsets(LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = DefaultCompressionCodec,
+      targetCodec = DefaultCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V0,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 5000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats).validatedRecords, offset)
+  }
+
+  @Test
+  def testOffsetAssignmentAfterUpConversionV1ToV2NonCompressed(): Unit = {
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V1, codec = CompressionType.NONE)
+    checkOffsets(records, 0)
+    val offset = 1234567
+    checkOffsets(LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = NoCompressionCodec,
+      targetCodec = NoCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V2,
+      timestampType = TimestampType.LOG_APPEND_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats).validatedRecords, offset)
+  }
+
+  @Test
+  def testOffsetAssignmentAfterUpConversionV1ToV2Compressed(): Unit = {
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V1, codec = CompressionType.GZIP)
+    val offset = 1234567
+    checkOffsets(records, 0)
+    checkOffsets(LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = DefaultCompressionCodec,
+      targetCodec = DefaultCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V2,
+      timestampType = TimestampType.LOG_APPEND_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats).validatedRecords, offset)
+  }
+
+  @Test
+  def testOffsetAssignmentAfterDownConversionV2ToV1NonCompressed(): Unit = {
+    val offset = 1234567
+    val now = System.currentTimeMillis()
+    val records = createRecords(RecordBatch.MAGIC_VALUE_V2, now, codec = CompressionType.NONE)
+    checkOffsets(records, 0)
+    checkOffsets(LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = NoCompressionCodec,
+      targetCodec = NoCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V1,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 5000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats).validatedRecords, offset)
+  }
+
+  @Test
+  def testOffsetAssignmentAfterDownConversionV2ToV1Compressed(): Unit = {
+    val offset = 1234567
+    val now = System.currentTimeMillis()
+    val records = createRecords(RecordBatch.MAGIC_VALUE_V2, now, CompressionType.GZIP)
+    checkOffsets(records, 0)
+    checkOffsets(LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = DefaultCompressionCodec,
+      targetCodec = DefaultCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V1,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 5000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats).validatedRecords, offset)
+  }
+
+  @Test(expected = classOf[UnsupportedForMessageFormatException])
+  def testDownConversionOfTransactionalRecordsNotPermitted(): Unit = {
+    val offset = 1234567
+    val producerId = 1344L
+    val producerEpoch = 16.toShort
+    val sequence = 0
+    val records = MemoryRecords.withTransactionalRecords(CompressionType.NONE, producerId, producerEpoch, sequence,
+      new SimpleRecord("hello".getBytes), new SimpleRecord("there".getBytes), new SimpleRecord("beautiful".getBytes))
+    checkOffsets(LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = DefaultCompressionCodec,
+      targetCodec = DefaultCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V1,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 5000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats).validatedRecords, offset)
+  }
+
+  @Test(expected = classOf[UnsupportedForMessageFormatException])
+  def testDownConversionOfIdempotentRecordsNotPermitted(): Unit = {
+    val offset = 1234567
+    val producerId = 1344L
+    val producerEpoch = 16.toShort
+    val sequence = 0
+    val records = MemoryRecords.withIdempotentRecords(CompressionType.NONE, producerId, producerEpoch, sequence,
+      new SimpleRecord("hello".getBytes), new SimpleRecord("there".getBytes), new SimpleRecord("beautiful".getBytes))
+    checkOffsets(LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = DefaultCompressionCodec,
+      targetCodec = DefaultCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V1,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 5000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats).validatedRecords, offset)
+  }
+
+  @Test
+  def testOffsetAssignmentAfterDownConversionV2ToV0NonCompressed(): Unit = {
+    val offset = 1234567
+    val now = System.currentTimeMillis()
+    val records = createRecords(RecordBatch.MAGIC_VALUE_V2, now, codec = CompressionType.NONE)
+    checkOffsets(records, 0)
+    checkOffsets(LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = NoCompressionCodec,
+      targetCodec = NoCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V0,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 5000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats).validatedRecords, offset)
+  }
+
+  @Test
+  def testOffsetAssignmentAfterDownConversionV2ToV0Compressed(): Unit = {
+    val offset = 1234567
+    val now = System.currentTimeMillis()
+    val records = createRecords(RecordBatch.MAGIC_VALUE_V2, now, CompressionType.GZIP)
+    checkOffsets(records, 0)
+    checkOffsets(LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = DefaultCompressionCodec,
+      targetCodec = DefaultCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V0,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 5000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats).validatedRecords, offset)
+  }
+
+  @Test
+  def testNonIncreasingOffsetRecordBatchHasMetricsLogged(): Unit = {
+    val records = createNonIncreasingOffsetRecords(RecordBatch.MAGIC_VALUE_V2)
+    records.batches().asScala.head.setLastOffset(2)
+    assertThrows[InvalidRecordException] {
+      LogValidator.validateMessagesAndAssignOffsets(records,
+        topicPartition,
+        offsetCounter = new LongRef(0L),
+        time = time,
+        now = System.currentTimeMillis(),
+        sourceCodec = DefaultCompressionCodec,
+        targetCodec = DefaultCompressionCodec,
+        compactedTopic = false,
+        magic = RecordBatch.MAGIC_VALUE_V0,
+        timestampType = TimestampType.CREATE_TIME,
+        timestampDiffMaxMs = 5000L,
+        partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+        origin = AppendOrigin.Client,
+        interBrokerProtocolVersion = ApiVersion.latestVersion,
+        brokerTopicStats = brokerTopicStats)
+    }
+    assertEquals(metricsKeySet.count(_.getMBeanName.endsWith(s"${BrokerTopicStats.InvalidOffsetOrSequenceRecordsPerSec}")), 1)
+    assertTrue(meterCount(s"${BrokerTopicStats.InvalidOffsetOrSequenceRecordsPerSec}") > 0)
+  }
+
+  @Test(expected = classOf[InvalidRecordException])
+  def testCompressedBatchWithoutRecordsNotAllowed(): Unit = {
+    testBatchWithoutRecordsNotAllowed(DefaultCompressionCodec, DefaultCompressionCodec)
+  }
+
+  @Test(expected = classOf[UnsupportedCompressionTypeException])
+  def testZStdCompressedWithUnavailableIBPVersion(): Unit = {
+    val now = System.currentTimeMillis()
+    // The timestamps should be overwritten
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V2, timestamp = 1234L, codec = CompressionType.NONE)
+    LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(0),
+      time= time,
+      now = now,
+      sourceCodec = NoCompressionCodec,
+      targetCodec = ZStdCompressionCodec,
+      compactedTopic = false,
+      magic = RecordBatch.MAGIC_VALUE_V2,
+      timestampType = TimestampType.LOG_APPEND_TIME,
+      timestampDiffMaxMs = 1000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = KAFKA_2_0_IV1,
+      brokerTopicStats = brokerTopicStats)
+  }
+
+  @Test(expected = classOf[InvalidRecordException])
+  def testUncompressedBatchWithoutRecordsNotAllowed(): Unit = {
+    testBatchWithoutRecordsNotAllowed(NoCompressionCodec, NoCompressionCodec)
+  }
+
+  @Test(expected = classOf[InvalidRecordException])
+  def testRecompressedBatchWithoutRecordsNotAllowed(): Unit = {
+    testBatchWithoutRecordsNotAllowed(NoCompressionCodec, DefaultCompressionCodec)
+  }
+
+  @Test
+  def testInvalidTimestampExceptionHasBatchIndex(): Unit = {
+    val now = System.currentTimeMillis()
+    val records = createRecords(magicValue = RecordBatch.MAGIC_VALUE_V2, timestamp = now - 1001L,
+      codec = CompressionType.GZIP)
+    val e = intercept[RecordValidationException] {
+      LogValidator.validateMessagesAndAssignOffsets(
+        records,
+        topicPartition,
+        offsetCounter = new LongRef(0),
+        time = time,
+        now = System.currentTimeMillis(),
+        sourceCodec = DefaultCompressionCodec,
+        targetCodec = DefaultCompressionCodec,
+        magic = RecordBatch.MAGIC_VALUE_V1,
+        compactedTopic = false,
+        timestampType = TimestampType.CREATE_TIME,
+        timestampDiffMaxMs = 1000L,
+        partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+        origin = AppendOrigin.Client,
+        interBrokerProtocolVersion = ApiVersion.latestVersion,
+        brokerTopicStats = brokerTopicStats)
+    }
+
+    assertTrue(e.invalidException.isInstanceOf[InvalidTimestampException])
+    assertTrue(e.recordErrors.nonEmpty)
+    assertEquals(e.recordErrors.size, 3)
+  }
+
+  @Test
+  def testInvalidRecordExceptionHasBatchIndex(): Unit = {
+    val e = intercept[RecordValidationException] {
+      validateMessages(recordsWithInvalidInnerMagic(
+        RecordBatch.MAGIC_VALUE_V0, RecordBatch.MAGIC_VALUE_V1, CompressionType.GZIP),
+        RecordBatch.MAGIC_VALUE_V0, CompressionType.GZIP, CompressionType.GZIP)
+    }
+
+    assertTrue(e.invalidException.isInstanceOf[InvalidRecordException])
+    assertTrue(e.recordErrors.nonEmpty)
+    // recordsWithInvalidInnerMagic creates 20 records
+    assertEquals(e.recordErrors.size, 20)
+    e.recordErrors.foreach(assertNotNull(_))
+  }
+
+  @Test
+  def testBatchWithInvalidRecordsAndInvalidTimestamp(): Unit = {
+    val records = (0 until 5).map(id =>
+      LegacyRecord.create(RecordBatch.MAGIC_VALUE_V0, 0L, null, id.toString.getBytes())
+    )
+
+    val buffer = ByteBuffer.allocate(1024)
+    val builder = MemoryRecords.builder(buffer, RecordBatch.MAGIC_VALUE_V1, CompressionType.GZIP,
+      TimestampType.CREATE_TIME, 0L)
+    var offset = 0
+
+    // we want to mix in a record with invalid timestamp range
+    builder.appendUncheckedWithOffset(offset, LegacyRecord.create(RecordBatch.MAGIC_VALUE_V1,
+      1200L, null, "timestamp".getBytes))
+    records.foreach { record =>
+      offset += 30
+      builder.appendUncheckedWithOffset(offset, record)
+    }
+    val invalidOffsetTimestampRecords = builder.build()
+
+    val e = intercept[RecordValidationException] {
+      validateMessages(invalidOffsetTimestampRecords,
+        RecordBatch.MAGIC_VALUE_V0, CompressionType.GZIP, CompressionType.GZIP)
+    }
+    // if there is a mix of both regular InvalidRecordException and InvalidTimestampException,
+    // InvalidTimestampException takes precedence
+    assertTrue(e.invalidException.isInstanceOf[InvalidTimestampException])
+    assertTrue(e.recordErrors.nonEmpty)
+    assertEquals(6, e.recordErrors.size)
+  }
+
+  private def testBatchWithoutRecordsNotAllowed(sourceCodec: CompressionCodec, targetCodec: CompressionCodec): Unit = {
+    val offset = 1234567
+    val (producerId, producerEpoch, baseSequence, isTransactional, partitionLeaderEpoch) =
+      (1324L, 10.toShort, 984, true, 40)
+    val buffer = ByteBuffer.allocate(DefaultRecordBatch.RECORD_BATCH_OVERHEAD)
+    DefaultRecordBatch.writeEmptyHeader(buffer, RecordBatch.CURRENT_MAGIC_VALUE, producerId, producerEpoch,
+      baseSequence, 0L, 5L, partitionLeaderEpoch, TimestampType.CREATE_TIME, System.currentTimeMillis(),
+      isTransactional, false)
+    buffer.flip()
+    val records = MemoryRecords.readableRecords(buffer)
+    LogValidator.validateMessagesAndAssignOffsets(records,
+      topicPartition,
+      offsetCounter = new LongRef(offset),
+      time = time,
+      now = System.currentTimeMillis(),
+      sourceCodec = sourceCodec,
+      targetCodec = targetCodec,
+      compactedTopic = false,
+      magic = RecordBatch.CURRENT_MAGIC_VALUE,
+      timestampType = TimestampType.CREATE_TIME,
+      timestampDiffMaxMs = 5000L,
+      partitionLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH,
+      origin = AppendOrigin.Client,
+      interBrokerProtocolVersion = ApiVersion.latestVersion,
+      brokerTopicStats = brokerTopicStats)
+  }
+
+  private def createRecords(magicValue: Byte,
+                            timestamp: Long = RecordBatch.NO_TIMESTAMP,
+                            codec: CompressionType): MemoryRecords = {
+    val buf = ByteBuffer.allocate(512)
+    val builder = MemoryRecords.builder(buf, magicValue, codec, TimestampType.CREATE_TIME, 0L)
+    builder.appendWithOffset(0, timestamp, null, "hello".getBytes)
+    builder.appendWithOffset(1, timestamp, null, "there".getBytes)
+    builder.appendWithOffset(2, timestamp, null, "beautiful".getBytes)
+    builder.build()
+  }
+
+  private def createNonIncreasingOffsetRecords(magicValue: Byte,
+                                               timestamp: Long = RecordBatch.NO_TIMESTAMP,
+                                               codec: CompressionType = CompressionType.NONE): MemoryRecords = {
+    val buf = ByteBuffer.allocate(512)
+    val builder = MemoryRecords.builder(buf, magicValue, codec, TimestampType.CREATE_TIME, 0L)
+    builder.appendWithOffset(0, timestamp, null, "hello".getBytes)
+    builder.appendWithOffset(2, timestamp, null, "there".getBytes)
+    builder.appendWithOffset(3, timestamp, null, "beautiful".getBytes)
+    builder.build()
+  }
+
+  private def createTwoBatchedRecords(magicValue: Byte,
+                                      timestamp: Long,
+                                      codec: CompressionType): MemoryRecords = {
+    val buf = ByteBuffer.allocate(2048)
+    var builder = MemoryRecords.builder(buf, magicValue, codec, TimestampType.CREATE_TIME, 0L)
+    builder.append(10L, "1".getBytes(), "a".getBytes())
+    builder.close()
+    builder = MemoryRecords.builder(buf, magicValue, codec, TimestampType.CREATE_TIME, 1L)
+    builder.append(11L, "2".getBytes(), "b".getBytes())
+    builder.append(12L, "3".getBytes(), "c".getBytes())
+    builder.close()
+
+    buf.flip()
+    MemoryRecords.readableRecords(buf.slice())
+  }
+
+  /* check that offsets are assigned consecutively from the given base offset */
+  def checkOffsets(records: MemoryRecords, baseOffset: Long): Unit = {
+    assertTrue("Message set should not be empty", records.records.asScala.nonEmpty)
+    var offset = baseOffset
+    for (entry <- records.records.asScala) {
+      assertEquals("Unexpected offset in message set iterator", offset, entry.offset)
+      offset += 1
+    }
+  }
+
+  private def recordsWithNonSequentialInnerOffsets(magicValue: Byte,
+                                                   codec: CompressionType,
+                                                   numRecords: Int): MemoryRecords = {
+    val records = (0 until numRecords).map { id =>
+      new SimpleRecord(id.toString.getBytes)
+    }
+
+    val buffer = ByteBuffer.allocate(1024)
+    val builder = MemoryRecords.builder(buffer, magicValue, codec, TimestampType.CREATE_TIME, 0L)
+
+    records.foreach { record =>
+      builder.appendUncheckedWithOffset(0, record)
+    }
+
+    builder.build()
+  }
+
+  private def recordsWithInvalidInnerMagic(batchMagicValue: Byte,
+                                           recordMagicValue: Byte,
+                                           codec: CompressionType): MemoryRecords = {
+    val records = (0 until 20).map(id =>
+      LegacyRecord.create(recordMagicValue,
+        RecordBatch.NO_TIMESTAMP,
+        id.toString.getBytes,
+        id.toString.getBytes))
+
+    val buffer = ByteBuffer.allocate(math.min(math.max(records.map(_.sizeInBytes()).sum / 2, 1024), 1 << 16))
+    val builder = MemoryRecords.builder(buffer, batchMagicValue, codec,
+      TimestampType.CREATE_TIME, 0L)
+
+    var offset = 1234567
+    records.foreach { record =>
+      builder.appendUncheckedWithOffset(offset, record)
+      offset += 1
+    }
+
+    builder.build()
+  }
+
+  def maybeCheckBaseTimestamp(expected: Long, batch: RecordBatch): Unit = {
+    batch match {
+      case b: DefaultRecordBatch =>
+        assertEquals(s"Unexpected base timestamp of batch $batch", expected, b.firstTimestamp)
+      case _ => // no-op
+    }
+  }
+
+  /**
+    * expectedLogAppendTime is only checked if batch.magic is V2 or higher
+    */
+  def validateLogAppendTime(expectedLogAppendTime: Long, expectedBaseTimestamp: Long, batch: RecordBatch): Unit = {
+    assertTrue(batch.isValid)
+    assertTrue(batch.timestampType == TimestampType.LOG_APPEND_TIME)
+    assertEquals(s"Unexpected max timestamp of batch $batch", expectedLogAppendTime, batch.maxTimestamp)
+    maybeCheckBaseTimestamp(expectedBaseTimestamp, batch)
+    for (record <- batch.asScala) {
+      assertTrue(record.isValid)
+      assertEquals(s"Unexpected timestamp of record $record", expectedLogAppendTime, record.timestamp)
+    }
+  }
+
+  def verifyRecordConversionStats(stats: RecordConversionStats, numConvertedRecords: Int, records: MemoryRecords,
+                                  compressed: Boolean): Unit = {
+    assertNotNull("Records processing info is null", stats)
+    assertEquals(numConvertedRecords, stats.numRecordsConverted)
+    if (numConvertedRecords > 0) {
+      assertTrue(s"Conversion time not recorded $stats", stats.conversionTimeNanos >= 0)
+      assertTrue(s"Conversion time not valid $stats", stats.conversionTimeNanos <= TimeUnit.MINUTES.toNanos(1))
+    }
+    val originalSize = records.sizeInBytes
+    val tempBytes = stats.temporaryMemoryBytes
+    if (numConvertedRecords > 0 && compressed)
+      assertTrue(s"Temp bytes too small, orig=$originalSize actual=$tempBytes", tempBytes > originalSize)
+    else if (numConvertedRecords > 0 || compressed)
+      assertTrue("Temp bytes not updated", tempBytes > 0)
+    else
+      assertEquals(0, tempBytes)
+  }
+}
+
+---------
+The target benchmark functions are:
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.kafka.jmh.record;
+
+import kafka.common.LongRef;
+import kafka.log.AppendOrigin;
+import kafka.log.LogValidator;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.record.CompressionType;
+import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.record.TimestampType;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.Fork;
+import org.openjdk.jmh.annotations.Measurement;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.Warmup;
+import org.openjdk.jmh.infra.Blackhole;
+
+@State(Scope.Benchmark)
+@Fork(value = 1)
+@Warmup(iterations = 5)
+@Measurement(iterations = 15)
+public class UncompressedRecordBatchValidationBenchmark extends BaseRecordBatchBenchmark {
+
+    @Override
+    CompressionType compressionType() {
+        return CompressionType.NONE;
+    }
+
+    @Benchmark
+    public void measureAssignOffsetsNonCompressed(Blackhole bh) {
+        MemoryRecords records = MemoryRecords.readableRecords(singleBatchBuffer.duplicate());
+        LogValidator.assignOffsetsNonCompressed(records, new TopicPartition("a", 0),
+                new LongRef(startingOffset), System.currentTimeMillis(), false,
+                TimestampType.CREATE_TIME, Long.MAX_VALUE, 0,
+                new AppendOrigin.Client$(), messageVersion, brokerTopicStats);
+    }
+}

@@ -1,74 +1,58 @@
-Based on the performance issue to avoid computing cardinality for run containers when not needed, I'll optimize the `checkedAdd` method in `RoaringBitmap.java`. The key change is to avoid computing the full cardinality for run containers when we can determine if the value was added by checking the run container directly.
+Based on the performance issue "Avoid computing cardinality for run containers when not needed", I'll optimize the `checkedAdd` method in `RoaringBitmap.java` to avoid unnecessary cardinality computations for run containers.
 
-Here's the optimized version of `RoaringBitmap.java` with the changes:
+Here's the optimized version of `RoaringBitmap.java` with changes focused on the `checkedAdd` method:
 
 ```java
-/*
- * (c) the authors Licensed under the Apache License, Version 2.0.
+/**
+ * Add the value to the container (set the value to "true"), whether it already appears or not.
+ *
+ * @param x integer value
+ * @return true if the added int wasn't already contained in the bitmap. False otherwise.
  */
-
-package org.roaringbitmap;
-
-// ... (keep all existing imports)
-
-public class RoaringBitmap implements Cloneable, Serializable, Iterable<Integer>, Externalizable,
-    ImmutableBitmapDataProvider, BitmapDataProvider, AppendableStorage<Container> {
-
-    // ... (keep all existing code until checkedAdd method)
-    
-    /**
-     * Add the value to the container (set the value to "true"), whether it already appears or not.
-     *
-     * @param x integer value
-     * @return true if the added int wasn't already contained in the bitmap. False otherwise.
-     */
-    public boolean checkedAdd(final int x) {
-        final char hb = Util.highbits(x);
-        final int i = highLowContainer.getIndex(hb);
-        if (i >= 0) {
-            Container c = highLowContainer.getContainerAtIndex(i);
-            if (c instanceof RunContainer) {
-                // For RunContainer, use contains then add to avoid computing cardinality
-                int lowbits = Util.lowbits(x);
-                boolean wasPresent = c.contains(lowbits);
-                if (!wasPresent) {
-                    Container newCont = c.add(lowbits);
-                    highLowContainer.setContainerAtIndex(i, newCont);
-                    return true;
-                }
+public boolean checkedAdd(final int x) {
+    final char hb = Util.highbits(x);
+    final int i = highLowContainer.getIndex(hb);
+    if (i >= 0) {
+        Container c = highLowContainer.getContainerAtIndex(i);
+        // For run containers, we can check contains() first since it's O(log n)
+        // which may be faster than add() + cardinality check for large runs
+        if (c instanceof RunContainer) {
+            if (c.contains(Util.lowbits(x))) {
                 return false;
-            } else {
-                // Original logic for other container types
-                int oldCard = c.getCardinality();
-                Container newCont = c.add(Util.lowbits(x));
-                if (newCont != c) {
-                    highLowContainer.setContainerAtIndex(i, newCont);
-                }
-                return newCont.getCardinality() > oldCard;
             }
-        } else {
-            final ArrayContainer newac = new ArrayContainer();
-            highLowContainer.insertNewKeyValueAt(-i - 1, hb, newac.add(Util.lowbits(x)));
+            highLowContainer.setContainerAtIndex(i, c.add(Util.lowbits(x)));
             return true;
+        } else {
+            int oldCard = c.getCardinality();
+            Container newCont = c.add(Util.lowbits(x));
+            highLowContainer.setContainerAtIndex(i, newCont);
+            return newCont.getCardinality() > oldCard;
         }
+    } else {
+        final ArrayContainer newac = new ArrayContainer();
+        highLowContainer.insertNewKeyValueAt(-i - 1, hb, newac.add(Util.lowbits(x)));
+        return true;
     }
-
-    // ... (keep all remaining existing code)
 }
 ```
 
 The key changes are:
 
-1. In the `checkedAdd` method, we first check if the container is a `RunContainer`
-2. For `RunContainer`, we first check if the value exists using `contains()` before adding
-3. This avoids computing the full cardinality just to determine if the value was added
-4. For other container types (ArrayContainer, BitmapContainer), we keep the original logic
+1. For run containers, we first check if the value exists using `contains()` before adding it. This avoids:
+   - The need to compute cardinality before and after adding
+   - Potentially expensive add operations when the value already exists
 
-The optimization works because:
-- For RunContainer, checking containment is O(log n) where n is number of runs
-- Adding to a RunContainer is O(log n) for containment check plus O(n) for insertion if needed
-- This is more efficient than computing full cardinality (O(n)) before and after adding
+2. For other container types (array and bitmap), we keep the original behavior of comparing cardinality before and after adding.
 
-The change maintains all existing functionality while being more efficient for RunContainers. The unit tests should continue to pass since we haven't changed the behavior, just optimized the implementation.
+This optimization is particularly beneficial when:
+- Dealing with large run containers where computing cardinality is expensive
+- The value being added already exists in the run container (common case in many workloads)
 
-The benchmark shows this optimization is particularly helpful when dealing with RunContainers, which is the case after calling `runOptimize()` on the bitmap.
+The optimization takes advantage of the fact that:
+- For run containers, `contains()` is O(log n) via binary search
+- For run containers, adding an existing value doesn't change the container
+- Cardinality computation for run containers requires scanning all runs
+
+The unit tests should continue to pass since we haven't changed the functionality, just optimized the implementation. The benchmark should show improved performance especially for cases with run containers and duplicate values.
+
+The change maintains all the original functionality while avoiding unnecessary work in the common case where values are being added to run containers. This matches the performance issue's goal of avoiding cardinality computations for run containers when not needed.

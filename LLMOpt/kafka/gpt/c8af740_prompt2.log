@@ -1,0 +1,135 @@
+Here is the optimized version of the `ProducerStateManager.java` code, focused on improving the inefficient use of streams for expiring producer IDs:
+
+```java
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * this software for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.kafka.storage.internals.log;
+
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.protocol.types.ArrayOf;
+import org.apache.kafka.common.protocol.types.Field;
+import org.apache.kafka.common.protocol.types.Schema;
+import org.apache.kafka.common.protocol.types.SchemaException;
+import org.apache.kafka.common.protocol.types.Struct;
+import org.apache.kafka.common.protocol.types.Type;
+import org.apache.kafka.common.record.RecordBatch;
+import org.apache.kafka.common.utils.ByteUtils;
+import org.apache.kafka.common.utils.Crc32C;
+import org.apache.kafka.common.utils.LogContext;
+import org.apache.kafka.common.utils.Time;
+import org.slf4j.Logger;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.*;
+import java.util.concurrent.ConcurrentSkipListMap;
+
+/**
+ * Maintains a mapping from ProducerIds to metadata about the last appended entries (e.g.
+ * epoch, sequence number, last offset, etc.)
+ */
+public class ProducerStateManager {
+
+    public static final long LATE_TRANSACTION_BUFFER_MS = 5 * 60 * 1000;
+
+    private static final short PRODUCER_SNAPSHOT_VERSION = 1;
+    private static final String VERSION_FIELD = "version";
+    private static final String CRC_FIELD = "crc";
+    private static final String PRODUCER_ID_FIELD = "producer_id";
+    private static final String LAST_SEQUENCE_FIELD = "last_sequence";
+    private static final String PRODUCER_EPOCH_FIELD = "epoch";
+    private static final String LAST_OFFSET_FIELD = "last_offset";
+    private static final String OFFSET_DELTA_FIELD = "offset_delta";
+    private static final String TIMESTAMP_FIELD = "timestamp";
+    private static final String PRODUCER_ENTRIES_FIELD = "producer_entries";
+    private static final String COORDINATOR_EPOCH_FIELD = "coordinator_epoch";
+    private static final String CURRENT_TXN_FIRST_OFFSET_FIELD = "current_txn_first_offset";
+
+    private final Logger log;
+
+    private final TopicPartition topicPartition;
+    private final int maxTransactionTimeoutMs;
+    private final ProducerStateManagerConfig producerStateManagerConfig;
+    private final Time time;
+
+    private final Map<Long, ProducerStateEntry> producers = new HashMap<>();
+    private final Map<Long, VerificationStateEntry> verificationStates = new HashMap<>();
+
+    // ongoing transactions sorted by the first offset of the transaction
+    private final TreeMap<Long, TxnMetadata> ongoingTxns = new TreeMap<>();
+    private final TreeMap<Long, TxnMetadata> unreplicatedTxns = new TreeMap<>();
+
+    private volatile File logDir;
+    private volatile int producerIdCount = 0;
+    private volatile long oldestTxnLastTimestamp = -1L;
+    private ConcurrentSkipListMap<Long, SnapshotFile> snapshots;
+    private long lastMapOffset = 0L;
+    private long lastSnapOffset = 0L;
+
+    public ProducerStateManager(TopicPartition topicPartition, File logDir, int maxTransactionTimeoutMs,
+                                ProducerStateManagerConfig producerStateManagerConfig, Time time) throws IOException {
+        this.topicPartition = topicPartition;
+        this.logDir = logDir;
+        this.maxTransactionTimeoutMs = maxTransactionTimeoutMs;
+        this.producerStateManagerConfig = producerStateManagerConfig;
+        this.time = time;
+        log = new LogContext("[ProducerStateManager partition=" + topicPartition + "] ").logger(ProducerStateManager.class);
+        snapshots = loadSnapshots();
+    }
+
+    // Other methods ...
+
+    public void removeExpiredProducers(long currentTimeMs) {
+        // Use List to collect expired producer ids
+        List<Long> expiredProducerIds = new ArrayList<>();
+        for (Map.Entry<Long, ProducerStateEntry> entry : producers.entrySet()) {
+            if (isProducerExpired(currentTimeMs, entry.getValue())) {
+                expiredProducerIds.add(entry.getKey());
+            }
+        }
+        removeProducerIds(expiredProducerIds);
+
+        // Use List to collect expired verification state entries
+        List<Long> expiredVerificationKeys = new ArrayList<>();
+        for (Map.Entry<Long, VerificationStateEntry> entry : verificationStates.entrySet()) {
+            if (currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs()) {
+                expiredVerificationKeys.add(entry.getKey());
+            }
+        }
+        expiredVerificationKeys.forEach(verificationStates::remove);
+    }
+
+    private boolean isProducerExpired(long currentTimeMs, ProducerStateEntry producerState) {
+        return !producerState.currentTxnFirstOffset().isPresent() && 
+               currentTimeMs - producerState.lastTimestamp() >= producerStateManagerConfig.producerIdExpirationMs();
+    }
+
+    // Other methods ...
+}
+```
+
+### Summary of Changes:
+1. **Removed Stream Usage**: The `removeExpiredProducers` method has been modified to replace the inefficient use of streams with an iterative approach that directly adds expired producer IDs to a list. This reduces overhead and complexity.
+2. **Efficiency**: Collecting expired producer IDs and verification entries using a simple loop enhances performance, as streaming can introduce unnecessary overhead for large data sets.
+
+This should ensure that the process of expiring producer IDs is more efficient while also maintaining the original functionality of the `ProducerStateManager`.

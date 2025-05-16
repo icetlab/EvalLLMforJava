@@ -1,0 +1,94 @@
+Here’s the optimized version of the `BitSliceIndexBase` class, focusing on improving the performance of the `topK` method for removal of top values. We will achieve this by minimizing the iteration overhead during bitmap modifications and directly utilizing batch operations when possible.
+
+```java
+package org.roaringbitmap.bsi.buffer;
+
+import org.roaringbitmap.BatchIterator;
+import org.roaringbitmap.IntConsumer;
+import org.roaringbitmap.IntIterator;
+import org.roaringbitmap.RoaringBitmap;
+import org.roaringbitmap.bsi.BitmapSliceIndex;
+import org.roaringbitmap.bsi.Pair;
+import org.roaringbitmap.buffer.BufferFastAggregation;
+import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
+import org.roaringbitmap.buffer.MutableRoaringBitmap;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.function.Function;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+
+/**
+ * ParallelAggregationBase
+ */
+public class BitSliceIndexBase {
+
+    // Other members remain unchanged...
+
+    public MutableRoaringBitmap topK(ImmutableRoaringBitmap foundSet, int k) {
+        ImmutableRoaringBitmap fixedFoundSet = foundSet == null ? this.ebM : foundSet;
+        if (k > fixedFoundSet.getLongCardinality() || k < 0) {
+            throw new IllegalArgumentException("TopK param error,cardinality:"
+                    + fixedFoundSet.getLongCardinality() + " k:" + k);
+        }
+
+        MutableRoaringBitmap G = new MutableRoaringBitmap();
+        ImmutableRoaringBitmap E = fixedFoundSet;
+
+        for (int i = this.bitCount() - 1; i >= 0; i--) {
+            MutableRoaringBitmap X = ImmutableRoaringBitmap.or(G, ImmutableRoaringBitmap.and(E, this.bA[i]));
+            long n = X.getLongCardinality();
+            if (n > k) {
+                E = ImmutableRoaringBitmap.and(E, this.bA[i]);
+            } else if (n < k) {
+                G = X;
+                E = ImmutableRoaringBitmap.andNot(E, this.bA[i]);
+            } else {
+                E = ImmutableRoaringBitmap.and(E, this.bA[i]);
+                break;
+            }
+        }
+
+        MutableRoaringBitmap F = ImmutableRoaringBitmap.or(G, E);
+        long excess = F.getLongCardinality() - k;
+        if (excess > 0) {
+            // Use batch removal to efficiently eliminate excess elements.
+            IntIterator iterator = F.getIntIterator();
+            MutableRoaringBitmap turnOff = new MutableRoaringBitmap();
+            int countToRemove = (int) excess;
+
+            // Use batch removal logic
+            while (iterator.hasNext() && countToRemove > 0) {
+                turnOff.add(iterator.next());
+                countToRemove--;
+            }
+            F.andNot(turnOff);
+        }
+
+        if (F.getCardinality() != k)
+            throw new RuntimeException("Error found when computing topK");
+
+        return F;
+    }
+
+    // Other methods remain unchanged...
+}
+```
+
+### Key Changes Made:
+1. **Optimized Removal Logic**: Instead of using a loop which individually removes elements from the `MutableRoaringBitmap` F, I changed the method to accumulate the elements to be removed in a separate `turnOff` bitmap and apply `andNot` once. This minimizes the number of operations and makes the removal process more efficient by leveraging bulk bitmap modifications.
+
+2. **Batch Operations**: We take advantage of batch processing capacities anytime we work with the bitmap (for instance, by using `andNot` after accumulating the elements to remove). This aligns well with the performance benchmarks targets that expect efficient handling of a large number of elements.
+
+### Additional Notes:
+- Ensure that the system’s performance is monitored after these changes since the efficiency improvements may vary with different workloads and conditions.
+- Run the provided unit tests to confirm that the changes maintain original functionality.
+- Keep benchmarking using the benchmark Java Microbenchmark Harness (JMH) tool to test performance improvements with real-world scenarios. 
+
+This revised code structure should meet the requirement to improve performance in the removal of top values while preserving the existing functionalities and meeting unit test validations.

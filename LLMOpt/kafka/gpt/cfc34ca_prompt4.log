@@ -1,0 +1,88 @@
+Here is the optimized version of the `LogManager.scala` file. The main focus is on improving memory allocation efficiency regarding the `logsByDir` method, especially in scenarios with high replica counts. Changes include refactoring the `logsByDir` method to use a more efficient allocation mechanism and reducing temporary mappings.
+
+```scala
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with other entity.
+ *
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * ...
+ */
+
+package kafka.log
+
+import java.io._
+import java.nio.file.Files
+import java.util.concurrent._
+
+import kafka.metrics.KafkaMetricsGroup
+import kafka.server.checkpoints.OffsetCheckpointFile
+import kafka.server.{BrokerState, RecoveringFromUncleanShutdown, _}
+import kafka.utils._
+import kafka.zk.KafkaZkClient
+import org.apache.kafka.common.{KafkaException, TopicPartition}
+import org.apache.kafka.common.utils.Time
+import org.apache.kafka.common.errors.{KafkaStorageException, LogDirNotFoundException}
+
+import scala.jdk.CollectionConverters._
+import scala.collection._
+import scala.collection.mutable.ArrayBuffer
+import scala.util.{Failure, Success, Try}
+
+/**
+ * The entry point to the kafka log management subsystem. 
+ */
+@threadsafe
+class LogManager(logDirs: Seq[File],
+                 initialOfflineDirs: Seq[File],
+                 val topicConfigs: Map[String, LogConfig],
+                 val initialDefaultConfig: LogConfig,
+                 val cleanerConfig: CleanerConfig,
+                 recoveryThreadsPerDataDir: Int,
+                 val flushCheckMs: Long,
+                 val flushRecoveryOffsetCheckpointMs: Long,
+                 val flushStartOffsetCheckpointMs: Long,
+                 val retentionCheckMs: Long,
+                 val maxPidExpirationMs: Int,
+                 scheduler: Scheduler,
+                 val brokerState: BrokerState,
+                 brokerTopicStats: BrokerTopicStats,
+                 logDirFailureChannel: LogDirFailureChannel,
+                 time: Time) extends Logging with KafkaMetricsGroup {
+
+  // Other code remains the same...
+
+  /**
+   * Optimized method to gather and return logs by directory without excessive allocations.
+   */
+  private def logsByDir: Map[String, Map[TopicPartition, Log]] = {
+    // Use a mutable builder to reduce temporary allocations
+    val builder = mutable.Map[String, mutable.Map[TopicPartition, Log]]()
+
+    // Collect logs in a single pass to avoid creating intermediate collections
+    allLogs.foreach { log =>
+      val dir = log.parentDir
+      // Initialize the directory map if it doesn't exist yet
+      val partitionMap = builder.getOrElseUpdate(dir, mutable.Map())
+      partitionMap.put(log.topicPartition, log)
+    }
+
+    // Convert mutable.Map to immutable.Map
+    builder.mapValues(_.toMap).toMap
+  }
+
+  // Other code remains the same...
+}
+
+object LogManager {
+
+  // Object properties and methods remain unchanged.
+}
+```
+
+### Key Changes:
+1. **Efficiency Improvement in `logsByDir`:** Instead of using multiple allocations and transformations, it collects all logs in one pass into a mutable structure. This avoids unnecessary intermediate maps and thereby reduces memory overhead.
+  
+2. **Conversion to Immutable Map:** After populating the logs for each directory, it converts the mutable structure to an immutable one at the end, preserving the original behavior of the method while optimizing performance.
+
+The changes aim to maintain existing functionality while addressing the performance issues related to high replica counts, specifically in `logsByDir`. Ensure that the unit tests are executed against this modified code to confirm correctness.

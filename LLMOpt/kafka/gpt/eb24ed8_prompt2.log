@@ -1,0 +1,207 @@
+To optimize the code according to the identified performance issues related to the `ZstdInputStream` and `ZstdOutputStream`, we need to ensure that we utilize buffering effectively when performing read and write operations. This can be achieved by overriding the `wrapForOutput` and `wrapForInput` methods for the ZSTD compression type to handle larger chunks of data.
+
+Here's the modified `CompressionType.java` file, where I've optimized the `wrapForOutput` and `wrapForInput` methods for the `ZSTD` compression type:
+
+```java
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. See the NOTICE file 
+ * distributed with the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, 
+ * either express or implied. See the License for the specific language governing permissions and limitations 
+ * under the License.
+ */
+package org.apache.kafka.common.record;
+
+import org.apache.kafka.common.KafkaException;
+import org.apache.kafka.common.utils.ByteBufferInputStream;
+import org.apache.kafka.common.utils.ByteBufferOutputStream;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
+import java.nio.ByteBuffer;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
+
+/**
+ * The compression type to use
+ */
+public enum CompressionType {
+    NONE(0, "none", 1.0f) {
+        @Override
+        public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {
+            return buffer;
+        }
+
+        @Override
+        public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {
+            return new ByteBufferInputStream(buffer);
+        }
+    },
+
+    GZIP(1, "gzip", 1.0f) {
+        @Override
+        public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {
+            try {
+                // Buffer input (uncompressed) to 16 KB and output (compressed) to 8 KB
+                return new BufferedOutputStream(new GZIPOutputStream(buffer, 8 * 1024), 16 * 1024);
+            } catch (Exception e) {
+                throw new KafkaException(e);
+            }
+        }
+
+        @Override
+        public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {
+            try {
+                // Buffer output (uncompressed) to 16 KB and input (compressed) to 8 KB
+                return new BufferedInputStream(new GZIPInputStream(new ByteBufferInputStream(buffer), 8 * 1024),
+                        16 * 1024);
+            } catch (Exception e) {
+                throw new KafkaException(e);
+            }
+        }
+    },
+
+    SNAPPY(2, "snappy", 1.0f) {
+        @Override
+        public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {
+            try {
+                return (OutputStream) SnappyConstructors.OUTPUT.invoke(buffer);
+            } catch (Throwable e) {
+                throw new KafkaException(e);
+            }
+        }
+
+        @Override
+        public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {
+            try {
+                return (InputStream) SnappyConstructors.INPUT.invoke(new ByteBufferInputStream(buffer));
+            } catch (Throwable e) {
+                throw new KafkaException(e);
+            }
+        }
+    },
+
+    LZ4(3, "lz4", 1.0f) {
+        @Override
+        public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {
+            try {
+                return new KafkaLZ4BlockOutputStream(buffer, messageVersion == RecordBatch.MAGIC_VALUE_V0);
+            } catch (Throwable e) {
+                throw new KafkaException(e);
+            }
+        }
+
+        @Override
+        public InputStream wrapForInput(ByteBuffer inputBuffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {
+            try {
+                return new KafkaLZ4BlockInputStream(inputBuffer, decompressionBufferSupplier,
+                                                    messageVersion == RecordBatch.MAGIC_VALUE_V0);
+            } catch (Throwable e) {
+                throw new KafkaException(e);
+            }
+        }
+    },
+
+    ZSTD(4, "zstd", 1.0f) {
+        @Override
+        public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {
+            try {
+                // Using a BufferedOutputStream to reduce the number of native calls by buffering writes
+                return new BufferedOutputStream((OutputStream) ZstdConstructors.OUTPUT.invoke(buffer), 64 * 1024);
+            } catch (Throwable e) {
+                throw new KafkaException(e);
+            }
+        }
+
+        @Override
+        public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {
+            try {
+                // Using a BufferedInputStream to reduce the number of native calls by buffering reads
+                return new BufferedInputStream((InputStream) ZstdConstructors.INPUT.invoke(new ByteBufferInputStream(buffer)), 64 * 1024);
+            } catch (Throwable e) {
+                throw new KafkaException(e);
+            }
+        }
+    };
+
+    public final int id;
+    public final String name;
+    public final float rate;
+
+    CompressionType(int id, String name, float rate) {
+        this.id = id;
+        this.name = name;
+        this.rate = rate;
+    }
+
+    public abstract OutputStream wrapForOutput(ByteBufferOutputStream bufferStream, byte messageVersion);
+    public abstract InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier);
+
+    public static CompressionType forId(int id) {
+        switch (id) {
+            case 0:
+                return NONE;
+            case 1:
+                return GZIP;
+            case 2:
+                return SNAPPY;
+            case 3:
+                return LZ4;
+            case 4:
+                return ZSTD;
+            default:
+                throw new IllegalArgumentException("Unknown compression type id: " + id);
+        }
+    }
+
+    public static CompressionType forName(String name) {
+        if (NONE.name.equals(name))
+            return NONE;
+        else if (GZIP.name.equals(name))
+            return GZIP;
+        else if (SNAPPY.name.equals(name))
+            return SNAPPY;
+        else if (LZ4.name.equals(name))
+            return LZ4;
+        else if (ZSTD.name.equals(name))
+            return ZSTD;
+        else
+            throw new IllegalArgumentException("Unknown compression name: " + name);
+    }
+
+    private static class SnappyConstructors {
+        static final MethodHandle INPUT = findConstructor("org.xerial.snappy.SnappyInputStream",
+                MethodType.methodType(void.class, InputStream.class));
+        static final MethodHandle OUTPUT = findConstructor("org.xerial.snappy.SnappyOutputStream",
+                MethodType.methodType(void.class, OutputStream.class));
+    }
+
+    private static class ZstdConstructors {
+        static final MethodHandle INPUT = findConstructor("com.github.luben.zstd.ZstdInputStream",
+            MethodType.methodType(void.class, InputStream.class));
+        static final MethodHandle OUTPUT = findConstructor("com.github.luben.zstd.ZstdOutputStream",
+            MethodType.methodType(void.class, OutputStream.class));
+    }
+
+    private static MethodHandle findConstructor(String className, MethodType methodType) {
+        try {
+            return MethodHandles.publicLookup().findConstructor(Class.forName(className), methodType);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+    }
+}
+```
+
+### Changes Made:
+1. **Buffering for ZSTD Output**:
+   - Implemented a `BufferedOutputStream` with a 64 KB buffer in the `wrapForOutput` method for `ZSTD`. This reduces the number of writes made to the underlying native code by grouping multiple writes together, thus minimizing context switches.
+
+2. **Buffering for ZSTD Input**:
+   - Implemented a `BufferedInputStream` in the `wrapForInput` method for `ZSTD` with a 64 KB buffer. This helps reduce the overhead of multiple reads when retrieving data from the stream, again mitigating context switches.
+
+These changes aim to minimize the impact of frequent allocations and garbage collection by ensuring that data is handled in larger chunks when interacting with the native compression and decompression methods, leading to improved performance. The unit tests should still work correctly after these changes as the logic and expected behavior remain unchanged.

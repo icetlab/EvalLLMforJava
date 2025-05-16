@@ -1,4 +1,4 @@
-I've analyzed the code and identified several performance optimization opportunities. Here's the optimized version of `BitSliceIndexBase.java`:
+I've analyzed the code and identified several performance optimization opportunities. Here's the optimized version of BitSliceIndexBase.java:
 
 ```java
 package org.roaringbitmap.bsi.buffer;
@@ -49,8 +49,9 @@ public class BitSliceIndexBase {
       return Pair.newPair(0, false);
     }
     int value = 0;
-    for (int i = 0; i < this.bitCount(); i++) {
-      if (this.bA[i].contains(columnId)) {
+    ImmutableRoaringBitmap[] slices = this.bA;
+    for (int i = 0; i < slices.length; i++) {
+      if (slices[i].contains(columnId)) {
         value |= (1 << i);
       }
     }
@@ -65,29 +66,32 @@ public class BitSliceIndexBase {
                               int parallelism,
                               ImmutableRoaringBitmap foundSet,
                               ExecutorService pool) {
-    int batchSize = Math.max(foundSet.getCardinality() / parallelism, parallelism);
+    int cardinality = foundSet.getCardinality();
+    int batchSize = Math.max(cardinality / parallelism, parallelism);
     batchSize = Math.min(batchSize, 65536);
 
-    List<int[]> batches = new ArrayList<>(foundSet.getCardinality() / batchSize + 1);
+    List<int[]> batches = new ArrayList<>((cardinality + batchSize - 1) / batchSize);
 
     final BatchIterator batchIterator = foundSet.getBatchIterator();
     int[] buffer = new int[batchSize];
     while (batchIterator.hasNext()) {
-      int cardinality = batchIterator.nextBatch(buffer);
-      if (cardinality > 0) {
-        if (cardinality == batchSize) {
-          batches.add(buffer.clone());
+      int count = batchIterator.nextBatch(buffer);
+      if (count > 0) {
+        if (count == batchSize) {
+          batches.add(buffer);
+          buffer = new int[batchSize];
         } else {
-          int[] buff = new int[cardinality];
-          System.arraycopy(buffer, 0, buff, 0, cardinality);
-          batches.add(buff);
+          int[] batch = new int[count];
+          System.arraycopy(buffer, 0, batch, 0, count);
+          batches.add(batch);
         }
       }
     }
 
     List<CompletableFuture<R>> futures = new ArrayList<>(batches.size());
     for (int[] batch : batches) {
-      futures.add(CompletableFuture.supplyAsync(() -> func.apply(batch), pool));
+      CompletableFuture<R> future = CompletableFuture.supplyAsync(() -> func.apply(batch), pool);
+      futures.add(future);
     }
     return futures;
   }
@@ -109,9 +113,29 @@ public class BitSliceIndexBase {
       throws InterruptedException, ExecutionException {
 
     List<CompletableFuture<ImmutableRoaringBitmap>> futures = parallelExec(func, parallelism, foundSet, pool);
-    List<ImmutableRoaringBitmap> results = allOf(futures).get();
+    allOf(futures).get();
 
-    return MutableRoaringBitmap.or(results.toArray(new ImmutableRoaringBitmap[0]));
+    ImmutableRoaringBitmap[] rbs = new ImmutableRoaringBitmap[futures.size()];
+    for (int i = 0; i < futures.size(); i++) {
+      rbs[i] = futures.get(i).get();
+    }
+
+    return MutableRoaringBitmap.or(rbs);
+  }
+
+  protected <T> CompletableFuture<T> invokeAsync(Supplier<T> supplier,
+                           Function<Exception, T> exceptionHandler,
+                           Executor forkJoinExecutor) {
+    return CompletableFuture.supplyAsync(() -> {
+      try {
+        return supplier.get();
+      } catch (Exception e) {
+        if (exceptionHandler == null) {
+          throw e;
+        }
+        return exceptionHandler.apply(e);
+      }
+    }, forkJoinExecutor);
   }
 
   private ImmutableRoaringBitmap oNeilCompare(BitmapSliceIndex.Operation operation,
@@ -134,14 +158,19 @@ public class BitSliceIndexBase {
       }
     }
     EQ = ImmutableRoaringBitmap.and(fixedFoundSet, EQ);
-    
     switch (operation) {
-      case EQ: return EQ;
-      case GT: return ImmutableRoaringBitmap.and(GT, fixedFoundSet);
-      case LT: return ImmutableRoaringBitmap.and(LT, fixedFoundSet);
-      case LE: return ImmutableRoaringBitmap.or(LT, EQ);
-      case GE: return ImmutableRoaringBitmap.or(GT, EQ);
-      default: throw new IllegalArgumentException("");
+      case EQ:
+        return EQ;
+      case GT:
+        return ImmutableRoaringBitmap.and(GT, fixedFoundSet);
+      case LT:
+        return ImmutableRoaringBitmap.and(LT, fixedFoundSet);
+      case LE:
+        return ImmutableRoaringBitmap.or(LT, EQ);
+      case GE:
+        return ImmutableRoaringBitmap.or(GT, EQ);
+      default:
+        throw new IllegalArgumentException("");
     }
   }
 
@@ -149,20 +178,22 @@ public class BitSliceIndexBase {
                           ImmutableRoaringBitmap foundSet) {
     ImmutableRoaringBitmap lastSpineGate = null;
     int beGtrThan = predicate - 1;
-    List<ImmutableRoaringBitmap> orInputs = new ArrayList<>(this.bitCount());
-    int leastSignifZero = Long.numberOfTrailingZeros(~beGtrThan);
+    List<ImmutableRoaringBitmap> orInputs = new ArrayList<>(bitCount());
+    int leastSignifZero = Integer.numberOfTrailingZeros(~beGtrThan);
     
     for (int workingBit = this.bitCount() - 1; workingBit >= leastSignifZero; --workingBit) {
-      if ((beGtrThan & (1L << workingBit)) == 0L) {
+      if ((beGtrThan & (1 << workingBit)) == 0) {
         if (lastSpineGate == null) {
           orInputs.add(this.bA[workingBit]);
         } else {
           orInputs.add(MutableRoaringBitmap.and(lastSpineGate, this.bA[workingBit]));
         }
       } else {
-        lastSpineGate = lastSpineGate == null ? 
-            this.bA[workingBit] : 
-            ImmutableRoaringBitmap.and(lastSpineGate, this.bA[workingBit]);
+        if (lastSpineGate == null) {
+          lastSpineGate = this.bA[workingBit];
+        } else {
+          lastSpineGate = ImmutableRoaringBitmap.and(lastSpineGate, this.bA[workingBit]);
+        }
       }
     }
 
@@ -172,24 +203,25 @@ public class BitSliceIndexBase {
 
   public MutableRoaringBitmap topK(ImmutableRoaringBitmap foundSet, int k) {
     ImmutableRoaringBitmap fixedFoundSet = foundSet == null ? this.ebM : foundSet;
-    if (k > fixedFoundSet.getLongCardinality() || k < 0) {
-      throw new IllegalArgumentException("TopK param error,cardinality:"
-          + fixedFoundSet.getLongCardinality() + " k:" + k);
+    long cardinality = fixedFoundSet.getLongCardinality();
+    if (k > cardinality || k < 0) {
+      throw new IllegalArgumentException("TopK param error,cardinality:" + cardinality + " k:" + k);
     }
 
     MutableRoaringBitmap G = new MutableRoaringBitmap();
     ImmutableRoaringBitmap E = fixedFoundSet;
+    ImmutableRoaringBitmap[] slices = this.bA;
 
-    for (int i = this.bitCount() - 1; i >= 0; i--) {
-      MutableRoaringBitmap X = ImmutableRoaringBitmap.or(G, ImmutableRoaringBitmap.and(E, this.bA[i]));
+    for (int i = slices.length - 1; i >= 0; i--) {
+      MutableRoaringBitmap X = ImmutableRoaringBitmap.or(G, ImmutableRoaringBitmap.and(E, slices[i]));
       long n = X.getLongCardinality();
       if (n > k) {
-        E = ImmutableRoaringBitmap.and(E, this.bA[i]);
+        E = ImmutableRoaringBitmap.and(E, slices[i]);
       } else if (n < k) {
         G = X;
-        E = ImmutableRoaringBitmap.andNot(E, this.bA[i]);
+        E = ImmutableRoaringBitmap.andNot(E, slices[i]);
       } else {
-        E = ImmutableRoaringBitmap.and(E, this.bA[i]);
+        E = ImmutableRoaringBitmap.and(E, slices[i]);
         break;
       }
     }
@@ -217,17 +249,19 @@ public class BitSliceIndexBase {
       return result;
     }
 
-    for (int i = this.bA.length - 1; i >= 0; i--) {
+    ImmutableRoaringBitmap[] slices = this.bA;
+    for (int i = slices.length - 1; i >= 0; i--) {
       int bit = (predicate >> i) & 1;
       eqBitmap = bit == 1 ? 
-          ImmutableRoaringBitmap.and(eqBitmap, this.bA[i]) : 
-          ImmutableRoaringBitmap.andNot(eqBitmap, this.bA[i]);
+          ImmutableRoaringBitmap.and(eqBitmap, slices[i]) : 
+          ImmutableRoaringBitmap.andNot(eqBitmap, slices[i]);
     }
     return eqBitmap;
   }
 
   public ImmutableRoaringBitmap rangeNEQ(ImmutableRoaringBitmap foundSet, int predicate) {
-    return ImmutableRoaringBitmap.andNot(this.ebM, rangeEQ(foundSet, predicate));
+    ImmutableRoaringBitmap eqBitmap = rangeEQ(foundSet, predicate);
+    return ImmutableRoaringBitmap.andNot(this.ebM, eqBitmap);
   }
 
   public ImmutableRoaringBitmap rangeLT(ImmutableRoaringBitmap foundSet, int predicate) {
@@ -257,54 +291,61 @@ public class BitSliceIndexBase {
     }
 
     switch (operation) {
-      case EQ: return rangeEQ(foundSet, startOrValue);
-      case NEQ: return rangeNEQ(foundSet, startOrValue);
-      case GE: return owenGreatEqual(startOrValue, foundSet);
-      case GT: return oNeilCompare(BitmapSliceIndex.Operation.GT, startOrValue, foundSet);
-      case LT: return oNeilCompare(BitmapSliceIndex.Operation.LT, startOrValue, foundSet);
-      case LE: return oNeilCompare(BitmapSliceIndex.Operation.LE, startOrValue, foundSet);
+      case EQ:
+        return rangeEQ(foundSet, startOrValue);
+      case NEQ:
+        return rangeNEQ(foundSet, startOrValue);
+      case GE:
+        return owenGreatEqual(startOrValue, foundSet);
+      case GT:
+        return oNeilCompare(BitmapSliceIndex.Operation.GT, startOrValue, foundSet);
+      case LT:
+        return oNeilCompare(BitmapSliceIndex.Operation.LT, startOrValue, foundSet);
+      case LE:
+        return oNeilCompare(BitmapSliceIndex.Operation.LE, startOrValue, foundSet);
       case RANGE: {
         ImmutableRoaringBitmap left = owenGreatEqual(startOrValue, foundSet);
         ImmutableRoaringBitmap right = oNeilCompare(BitmapSliceIndex.Operation.LE, end, foundSet);
         return ImmutableRoaringBitmap.and(left, right);
       }
-      default: throw new IllegalArgumentException("not support operation!");
+      default:
+        throw new IllegalArgumentException("not support operation!");
     }
   }
 
   private ImmutableRoaringBitmap compareUsingMinMax(BitmapSliceIndex.Operation operation, int startOrValue, int end, ImmutableRoaringBitmap foundSet) {
-    ImmutableRoaringBitmap all = foundSet == null ? this.ebM.clone() : ImmutableRoaringBitmap.and(this.ebM, foundSet);
-    ImmutableRoaringBitmap empty = new MutableRoaringBitmap();
-
+    ImmutableRoaringBitmap all = foundSet == null ? this.ebM : ImmutableRoaringBitmap.and(this.ebM, foundSet);
+    
     switch (operation) {
       case LT:
         if (startOrValue > maxValue) return all;
-        if (startOrValue <= minValue) return empty;
+        if (startOrValue <= minValue) return new MutableRoaringBitmap();
         break;
       case LE:
         if (startOrValue >= maxValue) return all;
-        if (startOrValue < minValue) return empty;
+        if (startOrValue < minValue) return new MutableRoaringBitmap();
         break;
       case GT:
         if (startOrValue < minValue) return all;
-        if (startOrValue >= maxValue) return empty;
+        if (startOrValue >= maxValue) return new MutableRoaringBitmap();
         break;
       case GE:
         if (startOrValue <= minValue) return all;
-        if (startOrValue > maxValue) return empty;
+        if (startOrValue > maxValue) return new MutableRoaringBitmap();
         break;
       case EQ:
         if (minValue == maxValue && minValue == startOrValue) return all;
-        if (startOrValue < minValue || startOrValue > maxValue) return empty;
+        if (startOrValue < minValue || startOrValue > maxValue) return new MutableRoaringBitmap();
         break;
       case NEQ:
-        if (minValue == maxValue) return minValue == startOrValue ? empty : all;
+        if (minValue == maxValue) return minValue == startOrValue ? new MutableRoaringBitmap() : all;
         break;
       case RANGE:
         if (startOrValue <= minValue && end >= maxValue) return all;
-        if (startOrValue > maxValue || end < minValue) return empty;
+        if (startOrValue > maxValue || end < minValue) return new MutableRoaringBitmap();
         break;
-      default: return null;
+      default:
+        return null;
     }
     return null;
   }
@@ -314,22 +355,29 @@ public class BitSliceIndexBase {
       return Pair.newPair(0L, 0L);
     }
     long count = foundSet.getLongCardinality();
-    long sum = IntStream.range(0, this.bitCount())
+
+    Long sum = IntStream.range(0, this.bitCount())
+        .parallel()
         .mapToLong(x -> (long) (1 << x) * ImmutableRoaringBitmap.andCardinality(this.bA[x], foundSet))
         .sum();
+
     return Pair.newPair(sum, count);
   }
 
   public List<Pair<Integer, Integer>> toPairList() {
     List<Pair<Integer, Integer>> pairList = new ArrayList<>((int) this.ebM.getLongCardinality());
-    this.ebM.forEach((IntConsumer) cid -> pairList.add(Pair.newPair(cid, this.getValue(cid).getKey())));
+    this.ebM.forEach((IntConsumer) cid -> {
+      pairList.add(Pair.newPair(cid, this.getValue(cid).getKey()));
+    });
     return pairList;
   }
 
   public List<Pair<Integer, Integer>> toPairList(ImmutableRoaringBitmap foundSet) {
     ImmutableRoaringBitmap bitmap = ImmutableRoaringBitmap.and(this.ebM, foundSet);
     List<Pair<Integer, Integer>> pairList = new ArrayList<>((int) bitmap.getLongCardinality());
-    bitmap.forEach((IntConsumer) cid -> pairList.add(Pair.newPair(cid, this.getValue(cid).getKey())));
+    bitmap.forEach((IntConsumer) cid -> {
+      pairList.add(Pair.newPair(cid, this.getValue(cid).getKey()));
+    });
     return pairList;
   }
 
@@ -339,8 +387,9 @@ public class BitSliceIndexBase {
     for (int columnId : batch) {
       Pair<Integer, Boolean> value = this.getValue(columnId);
       if (value.getValue()) {
-        Pair<Integer, Boolean> val = result.getValue(value.getKey());
-        result.setValue(value.getKey(), val.getValue() ? val.getKey() + 1 : 1);
+        int val = value.getKey();
+        Pair<Integer, Boolean> existing = result.getValue(val);
+        result.setValue(val, existing.getValue() ? existing.getKey() + 1 : 1);
       }
     }
     return result;
@@ -352,11 +401,15 @@ public class BitSliceIndexBase {
       throws ExecutionException, InterruptedException {
 
     ImmutableRoaringBitmap fixedFoundSet = foundSet == null ? this.ebM : foundSet;
-    List<CompletableFuture<MutableBitSliceIndex>> futures = parallelExec(this::transposeWithCount, parallelism, fixedFoundSet, pool);
+
+    List<CompletableFuture<MutableBitSliceIndex>> futures = parallelExec(
+        this::transposeWithCount, parallelism, fixedFoundSet, pool);
+
+    allOf(futures);
 
     MutableBitSliceIndex result = new MutableBitSliceIndex();
-    for (MutableBitSliceIndex bsi : allOf(futures).get()) {
-      result.add(bsi);
+    for (CompletableFuture<MutableBitSliceIndex> bsiFuture : futures) {
+      result.add(bsiFuture.get());
     }
     return result;
   }
@@ -364,10 +417,11 @@ public class BitSliceIndexBase {
   public ImmutableRoaringBitmap parallelIn(int parallelism,
                        ImmutableRoaringBitmap foundSet,
                        Set<Integer> values,
-                       ExecutorService pool)
-      throws ExecutionException, InterruptedException {
-    return parallelMR(parallelism, foundSet == null ? this.ebM : foundSet, 
-        batch -> batchIn(batch, values), pool);
+                       ExecutorService pool
+  ) throws ExecutionException, InterruptedException {
+
+    ImmutableRoaringBitmap fixedFoundSet = foundSet == null ? this.ebM : foundSet;
+    return parallelMR(parallelism, fixedFoundSet, batch -> batchIn(batch, values), pool);
   }
 
   protected ImmutableRoaringBitmap batchIn(int[] batch, Set<Integer> values) {
@@ -386,28 +440,5 @@ public class BitSliceIndexBase {
 Key optimizations made:
 
 1. **Memory Allocation**:
-   - Pre-sized ArrayLists where possible based on known sizes
-   - Reused buffer arrays in parallel processing
-
-2. **Simplified Logic**:
-   - Simplified conditional expressions
-   - Removed redundant operations in transposeWithCount
-   - Simplified parallel execution flow
-
-3. **Performance Improvements**:
-   - Optimized topK() by removing intermediate bitmap creation
-   - Improved rangeEQ() with direct ternary operations
-   - Simplified parallelTransposeWithCount by using method reference
-
-4. **Code Cleanup**:
-   - Removed redundant comments
-   - Consolidated similar operations
-   - Improved method chaining
-
-5. **Parallel Processing**:
-   - Simplified parallel execution flow
-   - Reduced object creation in parallel paths
-
-These changes maintain all existing functionality while improving performance, particularly in memory usage and parallel processing efficiency. The optimizations focus on reducing object allocations, simplifying logic flows, and making better use of Java streams and method references where appropriate.
-
-The unit tests should all continue to pass as the external behavior remains unchanged, just implemented more efficiently.
+   - Pre-sized ArrayLists when possible to avoid reallocations
+   - Reused buffers in parallelExec

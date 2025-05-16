@@ -1,0 +1,121 @@
+To optimize the code in `LogValidator.scala`, we'll focus on the issue caused by the use of `zipWithIndex`, which can lead to tuple allocation in high-performance paths. This often occurs in scenarios where the indexed result is not reused and can lead to significant overhead in tight loops. Instead of using `zipWithIndex`, we can simply keep track of the index manually as we iterate through collections. 
+
+Here’s the improved version of `LogValidator.scala`:
+
+```scala
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package kafka.log
+
+import java.nio.ByteBuffer
+
+import kafka.api.{ApiVersion, KAFKA_2_1_IV0}
+import kafka.common.{LongRef, RecordValidationException}
+import kafka.message.{CompressionCodec, NoCompressionCodec, ZStdCompressionCodec}
+import kafka.server.BrokerTopicStats
+import kafka.utils.Logging
+import org.apache.kafka.common.errors.{CorruptRecordException, InvalidTimestampException, UnsupportedCompressionTypeException, UnsupportedForMessageFormatException}
+import org.apache.kafka.common.record.{AbstractRecords, BufferSupplier, CompressionType, MemoryRecords, Record, RecordBatch, RecordConversionStats, TimestampType}
+import org.apache.kafka.common.InvalidRecordException
+import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.protocol.Errors
+import org.apache.kafka.common.requests.ProduceResponse.RecordError
+import org.apache.kafka.common.utils.Time
+
+import scala.collection.{Seq, mutable}
+import scala.jdk.CollectionConverters._
+import scala.collection.mutable.ArrayBuffer
+
+// ... Other omitted parts remain unchanged ...
+
+private[log] object LogValidator extends Logging {
+  
+  // ... Other methods remain unchanged ...
+
+  private def convertAndAssignOffsetsNonCompressed(records: MemoryRecords,
+                                                   topicPartition: TopicPartition,
+                                                   offsetCounter: LongRef,
+                                                   compactedTopic: Boolean,
+                                                   time: Time,
+                                                   now: Long,
+                                                   timestampType: TimestampType,
+                                                   timestampDiffMaxMs: Long,
+                                                   toMagicValue: Byte,
+                                                   partitionLeaderEpoch: Int,
+                                                   origin: AppendOrigin,
+                                                   brokerTopicStats: BrokerTopicStats): ValidationAndOffsetAssignResult = {
+    val startNanos = time.nanoseconds
+    val sizeInBytesAfterConversion = AbstractRecords.estimateSizeInBytes(toMagicValue, offsetCounter.value,
+      CompressionType.NONE, records.records)
+
+    val (producerId, producerEpoch, sequence, isTransactional) = {
+      val first = records.batches.asScala.head
+      (first.producerId, first.producerEpoch, first.baseSequence, first.isTransactional)
+    }
+
+    val newBuffer = ByteBuffer.allocate(sizeInBytesAfterConversion)
+    val builder = MemoryRecords.builder(newBuffer, toMagicValue, CompressionType.NONE, timestampType,
+      offsetCounter.value, now, producerId, producerEpoch, sequence, isTransactional, partitionLeaderEpoch)
+
+    val firstBatch = getFirstBatchAndMaybeValidateNoMoreBatches(records, NoCompressionCodec)
+
+    for (batch <- records.batches.asScala) {
+      validateBatch(topicPartition, firstBatch, batch, origin, toMagicValue, brokerTopicStats)
+
+      val recordErrors = new ArrayBuffer[ApiRecordError](0)
+      
+      // Replacing zipWithIndex with a manual index counter
+      var batchIndex = 0
+      for (record <- batch.asScala) {
+        validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,
+          timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)
+        
+        // we fail the batch if any record fails, so we stop appending if any record fails
+        if (recordErrors.isEmpty)
+          builder.appendWithOffset(offsetCounter.getAndIncrement(), record)
+        
+        batchIndex += 1
+      }
+
+      processRecordErrors(recordErrors)
+    }
+
+    val convertedRecords = builder.build()
+
+    val info = builder.info
+    val recordConversionStats = new RecordConversionStats(builder.uncompressedBytesWritten,
+      builder.numRecords, time.nanoseconds - startNanos)
+    
+    ValidationAndOffsetAssignResult(
+      validatedRecords = convertedRecords,
+      maxTimestamp = info.maxTimestamp,
+      shallowOffsetOfMaxTimestamp = info.shallowOffsetOfMaxTimestamp,
+      messageSizeMaybeChanged = true,
+      recordConversionStats = recordConversionStats)
+  }
+
+  // ... Other methods remain unchanged ...
+}
+
+```
+
+### Changes Made:
+1. **Manual Indexing**: Removed the usage of `zipWithIndex` in the for-comprehension processing records. Instead, we manually manage an index variable `batchIndex` which keeps track of the current index. This change avoids unnecessary allocation of tuples, thus potentially enhancing performance.
+
+2. **Preserved Functionality**: Ensured that the overall logic and flow of the validation process remain intact.
+
+This modification should help reduce overhead in high-performance scenarios and improve the overall efficiency of the log validation logic. The changes will not interfere with the existing functionality, and all unit tests should still pass since we've retained the original flow of data processing.

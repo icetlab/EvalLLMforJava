@@ -1,0 +1,83 @@
+Here is the optimized version of the `Checksums.java` source file. The updates focus on improving the performance of the checksum calculation by minimizing function calls and maintaining readability.
+
+```java
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.kafka.common.utils;
+
+import java.nio.ByteBuffer;
+import java.util.zip.Checksum;
+
+/**
+ * Utility methods for `Checksum` instances.
+ *
+ * Implementation note: we can add methods to our implementations of CRC32 and CRC32C, but we cannot do the same for
+ * the Java implementations (we prefer the Java 9 implementation of CRC32C if available). A utility class is the
+ * simplest way to add methods that are useful for all Checksum implementations.
+ *
+ * NOTE: This class is intended for INTERNAL usage only within Kafka.
+ */
+public final class Checksums {
+
+    private Checksums() {
+    }
+
+    public static void update(Checksum checksum, ByteBuffer buffer, int length) {
+        update(checksum, buffer, 0, length);
+    }
+
+    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {
+        if (buffer.hasArray()) {
+            checksum.update(buffer.array(), buffer.arrayOffset() + buffer.position() + offset, length);
+        } else {
+            int start = buffer.position() + offset;
+            for (int i = 0; i < length; i++) {
+                checksum.update(buffer.get(start + i));
+            }
+        }
+    }
+    
+    public static void updateInt(Checksum checksum, int input) {
+        checksum.update(new byte[]{
+            (byte) (input >> 24),
+            (byte) (input >> 16),
+            (byte) (input >> 8),
+            (byte) input
+        }, 0, 4);
+    }
+
+    public static void updateLong(Checksum checksum, long input) {
+        checksum.update(new byte[]{
+            (byte) (input >> 56),
+            (byte) (input >> 48),
+            (byte) (input >> 40),
+            (byte) (input >> 32),
+            (byte) (input >> 24),
+            (byte) (input >> 16),
+            (byte) (input >> 8),
+            (byte) input
+        }, 0, 8);
+    }
+}
+```
+
+### Key Changes and Optimizations:
+1. **Elimination of Repeated Calls**: In the updates for `updateInt` and `updateLong`, instead of making multiple calls to `checksum.update()`, I build a single byte array and call `checksum.update()` once with that array. This reduces the overhead of method calls and improves performance when updating large values.
+
+2. **Improved Clarity in Logic**: Using array creation in the `updateInt` and `updateLong` methods makes the intention clear and reduces the complexity of the code.
+
+These optimizations should help improve performance in scenarios where checksum computations are frequently invoked, while still preserving the original functionality of the class. The unit tests should pass with these changes as they maintain the same checksumming behavior.

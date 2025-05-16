@@ -3,7 +3,7 @@ import json
 from openai import OpenAI
 
 persona = """You are a Java software performance assistant.
-You will receive a single source code file and unit tests, along with optional benchmark functions, or a description of known performance issues.
+You will receive source code files and unit tests, along with optional benchmark functions, or a description of known performance issues.
 Your task is to return an optimized version of the code.
 Ensure that your changes preserve the original functionality and that the unit tests remain valid.
 Please return the full modified source file as your response."""
@@ -16,7 +16,7 @@ def extract_benchmark_function(benchmark_path):
     if "." in benchmark_path:
         file_path, function_name = benchmark_path.rsplit(".", 1)
         benchmark_path = os.path.join("../", file_path+".java")
-        benchmark_code = read_file(file_path)
+        benchmark_code = read_file(benchmark_path)
         # Extract the specific function from the file
         start_marker = f"{function_name}("
         start_index = benchmark_code.find(start_marker)
@@ -79,14 +79,26 @@ def generate_prompts(json_data, repo_name):
     return [prompt1, prompt2, prompt3, prompt4]
 
 def improve_code_with_gpt(prompt):
-    response = "call gpt"  # Placeholder for actual GPT call
-    return response
+    # OpenAI o4-mini
+    client = OpenAI(
+        api_key="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"
+    )
+    completion = client.chat.completions.create(
+        model="gpt-4o-mini",
+        store=True,
+        messages=[
+            {"role": "system", "content": persona},
+            {"role": "user", "content": prompt},
+        ]
+    )
+    return  completion.choices[0].message.content
 
 def improve_code_with_llama(prompt):
     response = "call llama"  # Placeholder for actual Llama call
     return response
 
 def improve_code_with_deepseek(prompt):
+    # DeepSeek-V3
     client = OpenAI(api_key="sk-f43d955ae076497ba2ca4c507d04d8ba", base_url="https://api.deepseek.com")
     response = client.chat.completions.create(
         model="deepseek-chat",
@@ -109,11 +121,11 @@ def call_llm(model_name, prompt):
         raise ValueError("Unsupported model name. Choose from 'gpt', 'llama', or 'deepseek'.")
 
 def main():
-    model_name = input("Enter the model name (e.g., gpt): ")
-    repo_name = input("Enter the repository name (e.g., kafka): ")
+    # model_name = input("Enter the model name (e.g., gpt): ")
+    # repo_name = input("Enter the repository name (e.g., kafka): ")
 
-    # model_name = "deepseek"
-    # repo_name = "RoaringBitmap"
+    model_name = "gpt"
+    repo_name = "kafka"
 
     prompts_dir = os.path.join("prompts", repo_name)
     if not os.path.exists(prompts_dir):
@@ -135,6 +147,10 @@ def main():
                 print(f"Calling {model_name} with prompt {i} for {json_file}...")
 
                 prompt_file = os.path.join(output_dir, f"{json_data['id']}_prompt{i}.txt")
+                if os.path.exists(prompt_file):
+                    print(f"Prompt file {prompt_file} already exists. Skipping...")
+                    continue
+
                 with open(prompt_file, 'w') as prompt_out:
                     prompt_out.write(prompt)
                 print(f"Prompt saved to {prompt_file}")

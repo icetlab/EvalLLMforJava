@@ -1,0 +1,53 @@
+Here is the optimized version of the `ProducerStateManager.java` file. The primary optimization focuses on improving the `removeExpiredProducers` method to efficiently remove expired producers without collecting all expired keys first.
+
+```java
+package org.apache.kafka.storage.internals.log;
+
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.protocol.types.ArrayOf;
+import org.apache.kafka.common.protocol.types.Field;
+import org.apache.kafka.common.protocol.types.Schema;
+import org.apache.kafka.common.protocol.types.SchemaException;
+import org.apache.kafka.common.protocol.types.Struct;
+import org.apache.kafka.common.protocol.types.Type;
+import org.apache.kafka.common.record.RecordBatch;
+import org.apache.kafka.common.utils.ByteUtils;
+import org.apache.kafka.common.utils.Crc32C;
+import org.apache.kafka.common.utils.LogContext;
+import org.apache.kafka.common.utils.Time;
+import org.slf4j.Logger;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.*;
+import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+public class ProducerStateManager {
+    // ... (the rest of your unchanged code)
+
+    public void removeExpiredProducers(long currentTimeMs) {
+        // Removing expired producers without collecting all expired keys first
+        producers.entrySet().removeIf(entry -> isProducerExpired(currentTimeMs, entry.getValue()));
+        producerIdCount = producers.size();
+
+        verificationStates.entrySet().removeIf(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs());
+    }
+
+    // ... (the rest of your unchanged code)
+}
+```
+
+### Changes Made:
+1. **Optimized `removeExpiredProducers`**:
+    - Instead of collecting the keys of expired producers into a list and then removing them afterward (which involves two loops through the map), I replaced it with `removeIf` which modifies the map directly while iterating. This approach minimizes the time complexity and reduces memory overhead.
+    - The same approach is now applied to clearing expired entries in the `verificationStates`.
+
+This should help improve the performance of the `ProducerStateManager` when handling the expiration of producers. The rest of the class remains unchanged to ensure that existing functionality and unit tests continue to work as expected.
