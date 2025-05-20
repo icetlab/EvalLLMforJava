@@ -1,0 +1,408 @@
+I'll analyze the Partition.scala file and suggest optimizations while maintaining functionality and passing unit tests. Here are the key optimizations:
+
+1. Optimize ISR update checks by reducing lock contention:
+- Move some read-only operations outside of write locks
+- Add early checks to avoid unnecessary ISR updates
+
+2. Improve leader HW increment logic:
+- Reduce lock scope for HW checks
+- Optimize replica iteration
+
+3. Optimize log operations:
+- Reduce lock contention during log operations
+- Improve handling of future logs
+
+Here's the optimized version:
+
+```scala
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package kafka.cluster
+
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import java.util.{Optional, Properties}
+
+import kafka.api.{ApiVersion, LeaderAndIsr, Request}
+import kafka.common.UnexpectedAppendOffsetException
+import kafka.controller.KafkaController
+import kafka.log._
+import kafka.metrics.KafkaMetricsGroup
+import kafka.server._
+import kafka.server.checkpoints.OffsetCheckpoints
+import kafka.utils._
+import kafka.utils.CoreUtils.{inReadLock, inWriteLock}
+import kafka.zk.{AdminZkClient, KafkaZkClient}
+import org.apache.kafka.common.{IsolationLevel, TopicPartition}
+import org.apache.kafka.common.errors._
+import org.apache.kafka.common.message.LeaderAndIsrRequestData.LeaderAndIsrPartitionState
+import org.apache.kafka.common.protocol.Errors
+import org.apache.kafka.common.protocol.Errors._
+import org.apache.kafka.common.record.FileRecords.TimestampAndOffset
+import org.apache.kafka.common.record.{MemoryRecords, RecordBatch}
+import org.apache.kafka.common.requests.EpochEndOffset._
+import org.apache.kafka.common.requests._
+import org.apache.kafka.common.utils.Time
+
+import scala.collection.JavaConverters._
+import scala.collection.{Map, Seq}
+
+trait PartitionStateStore {
+  def fetchTopicConfig(): Properties
+  def shrinkIsr(controllerEpoch: Int, leaderAndIsr: LeaderAndIsr): Option[Int]
+  def expandIsr(controllerEpoch: Int, leaderAndIsr: LeaderAndIsr): Option[Int]
+}
+
+class ZkPartitionStateStore(topicPartition: TopicPartition,
+                            zkClient: KafkaZkClient,
+                            replicaManager: ReplicaManager) extends PartitionStateStore {
+
+  override def fetchTopicConfig(): Properties = {
+    val adminZkClient = new AdminZkClient(zkClient)
+    adminZkClient.fetchEntityConfig(ConfigType.Topic, topicPartition.topic)
+  }
+
+  override def shrinkIsr(controllerEpoch: Int, leaderAndIsr: LeaderAndIsr): Option[Int] = {
+    val newVersionOpt = updateIsr(controllerEpoch, leaderAndIsr)
+    if (newVersionOpt.isDefined)
+      replicaManager.isrShrinkRate.mark()
+    newVersionOpt
+  }
+
+  override def expandIsr(controllerEpoch: Int, leaderAndIsr: LeaderAndIsr): Option[Int] = {
+    val newVersionOpt = updateIsr(controllerEpoch, leaderAndIsr)
+    if (newVersionOpt.isDefined)
+      replicaManager.isrExpandRate.mark()
+    newVersionOpt
+  }
+
+  private def updateIsr(controllerEpoch: Int, leaderAndIsr: LeaderAndIsr): Option[Int] = {
+    val (updateSucceeded, newVersion) = ReplicationUtils.updateLeaderAndIsr(zkClient, topicPartition,
+      leaderAndIsr, controllerEpoch)
+
+    if (updateSucceeded) {
+      replicaManager.recordIsrChange(topicPartition)
+      Some(newVersion)
+    } else {
+      replicaManager.failedIsrUpdatesRate.mark()
+      None
+    }
+  }
+}
+
+class DelayedOperations(topicPartition: TopicPartition,
+                        produce: DelayedOperationPurgatory[DelayedProduce],
+                        fetch: DelayedOperationPurgatory[DelayedFetch],
+                        deleteRecords: DelayedOperationPurgatory[DelayedDeleteRecords]) {
+
+  def checkAndCompleteAll(): Unit = {
+    val requestKey = TopicPartitionOperationKey(topicPartition)
+    fetch.checkAndComplete(requestKey)
+    produce.checkAndComplete(requestKey)
+    deleteRecords.checkAndComplete(requestKey)
+  }
+
+  def checkAndCompleteFetch(): Unit = {
+    fetch.checkAndComplete(TopicPartitionOperationKey(topicPartition))
+  }
+
+  def checkAndCompleteProduce(): Unit = {
+    produce.checkAndComplete(TopicPartitionOperationKey(topicPartition))
+  }
+
+  def checkAndCompleteDeleteRecords(): Unit = {
+    deleteRecords.checkAndComplete(TopicPartitionOperationKey(topicPartition))
+  }
+
+  def numDelayedDelete: Int = deleteRecords.numDelayed
+
+  def numDelayedFetch: Int = fetch.numDelayed
+
+  def numDelayedProduce: Int = produce.numDelayed
+}
+
+object Partition extends KafkaMetricsGroup {
+  def apply(topicPartition: TopicPartition,
+            time: Time,
+            replicaManager: ReplicaManager): Partition = {
+    val zkIsrBackingStore = new ZkPartitionStateStore(
+      topicPartition,
+      replicaManager.zkClient,
+      replicaManager)
+
+    val delayedOperations = new DelayedOperations(
+      topicPartition,
+      replicaManager.delayedProducePurgatory,
+      replicaManager.delayedFetchPurgatory,
+      replicaManager.delayedDeleteRecordsPurgatory)
+
+    new Partition(topicPartition,
+      replicaLagTimeMaxMs = replicaManager.config.replicaLagTimeMaxMs,
+      interBrokerProtocolVersion = replicaManager.config.interBrokerProtocolVersion,
+      localBrokerId = replicaManager.config.brokerId,
+      time = time,
+      stateStore = zkIsrBackingStore,
+      delayedOperations = delayedOperations,
+      metadataCache = replicaManager.metadataCache,
+      logManager = replicaManager.logManager)
+  }
+
+  def removeMetrics(topicPartition: TopicPartition): Unit = {
+    val tags = Map("topic" -> topicPartition.topic, "partition" -> topicPartition.partition.toString)
+    removeMetric("UnderReplicated", tags)
+    removeMetric("UnderMinIsr", tags)
+    removeMetric("InSyncReplicasCount", tags)
+    removeMetric("ReplicasCount", tags)
+    removeMetric("LastStableOffsetLag", tags)
+    removeMetric("AtMinIsr", tags)
+  }
+}
+
+sealed trait AssignmentState {
+  def replicas: Seq[Int]
+  def replicationFactor: Int = replicas.size
+  def isAddingReplica(brokerId: Int): Boolean = false
+}
+
+case class OngoingReassignmentState(addingReplicas: Seq[Int],
+                                    removingReplicas: Seq[Int],
+                                    replicas: Seq[Int]) extends AssignmentState {
+
+  override def replicationFactor: Int = replicas.diff(addingReplicas).size
+  override def isAddingReplica(replicaId: Int): Boolean = addingReplicas.contains(replicaId)
+}
+
+case class SimpleAssignmentState(replicas: Seq[Int]) extends AssignmentState
+
+class Partition(val topicPartition: TopicPartition,
+                val replicaLagTimeMaxMs: Long,
+                interBrokerProtocolVersion: ApiVersion,
+                localBrokerId: Int,
+                time: Time,
+                stateStore: PartitionStateStore,
+                delayedOperations: DelayedOperations,
+                metadataCache: MetadataCache,
+                logManager: LogManager) extends Logging with KafkaMetricsGroup {
+
+  private val remoteReplicasMap = new Pool[Int, Replica]
+  private val leaderIsrUpdateLock = new ReentrantReadWriteLock
+  private var zkVersion: Int = LeaderAndIsr.initialZKVersion
+  @volatile private var leaderEpoch: Int = LeaderAndIsr.initialLeaderEpoch - 1
+  @volatile private var leaderEpochStartOffsetOpt: Option[Long] = None
+  @volatile var leaderReplicaIdOpt: Option[Int] = None
+  @volatile var inSyncReplicaIds = Set.empty[Int]
+  @volatile var assignmentState: AssignmentState = SimpleAssignmentState(Seq.empty)
+
+  @volatile var log: Option[Log] = None
+  @volatile var futureLog: Option[Log] = None
+
+  private var controllerEpoch: Int = KafkaController.InitialControllerEpoch
+  this.logIdent = s"[Partition $topicPartition broker=$localBrokerId] "
+
+  private val tags = Map("topic" -> topicPartition.topic, "partition" -> topicPartition.partition.toString)
+
+  newGauge("UnderReplicated", () => if (isUnderReplicated) 1 else 0, tags)
+  newGauge("InSyncReplicasCount", () => if (isLeader) inSyncReplicaIds.size else 0, tags)
+  newGauge("UnderMinIsr", () => if (isUnderMinIsr) 1 else 0, tags)
+  newGauge("AtMinIsr", () => if (isAtMinIsr) 1 else 0, tags)
+  newGauge("ReplicasCount", () => if (isLeader) assignmentState.replicationFactor else 0, tags)
+  newGauge("LastStableOffsetLag", () => log.map(_.lastStableOffsetLag).getOrElse(0), tags)
+
+  def isUnderReplicated: Boolean = isLeader && (assignmentState.replicationFactor - inSyncReplicaIds.size) > 0
+  def isUnderMinIsr: Boolean = leaderLogIfLocal.exists { inSyncReplicaIds.size < _.config.minInSyncReplicas }
+  def isAtMinIsr: Boolean = leaderLogIfLocal.exists { inSyncReplicaIds.size == _.config.minInSyncReplicas }
+  def isReassigning: Boolean = assignmentState.isInstanceOf[OngoingReassignmentState]
+  def isAddingLocalReplica: Boolean = assignmentState.isAddingReplica(localBrokerId)
+  def isAddingReplica(replicaId: Int): Boolean = assignmentState.isAddingReplica(replicaId)
+  def topic: String = topicPartition.topic
+  def partitionId: Int = topicPartition.partition
+
+  def maybeCreateFutureReplica(logDir: String, highWatermarkCheckpoints: OffsetCheckpoints): Boolean = {
+    inWriteLock(leaderIsrUpdateLock) {
+      val currentLogDir = localLogOrException.dir.getParent
+      if (currentLogDir == logDir) {
+        info(s"Current log directory $currentLogDir is same as requested log dir $logDir. Skipping future replica creation.")
+        false
+      } else {
+        futureLog match {
+          case Some(partitionFutureLog) =>
+            if (partitionFutureLog.dir.getParent != logDir)
+              throw new IllegalStateException(s"The future log dir ${partitionFutureLog.dir.getParent} of $topicPartition is different from the requested log dir $logDir")
+            false
+          case None =>
+            createLogIfNotExists(Request.FutureLocalReplicaId, isNew = false, isFutureReplica = true, highWatermarkCheckpoints)
+            true
+        }
+      }
+    }
+  }
+
+  def createLogIfNotExists(replicaId: Int, isNew: Boolean, isFutureReplica: Boolean, offsetCheckpoints: OffsetCheckpoints): Unit = {
+    if ((isFutureReplica && futureLog.isEmpty) || (!isFutureReplica && log.isEmpty)) {
+      val newLog = createLog(replicaId, isNew, isFutureReplica, offsetCheckpoints)
+      if (isFutureReplica) {
+        futureLog = Some(newLog)
+      } else {
+        log = Some(newLog)
+      }
+    } else {
+      trace(s"${if (isFutureReplica) "Future Log" else "Log"} already exists.")
+    }
+  }
+
+  private[cluster] def createLog(replicaId: Int, isNew: Boolean, isFutureReplica: Boolean, offsetCheckpoints: OffsetCheckpoints): Log = {
+    val fetchLogConfig = () => {
+      val props = stateStore.fetchTopicConfig()
+      LogConfig.fromProps(logManager.currentDefaultConfig.originals, props)
+    }
+
+    logManager.initializingLog(topicPartition)
+    var maybeLog: Option[Log] = None
+    try {
+      val log = logManager.getOrCreateLog(topicPartition, fetchLogConfig(), isNew, isFutureReplica)
+      val checkpointHighWatermark = offsetCheckpoints.fetch(log.dir.getParent, topicPartition).getOrElse {
+        info(s"No checkpointed highwatermark is found for partition $topicPartition")
+        0L
+      }
+      val initialHighWatermark = log.updateHighWatermark(checkpointHighWatermark)
+      info(s"Log loaded for partition $topicPartition with initial high watermark $initialHighWatermark")
+      maybeLog = Some(log)
+      log
+    } finally {
+      logManager.finishedInitializingLog(topicPartition, maybeLog, fetchLogConfig)
+    }
+  }
+
+  def getReplica(replicaId: Int): Option[Replica] = Option(remoteReplicasMap.get(replicaId))
+
+  private def getReplicaOrException(replicaId: Int): Replica = getReplica(replicaId).getOrElse{
+    throw new ReplicaNotAvailableException(s"Replica with id $replicaId is not available on broker $localBrokerId")
+  }
+
+  private def checkCurrentLeaderEpoch(remoteLeaderEpochOpt: Optional[Integer]): Errors = {
+    if (!remoteLeaderEpochOpt.isPresent) {
+      Errors.NONE
+    } else {
+      val remoteLeaderEpoch = remoteLeaderEpochOpt.get
+      val localLeaderEpoch = leaderEpoch
+      if (localLeaderEpoch > remoteLeaderEpoch)
+        Errors.FENCED_LEADER_EPOCH
+      else if (localLeaderEpoch < remoteLeaderEpoch)
+        Errors.UNKNOWN_LEADER_EPOCH
+      else
+        Errors.NONE
+    }
+  }
+
+  private def getLocalLog(currentLeaderEpoch: Optional[Integer],
+                          requireLeader: Boolean): Either[Log, Errors] = {
+    checkCurrentLeaderEpoch(currentLeaderEpoch) match {
+      case Errors.NONE =>
+        if (requireLeader && !isLeader) {
+          Right(Errors.NOT_LEADER_FOR_PARTITION)
+        } else {
+          log match {
+            case Some(partitionLog) => Left(partitionLog)
+            case _ =>
+              if (requireLeader) Right(Errors.NOT_LEADER_FOR_PARTITION)
+              else Right(Errors.REPLICA_NOT_AVAILABLE)
+          }
+        }
+      case error => Right(error)
+    }
+  }
+
+  def localLogOrException: Log = log.getOrElse {
+    throw new ReplicaNotAvailableException(s"Log for partition $topicPartition is not available on broker $localBrokerId")
+  }
+
+  def futureLocalLogOrException: Log = futureLog.getOrElse {
+    throw new ReplicaNotAvailableException(s"Future log for partition $topicPartition is not available on broker $localBrokerId")
+  }
+
+  def leaderLogIfLocal: Option[Log] = log.filter(_ => isLeader)
+
+  def isLeader: Boolean = leaderReplicaIdOpt.contains(localBrokerId)
+
+  private def localLogWithEpochOrException(currentLeaderEpoch: Optional[Integer],
+                                           requireLeader: Boolean): Log = {
+    getLocalLog(currentLeaderEpoch, requireLeader) match {
+      case Left(localLog) => localLog
+      case Right(error) =>
+        throw error.exception(s"Failed to find ${if (requireLeader) "leader " else ""}log for " +
+          s"partition $topicPartition with leader epoch $currentLeaderEpoch. The current leader " +
+          s"is $leaderReplicaIdOpt and the current epoch $leaderEpoch")
+    }
+  }
+
+  def setLog(log: Log, isFutureLog: Boolean): Unit = {
+    if (isFutureLog)
+      futureLog = Some(log)
+    else
+      this.log = Some(log)
+  }
+
+  def remoteReplicas: Iterable[Replica] = remoteReplicasMap.values
+
+  def futureReplicaDirChanged(newDestinationDir: String): Boolean = {
+    inReadLock(leaderIsrUpdateLock) {
+      futureLog.exists(_.dir.getParent != newDestinationDir)
+    }
+  }
+
+  def removeFutureLocalReplica(deleteFromLogDir: Boolean = true): Unit = {
+    inWriteLock(leaderIsrUpdateLock) {
+      futureLog = None
+      if (deleteFromLogDir)
+        logManager.asyncDelete(topicPartition, isFuture = true)
+    }
+  }
+
+  def maybeReplaceCurrentWithFutureReplica(): Boolean = {
+    val localReplicaLEO = localLogOrException.logEndOffset
+    futureLog match {
+      case Some(partitionFutureLog) if partitionFutureLog.logEndOffset == localReplicaLEO =>
+        inWriteLock(leaderIsrUpdateLock) {
+          futureLog match {
+            case Some(futurePartitionLog) if futurePartitionLog.logEndOffset == localLogOrException.logEndOffset =>
+              logManager.replaceCurrentWithFutureLog(topicPartition)
+              log = futureLog
+              removeFutureLocalReplica(false)
+              true
+            case _ => false
+          }
+        }
+      case _ => false
+    }
+  }
+
+  def delete(): Unit = {
+    inWriteLock(leaderIsrUpdateLock) {
+      remoteReplicasMap.clear()
+      assignmentState = SimpleAssignmentState(Seq.empty)
+      log = None
+      futureLog = None
+      inSyncReplicaIds = Set.empty
+      leaderReplicaIdOpt = None
+      leaderEpochStartOffsetOpt = None
+      Partition.removeMetrics(topicPartition)
+      logManager.asyncDelete(topicPartition)
+      if (logManager.getLog(topicPartition, isFuture = true).isDefined)
+        logManager.asyncDelete(topicPartition, isFuture = true)
+    }
+  }
+
+  def getLeader

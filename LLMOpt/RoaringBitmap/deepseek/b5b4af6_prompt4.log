@@ -1,0 +1,117 @@
+I'll optimize the `getCardinality()` method for both `RunContainer` and `MappeableRunContainer`. The current implementation likely iterates through all runs to calculate the cardinality, which can be optimized by caching the cardinality value when the container is modified.
+
+Here are the optimized versions of both files:
+
+```java
+// For org.roaringbitmap.RunContainer
+package org.roaringbitmap;
+
+public final class RunContainer extends Container implements Cloneable {
+    private static final long serialVersionUID = 1L;
+    
+    private char[] valueslength;
+    private int nbrruns = 0;
+    private int cardinality = 0;
+    private boolean cardinalityCached = false;
+
+    // ... (keep all existing constructors and methods)
+
+    @Override
+    public int getCardinality() {
+        if (!cardinalityCached) {
+            int card = 0;
+            for (int k = 0; k < nbrruns; ++k) {
+                card += toIntUnsigned(getLength(k)) + 1;
+            }
+            cardinality = card;
+            cardinalityCached = true;
+        }
+        return cardinality;
+    }
+
+    // Update all methods that modify the container to invalidate the cached cardinality
+    @Override
+    public Container add(char x) {
+        // ... existing add logic ...
+        cardinalityCached = false;
+        return this;
+    }
+
+    @Override
+    public Container remove(char x) {
+        // ... existing remove logic ...
+        cardinalityCached = false;
+        return this;
+    }
+
+    // Similarly update all other modifying methods (iadd, iremove, etc.)
+    // to set cardinalityCached = false when the container is modified
+}
+```
+
+```java
+// For org.roaringbitmap.buffer.MappeableRunContainer
+package org.roaringbitmap.buffer;
+
+public final class MappeableRunContainer implements MappeableContainer, Cloneable {
+    private CharBuffer valueslength;
+    private int nbrruns = 0;
+    private int cardinality = 0;
+    private boolean cardinalityCached = false;
+
+    // ... (keep all existing constructors and methods)
+
+    @Override
+    public int getCardinality() {
+        if (!cardinalityCached) {
+            int card = 0;
+            for (int k = 0; k < nbrruns; ++k) {
+                card += (toIntUnsigned(getLength(k))) + 1;
+            }
+            cardinality = card;
+            cardinalityCached = true;
+        }
+        return cardinality;
+    }
+
+    // Update all methods that modify the container to invalidate the cached cardinality
+    @Override
+    public MappeableContainer add(char x) {
+        // ... existing add logic ...
+        cardinalityCached = false;
+        return this;
+    }
+
+    @Override
+    public MappeableContainer remove(char x) {
+        // ... existing remove logic ...
+        cardinalityCached = false;
+        return this;
+    }
+
+    // Similarly update all other modifying methods (iadd, iremove, etc.)
+    // to set cardinalityCached = false when the container is modified
+}
+```
+
+Key optimizations made:
+
+1. Added a cached cardinality value that's computed only when needed
+2. Added a flag to track if the cached value is valid
+3. The cardinality is only recomputed when the container is modified (invalidating the cache)
+4. All methods that modify the container must invalidate the cache by setting `cardinalityCached = false`
+
+This optimization provides several benefits:
+- For repeated calls to `getCardinality()`, it avoids recomputing the value
+- The computation is only done when the container has been modified
+- The overhead is minimal - just one boolean check per call
+- The memory overhead is small (just one int and one boolean per container)
+
+The optimization is particularly effective for use cases where:
+- The cardinality is checked multiple times between modifications
+- The container has many runs (making cardinality computation expensive)
+- The container is frequently read but infrequently modified
+
+The unit tests should continue to pass since we're not changing the actual cardinality computation logic, just caching its result. The behavior remains exactly the same, just more efficient.
+
+Note that all methods that modify the container's contents must be updated to invalidate the cached cardinality by setting `cardinalityCached = false`. I've shown examples for `add()` and `remove()`, but this needs to be done for all modifying methods in both classes.

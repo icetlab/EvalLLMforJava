@@ -1,13 +1,13 @@
-Here is the optimized version of the `ProducerStateManager.java` code, focused on improving the inefficient use of streams for expiring producer IDs:
+Here is the optimized version of the `ProducerStateManager.java` file, with the performance issue addressed by replacing the inefficient stream operations with a more efficient algorithm for expiring producer IDs:
 
 ```java
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements. See the NOTICE file distributed with
- * this software for additional information regarding copyright ownership.
+ * contributor license agreements. See the NOTICE file distributed with this
+ * work for additional information regarding copyright ownership.
  * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * (the "License"); you may not use this file except in compliance with the
+ * License. You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -47,6 +47,18 @@ import java.util.concurrent.ConcurrentSkipListMap;
 /**
  * Maintains a mapping from ProducerIds to metadata about the last appended entries (e.g.
  * epoch, sequence number, last offset, etc.)
+ * <p>
+ * The sequence number is the last number successfully appended to the partition for the given identifier.
+ * The epoch is used for fencing against zombie writers. The offset is the one of the last successful message
+ * appended to the partition.
+ * <p>
+ * As long as a producer id is contained in the map, the corresponding producer can continue to write data.
+ * However, producer ids can be expired due to lack of recent use or if the last written entry has been deleted from
+ * the log (e.g. if the retention policy is "delete"). For compacted topics, the log cleaner will ensure
+ * that the most recent entry from a given producer id is retained in the log provided it hasn't expired due to
+ * age. This ensures that producer ids will not be expired until either the max expiration time has been reached,
+ * or if the topic also is configured for deletion, the segment containing the last written offset has
+ * been deleted.
  */
 public class ProducerStateManager {
 
@@ -65,6 +77,24 @@ public class ProducerStateManager {
     private static final String COORDINATOR_EPOCH_FIELD = "coordinator_epoch";
     private static final String CURRENT_TXN_FIRST_OFFSET_FIELD = "current_txn_first_offset";
 
+    private static final int VERSION_OFFSET = 0;
+    private static final int CRC_OFFSET = VERSION_OFFSET + 2;
+    private static final int PRODUCER_ENTRIES_OFFSET = CRC_OFFSET + 4;
+
+    private static final Schema PRODUCER_SNAPSHOT_ENTRY_SCHEMA =
+            new Schema(new Field(PRODUCER_ID_FIELD, Type.INT64, "The producer ID"),
+                    new Field(PRODUCER_EPOCH_FIELD, Type.INT16, "Current epoch of the producer"),
+                    new Field(LAST_SEQUENCE_FIELD, Type.INT32, "Last written sequence of the producer"),
+                    new Field(LAST_OFFSET_FIELD, Type.INT64, "Last written offset of the producer"),
+                    new Field(OFFSET_DELTA_FIELD, Type.INT32, "The difference of the last sequence and first sequence in the last written batch"),
+                    new Field(TIMESTAMP_FIELD, Type.INT64, "Max timestamp from the last written entry"),
+                    new Field(COORDINATOR_EPOCH_FIELD, Type.INT32, "The epoch of the last transaction coordinator to send an end transaction marker"),
+                    new Field(CURRENT_TXN_FIRST_OFFSET_FIELD, Type.INT64, "The first offset of the on-going transaction (-1 if there is none)"));
+    private static final Schema PID_SNAPSHOT_MAP_SCHEMA =
+            new Schema(new Field(VERSION_FIELD, Type.INT16, "Version of the snapshot file"),
+                    new Field(CRC_FIELD, Type.UNSIGNED_INT32, "CRC of the snapshot data"),
+                    new Field(PRODUCER_ENTRIES_FIELD, new ArrayOf(PRODUCER_SNAPSHOT_ENTRY_SCHEMA), "The entries in the producer table"));
+
     private final Logger log;
 
     private final TopicPartition topicPartition;
@@ -73,21 +103,30 @@ public class ProducerStateManager {
     private final Time time;
 
     private final Map<Long, ProducerStateEntry> producers = new HashMap<>();
+
     private final Map<Long, VerificationStateEntry> verificationStates = new HashMap<>();
 
     // ongoing transactions sorted by the first offset of the transaction
     private final TreeMap<Long, TxnMetadata> ongoingTxns = new TreeMap<>();
+
+    // completed transactions whose markers are at offsets above the high watermark
     private final TreeMap<Long, TxnMetadata> unreplicatedTxns = new TreeMap<>();
 
     private volatile File logDir;
+
+    // The same as producers.size, but for lock-free access.
     private volatile int producerIdCount = 0;
+
+    // Keep track of the last timestamp from the oldest transaction. This is used
+    // to detect (approximately) when a transaction has been left hanging on a partition.
+    // We make the field volatile so that it can be safely accessed without a lock.
     private volatile long oldestTxnLastTimestamp = -1L;
+
     private ConcurrentSkipListMap<Long, SnapshotFile> snapshots;
     private long lastMapOffset = 0L;
     private long lastSnapOffset = 0L;
 
-    public ProducerStateManager(TopicPartition topicPartition, File logDir, int maxTransactionTimeoutMs,
-                                ProducerStateManagerConfig producerStateManagerConfig, Time time) throws IOException {
+    public ProducerStateManager(TopicPartition topicPartition, File logDir, int maxTransactionTimeoutMs, ProducerStateManagerConfig producerStateManagerConfig, Time time) throws IOException {
         this.topicPartition = topicPartition;
         this.logDir = logDir;
         this.maxTransactionTimeoutMs = maxTransactionTimeoutMs;
@@ -97,39 +136,166 @@ public class ProducerStateManager {
         snapshots = loadSnapshots();
     }
 
-    // Other methods ...
+    public int maxTransactionTimeoutMs() {
+        return maxTransactionTimeoutMs;
+    }
 
+    public ProducerStateManagerConfig producerStateManagerConfig() {
+        return producerStateManagerConfig;
+    }
+
+    /**
+     * This method checks whether there is a late transaction in a thread safe manner.
+     */
+    public boolean hasLateTransaction(long currentTimeMs) {
+        long lastTimestamp = oldestTxnLastTimestamp;
+        return lastTimestamp > 0 && (currentTimeMs - lastTimestamp) > maxTransactionTimeoutMs + ProducerStateManager.LATE_TRANSACTION_BUFFER_MS;
+    }
+
+    public void truncateFullyAndReloadSnapshots() throws IOException {
+        log.info("Reloading the producer state snapshots");
+        truncateFullyAndStartAt(0L);
+        snapshots = loadSnapshots();
+    }
+
+    public int producerIdCount() {
+        return producerIdCount;
+    }
+
+    private void addProducerId(long producerId, ProducerStateEntry entry) {
+        producers.put(producerId, entry);
+        producerIdCount = producers.size();
+    }
+
+    private void removeProducerIds(List<Long> keys) {
+        keys.forEach(producers::remove);
+        producerIdCount = producers.size();
+    }
+
+    private void clearProducerIds() {
+        producers.clear();
+        producerIdCount = 0;
+    }
+
+    /**
+     * Maybe create the VerificationStateEntry for a given producer ID and return it.
+     * This method also updates the sequence and epoch accordingly.
+     */
+    public VerificationStateEntry maybeCreateVerificationStateEntry(long producerId, int sequence, short epoch) {
+        VerificationStateEntry entry = verificationStates.computeIfAbsent(producerId, pid ->
+            new VerificationStateEntry(time.milliseconds(), sequence, epoch)
+        );
+        entry.maybeUpdateLowestSequenceAndEpoch(sequence, epoch);
+        return entry;
+    }
+
+    /**
+     * Return the VerificationStateEntry for the producer ID if it exists, otherwise return null.
+     */
+    public VerificationStateEntry verificationStateEntry(long producerId) {
+        return verificationStates.get(producerId);
+    }
+
+    /**
+     * Clear the verificationStateEntry for the given producer ID.
+     */
+    public void clearVerificationStateEntry(long producerId) {
+        verificationStates.remove(producerId);
+    }
+
+    /**
+     * Load producer state snapshots by scanning the logDir.
+     */
+    private ConcurrentSkipListMap<Long, SnapshotFile> loadSnapshots() throws IOException {
+        ConcurrentSkipListMap<Long, SnapshotFile> offsetToSnapshots = new ConcurrentSkipListMap<>();
+        List<SnapshotFile> snapshotFiles = listSnapshotFiles(logDir);
+        for (SnapshotFile snapshotFile : snapshotFiles) {
+            offsetToSnapshots.put(snapshotFile.offset, snapshotFile);
+        }
+        return offsetToSnapshots;
+    }
+
+    /**
+     * Scans the log directory, gathering all producer state snapshot files. Snapshot files which do not have an offset
+     * corresponding to one of the provided offsets in segmentBaseOffsets will be removed, except in the case that there
+     * is a snapshot file at a higher offset than any offset in segmentBaseOffsets.
+     * <p>
+     * The goal here is to remove any snapshot files which do not have an associated segment file, but not to remove the
+     * largest stray snapshot file which was emitted during clean shutdown.
+     */
+    public void removeStraySnapshots(Collection<Long> segmentBaseOffsets) throws IOException {
+        OptionalLong maxSegmentBaseOffset = segmentBaseOffsets.isEmpty() ? OptionalLong.empty() : OptionalLong.of(segmentBaseOffsets.stream().max(Long::compare).get());
+
+        HashSet<Long> baseOffsets = new HashSet<>(segmentBaseOffsets);
+        Optional<SnapshotFile> latestStraySnapshot = Optional.empty();
+
+        ConcurrentSkipListMap<Long, SnapshotFile> snapshots = loadSnapshots();
+        for (SnapshotFile snapshot : snapshots.values()) {
+            long key = snapshot.offset;
+            if (!baseOffsets.contains(key)) {
+                if (latestStraySnapshot.isPresent()) {
+                    SnapshotFile prev = latestStraySnapshot.get();
+                    // this snapshot is now the largest stray snapshot.
+                    prev.deleteIfExists();
+                    snapshots.remove(prev.offset);
+                    latestStraySnapshot = Optional.of(snapshot);
+                } else {
+                    latestStraySnapshot = Optional.of(snapshot);
+                }
+            }
+        }
+
+        // Check to see if the latestStraySnapshot is larger than the largest segment base offset, if it is not,
+        // delete the largestStraySnapshot.
+        if (latestStraySnapshot.isPresent() && maxSegmentBaseOffset.isPresent()) {
+            long strayOffset = latestStraySnapshot.get().offset;
+            long maxOffset = maxSegmentBaseOffset.getAsLong();
+            if (strayOffset < maxOffset) {
+                SnapshotFile removedSnapshot = snapshots.remove(strayOffset);
+                if (removedSnapshot != null) {
+                    removedSnapshot.deleteIfExists();
+                }
+            }
+        }
+
+        this.snapshots = snapshots;
+    }
+
+    /**
+     * Expire any producer ids which have been idle longer than the configured maximum expiration timeout.
+     * Also expire any verification state entries that are lingering as unverified.
+     */
     public void removeExpiredProducers(long currentTimeMs) {
-        // Use List to collect expired producer ids
-        List<Long> expiredProducerIds = new ArrayList<>();
-        for (Map.Entry<Long, ProducerStateEntry> entry : producers.entrySet()) {
+        // Use an iterator to avoid ConcurrentModificationException
+        Iterator<Map.Entry<Long, ProducerStateEntry>> producerIterator = producers.entrySet().iterator();
+        while (producerIterator.hasNext()) {
+            Map.Entry<Long, ProducerStateEntry> entry = producerIterator.next();
             if (isProducerExpired(currentTimeMs, entry.getValue())) {
-                expiredProducerIds.add(entry.getKey());
+                producerIterator.remove();
             }
         }
-        removeProducerIds(expiredProducerIds);
 
-        // Use List to collect expired verification state entries
-        List<Long> expiredVerificationKeys = new ArrayList<>();
-        for (Map.Entry<Long, VerificationStateEntry> entry : verificationStates.entrySet()) {
+        // Expire verification states
+        Iterator<Map.Entry<Long, VerificationStateEntry>> verificationIterator = verificationStates.entrySet().iterator();
+        while (verificationIterator.hasNext()) {
+            Map.Entry<Long, VerificationStateEntry> entry = verificationIterator.next();
             if (currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs()) {
-                expiredVerificationKeys.add(entry.getKey());
+                verificationIterator.remove();
             }
         }
-        expiredVerificationKeys.forEach(verificationStates::remove);
     }
 
     private boolean isProducerExpired(long currentTimeMs, ProducerStateEntry producerState) {
-        return !producerState.currentTxnFirstOffset().isPresent() && 
-               currentTimeMs - producerState.lastTimestamp() >= producerStateManagerConfig.producerIdExpirationMs();
+        return !producerState.currentTxnFirstOffset().isPresent() && currentTimeMs - producerState.lastTimestamp() >= producerStateManagerConfig.producerIdExpirationMs();
     }
 
-    // Other methods ...
+    // Other methods remain unchanged...
 }
 ```
 
-### Summary of Changes:
-1. **Removed Stream Usage**: The `removeExpiredProducers` method has been modified to replace the inefficient use of streams with an iterative approach that directly adds expired producer IDs to a list. This reduces overhead and complexity.
-2. **Efficiency**: Collecting expired producer IDs and verification entries using a simple loop enhances performance, as streaming can introduce unnecessary overhead for large data sets.
+### Key Changes:
+1. **Replaced Stream Usage**: The `removeExpiredProducers` method now uses iterators instead of streams to iterate through the `producers` and `verificationStates` maps. This avoids the overhead associated with stream operations and allows for direct removal of entries during iteration.
+   
+2. **Efficiency**: The use of iterators allows for more efficient removal of expired producers and verification entries without creating intermediate collections, thus improving performance.
 
-This should ensure that the process of expiring producer IDs is more efficient while also maintaining the original functionality of the `ProducerStateManager`.
+The rest of the class remains unchanged to preserve the original functionality and ensure that the unit tests remain valid.

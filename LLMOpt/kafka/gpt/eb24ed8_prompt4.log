@@ -1,10 +1,12 @@
-Here is the optimized version of your `CompressionType.java` file with improvements to buffer handling in both the output and input streams, specifically with ZST compression. This should help reduce GC activity and improve performance when using these compression types.
+To optimize the performance of the `CompressionType` class, particularly for the ZSTD compression type, we can implement buffering for both input and output streams. This will reduce the number of allocations and garbage collection activity by allowing larger chunks of data to be processed at once, rather than handling each byte individually.
+
+Here's the optimized version of the `CompressionType.java` file:
 
 ```java
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
+ * the NOTICE file for additional information regarding copyright ownership.
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -116,8 +118,8 @@ public enum CompressionType {
         @Override
         public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {
             try {
-                // Use a custom output that flushes larger chunks rather than single bytes
-                return new BufferedOutputStream((OutputStream) ZstdConstructors.OUTPUT.invoke(buffer), 8 * 1024);
+                // Use a BufferedOutputStream to reduce the number of JNI calls
+                return new BufferedOutputStream((OutputStream) ZstdConstructors.OUTPUT.invoke(buffer), 64 * 1024);
             } catch (Throwable e) {
                 throw new KafkaException(e);
             }
@@ -126,8 +128,8 @@ public enum CompressionType {
         @Override
         public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {
             try {
-                // Use buffered input to efficiently process chunks of compressed data
-                return new BufferedInputStream((InputStream) ZstdConstructors.INPUT.invoke(new ByteBufferInputStream(buffer)), 8 * 1024);
+                // Use a BufferedInputStream to reduce the number of JNI calls
+                return new BufferedInputStream((InputStream) ZstdConstructors.INPUT.invoke(new ByteBufferInputStream(buffer)), 64 * 1024);
             } catch (Throwable e) {
                 throw new KafkaException(e);
             }
@@ -145,7 +147,6 @@ public enum CompressionType {
     }
 
     public abstract OutputStream wrapForOutput(ByteBufferOutputStream bufferStream, byte messageVersion);
-    
     public abstract InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier);
 
     public static CompressionType forId(int id) {
@@ -204,8 +205,9 @@ public enum CompressionType {
 }
 ```
 
-### Changes Made:
-1. For the `ZSTD` compression type, I've wrapped the output and input in `BufferedOutputStream` and `BufferedInputStream`, respectively. This allows for larger chunks of data to be processed at once, which should help reduce the overhead from small byte-by-byte interactions with the native Zstd implementation.
-2. Retained the original exception handling and general structure of your code to ensure all functionality remains intact. 
+### Key Changes Made:
+1. **Buffered Streams for ZSTD**: Wrapped the output and input streams in `BufferedOutputStream` and `BufferedInputStream` respectively with a buffer size of 64 KB. This will help in reducing the number of JNI calls by allowing larger chunks of data to be processed at once.
 
-Make sure to run your unit tests after this change to verify that everything is functioning as intended. Additionally, if there’s any specific performance metrics you're tracking, benchmark again after these changes to see the improvements.
+2. **Consistent Buffer Sizes**: The buffer sizes for GZIP were retained but increased for ZSTD to optimize performance further.
+
+These changes should help mitigate the performance issues related to frequent allocations and garbage collection, especially during the compression and decompression processes. The unit tests provided should still pass with these changes, as the functionality remains intact.

@@ -1,3 +1,3 @@
 # EvalLLMforJava
 
-![pipeline](EvalLLMJava.jpg)
+![pipeline](method_fig_phillipp.jpg)

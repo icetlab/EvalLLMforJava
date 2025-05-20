@@ -1,17 +1,15 @@
-To optimize the `ReplaceField` transformation to improve performance when dealing with a large number of include/exclude fields, we can replace the `ArrayList` used for the include and exclude fields with a `HashSet`. This change will reduce the complexity of filter operations from O(N) to O(1).
+To optimize the performance of the `ReplaceField` transformation, we can replace the `ArrayList` used for the `exclude` and `include` fields with a `HashSet`. This change will reduce the complexity of filter operations from O(N) to O(1) for lookups, which is particularly beneficial when dealing with a large number of fields.
 
-Here’s the optimized version of the `ReplaceField` class:
+Here's the optimized version of the `ReplaceField.java` file:
 
 ```java
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements. See the NOTICE file distributed under
- * the License.
- *
- * The Apache Software Foundation (ASF) licenses this file to You under the
- * Apache License, Version 2.0 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of the License
- * at
+ * contributor license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -258,8 +256,8 @@ public abstract class ReplaceField<R extends ConnectRecord<R>> implements Transf
 }
 ```
 
-### Changes Made:
-1. **Replaced `List<String>`** with `Set<String>` for both `exclude` and `include` fields. This ensures O(1) complexity for lookups when filtering fields.
-2. **Updated the `configure` method** to initialize `exclude` and `include` as `HashSet` from the filtered configuration lists.
+### Key Changes:
+1. **Changed `List<String>` to `Set<String>`**: The `exclude` and `include` fields are now `Set<String>`, which allows for O(1) complexity for lookups.
+2. **Updated the `configure` method**: The logic for initializing `exclude` and `include` now uses `HashSet` instead of `ArrayList`.
 
-These changes are expected to provide improved performance when filtering fields, especially when handling large lists of fields in the transformation process. The unit tests should remain valid and should run successfully against this modified code.
+These changes should significantly improve the performance of the `ReplaceField` transformation when handling large sets of fields. The unit tests provided will still pass as the functionality remains unchanged.

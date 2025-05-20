@@ -1,12 +1,12 @@
-To optimize the performance of the `ReplaceField` transformation, we can make use of a `HashSet` instead of an `ArrayList` for both the `exclude` and `include` configurations. This change will improve the complexity of filter operations from O(N) to O(1) on average, significantly enhancing performance when dealing with a large number of fields.
+To optimize the `ReplaceField` transformation, we can replace the `ArrayList` used for the `exclude` and `include` fields with a `HashSet`. This change will improve the filter operations from O(N) to O(1) for lookups, which is particularly beneficial when dealing with a large number of fields.
 
-Here’s the optimized version of the `ReplaceField.java` class:
+Here is the optimized version of the `ReplaceField.java` file:
 
 ```java
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
- * additional information regarding copyright ownership.
+ * the NOTICE file for additional information regarding copyright ownership.
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -256,10 +256,8 @@ public abstract class ReplaceField<R extends ConnectRecord<R>> implements Transf
 }
 ```
 
-### Key Changes
-1. **Data Structure Change**: 
-   - Replaced the `List<String>` types for `exclude` and `include` with `Set<String>`. This change allows for faster lookups when checking if a field should be filtered.
-  
-2. **Usage Consistency**: The function that decides if a field should be filtered (`filter`) remains the same, but now has improved performance characteristics due to the use of `Set`.
+### Changes Made:
+1. **Changed `List<String>` to `Set<String>`**: The `exclude` and `include` fields are now `Set<String>` instead of `List<String>`. This allows for O(1) complexity for lookups.
+2. **Initialization of Sets**: When configuring, the `exclude` and `include` sets are initialized directly from the lists returned by `config.getList()`, which is efficient for the expected use case.
 
-This optimized code maintains all original functionality and adheres to the existing unit tests, which should continue to pass without any modifications.
+This optimization should significantly improve the performance of the `ReplaceField` transformation, especially when dealing with large sets of fields. The unit tests provided will still be valid and should pass without any modifications.

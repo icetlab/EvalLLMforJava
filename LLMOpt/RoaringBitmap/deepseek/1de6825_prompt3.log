@@ -1,4 +1,4 @@
-Based on the benchmark results showing that avoiding intermediate byte array creation improves performance, I'll optimize the Node16.java file by replacing the byte array conversions with direct bit operations. Here's the optimized version:
+Based on the benchmark results showing that avoiding byte array creation is faster, I'll optimize the Node16.java file by replacing the byte array conversions with direct bit operations. Here's the optimized version:
 
 ```java
 package org.roaringbitmap.art;
@@ -96,11 +96,12 @@ public class Node16 extends Node {
             if (lowPos>=0){ lowPos += 8;}
             if (highPos>=0){ highPos += 8;}
 
-            if(firstResult.hasNextLargerPos() == false && secondResult.hasNextSmallerPos() == false) {
+            if(firstResult.hasNextLargerPos() == false && secondResult.hasNextSmallerPos() == false)
+            {
               lowPos = firstResult.getNextSmallerPos();
             }
 
-            return SearchResult.notFound(lowPos, highPos);
+            return SearchResult.notFound( lowPos, highPos);
 
           default:
             throw new IllegalStateException("There only two possible search outcomes");
@@ -205,8 +206,7 @@ public class Node16 extends Node {
       if (currentNode16.count == 8) {
         currentNode16.secondV = (((long) key & 0xFF) << 56);
       } else {
-        int shift = (15 - currentNode16.count) << 3;
-        currentNode16.secondV |= (((long) key & 0xFF) << shift);
+        currentNode16.secondV |= (((long) key & 0xFF) << ((7 - (currentNode16.count - 8)) << 3));
       }
       currentNode16.children[currentNode16.count] = child;
       sortSmallByteArray(currentNode16, 0, currentNode16.count);
@@ -221,7 +221,7 @@ public class Node16 extends Node {
         node48.children[i] = currentNode16.children[i];
       }
       for (int i = 8; i < currentNode16.count; i++) {
-        byte v = (byte) (currentNode16.secondV >>> ((15 - i) << 3));
+        byte v = (byte) (currentNode16.secondV >>> ((7 - (i - 8)) << 3));
         int unsignedIdx = Byte.toUnsignedInt(v);
         Node48.setOneByte(unsignedIdx, (byte) i, node48.childIndex);
         node48.children[i] = currentNode16.children[i];
@@ -238,44 +238,45 @@ public class Node16 extends Node {
       byte currentKey = node.getChildKey(i);
       Node currentNode = node.children[i];
       int j = i - 1;
-      while (j >= begin && node.getChildKey(j) > currentKey) {
+      while (j >= begin && Byte.compare(node.getChildKey(j), currentKey) > 0) {
         node.children[j + 1] = node.children[j];
-        long mask = ~(0xFFL << ((7 - j) << 3));
-        if (j < 8) {
-          node.firstV = (node.firstV & mask) | ((node.firstV & (0xFFL << ((7 - (j + 1)) << 3))) >>> 8;
-        } else {
-          node.secondV = (node.secondV & mask) | ((node.secondV & (0xFFL << ((15 - (j + 1)) << 3))) >>> 8;
-        }
         j--;
       }
       node.children[j + 1] = currentNode;
-      if (i < 8) {
-        long mask = ~(0xFFL << ((7 - (j + 1)) << 3));
-        node.firstV = (node.firstV & mask) | ((long) (currentKey & 0xFF) << ((7 - (j + 1)) << 3));
-      } else {
-        long mask = ~(0xFFL << ((15 - (j + 1)) << 3));
-        node.secondV = (node.secondV & mask) | ((long) (currentKey & 0xFF) << ((15 - (j + 1)) << 3));
-      }
     }
+    // Rebuild the longs after sorting
+    long newFirstV = 0;
+    long newSecondV = 0;
+    for (int i = 0; i < 8 && i < node.count; i++) {
+      newFirstV |= ((long) node.getChildKey(i) & 0xFF) << ((7 - i) << 3);
+    }
+    for (int i = 8; i < node.count; i++) {
+      newSecondV |= ((long) node.getChildKey(i) & 0xFF) << ((7 - (i - 8)) << 3);
+    }
+    node.firstV = newFirstV;
+    node.secondV = newSecondV;
   }
 
   @Override
   public Node remove(int pos) {
     children[pos] = null;
-    if (pos < 8) {
-      long mask = ~(0xFFL << ((7 - pos) << 3));
-      long shifted = (firstV >>> ((7 - pos + 1) << 3)) << ((7 - pos) << 3);
-      firstV = (firstV & mask) | shifted;
-      if (count > 8) {
-        firstV |= (secondV >>> 56) << 56;
-        secondV <<= 8;
-      }
-    } else {
-      long mask = ~(0xFFL << ((15 - pos) << 3));
-      long shifted = (secondV >>> ((15 - pos + 1) << 3)) << ((15 - pos) << 3);
-      secondV = (secondV & mask) | shifted;
+    for (int i = pos + 1; i < count; i++) {
+      children[i - 1] = children[i];
     }
-    System.arraycopy(children, pos + 1, children, pos, (16 - pos - 1));
+    children[count - 1] = null;
+    
+    // Rebuild the longs after removal
+    long newFirstV = 0;
+    long newSecondV = 0;
+    for (int i = 0; i < 8 && i < count - 1; i++) {
+      newFirstV |= ((long) getChildKey(i) & 0xFF) << ((7 - i) << 3);
+    }
+    for (int i = 8; i < count - 1; i++) {
+      newSecondV |= ((long) getChildKey(i) & 0xFF) << ((7 - (i - 8)) << 3);
+    }
+    firstV = newFirstV;
+    secondV = newSecondV;
+    
     count--;
     if (count <= 3) {
       Node4 node4 = new Node4(prefixLength);
@@ -332,18 +333,11 @@ public class Node16 extends Node {
 
 Key optimizations made:
 
-1. Eliminated all byte array conversions by using direct bit operations on the long values (firstV and secondV)
+1. Eliminated all byte array conversions by using direct bit operations to extract bytes from the long values
 2. Added specialized binary search methods (binarySearchFirstV, binarySearchSecondV) that work directly with the long values
-3. Added specialized binary search with result methods (binarySearchWithResultFirstV, binarySearchWithResultSecondV)
-4. Optimized getChildKey() to use bit operations instead of byte array conversion
-5. Rewrote the insert() method to use bit operations for key insertion
-6. Rewrote the sortSmallByteArray() method to work directly with the long values
-7. Optimized the remove() method to use bit operations for shifting values
+3. Rewrote the insert() method to use bit operations instead of ByteBuffer
+4. Created a new sortSmallByteArray() method that works directly with the long values
+5. Optimized the remove() method to avoid ByteBuffer usage
+6. Simplified getChildKey() to use bit operations
 
-These changes should significantly improve performance by:
-- Eliminating temporary byte array allocations
-- Reducing memory accesses
-- Using more efficient bit operations instead of array operations
-- Maintaining the same functionality while being more CPU cache friendly
-
-The unit tests should continue to pass as the external behavior remains unchanged, only the internal implementation has been optimized.
+The optimized version avoids creating temporary byte arrays and should provide better performance while maintaining the exact same functionality. All unit tests should continue to pass as the external behavior hasn't changed.

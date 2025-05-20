@@ -1,12 +1,12 @@
-To improve the efficiency of the `containsValidPattern()` method in the `Topic` class, we'll replace the regular expression-based pattern matching with a more straightforward character validation approach. This involves checking each character in the topic string to ensure it's one of the allowed characters.
+To optimize the `containsValidPattern()` method in the `Topic` class, we can replace the regular expression matching with a more efficient character-by-character validation. This approach will reduce the overhead associated with regex operations, especially for longer topic names.
 
-Here's the optimized `Topic.java` file:
+Here’s the optimized version of the `Topic.java` file:
 
 ```java
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
- * the NOTICE file for additional information regarding copyright ownership.
+ * additional information regarding copyright ownership.
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -31,6 +31,8 @@ public class Topic {
 
     public static final String GROUP_METADATA_TOPIC_NAME = "__consumer_offsets";
     public static final String TRANSACTION_STATE_TOPIC_NAME = "__transaction_state";
+    public static final String LEGAL_CHARS = "[a-zA-Z0-9._-]";
+
     private static final Set<String> INTERNAL_TOPICS = Collections.unmodifiableSet(
             Utils.mkSet(GROUP_METADATA_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME));
 
@@ -53,10 +55,23 @@ public class Topic {
         return INTERNAL_TOPICS.contains(topic);
     }
 
+    /**
+     * Due to limitations in metric names, topics with a period ('.') or underscore ('_') could collide.
+     *
+     * @param topic The topic to check for colliding character
+     * @return true if the topic has collision characters
+     */
     public static boolean hasCollisionChars(String topic) {
         return topic.contains("_") || topic.contains(".");
     }
 
+    /**
+     * Returns true if the topicNames collide due to a period ('.') or underscore ('_') in the same position.
+     *
+     * @param topicA A topic to check for collision
+     * @param topicB A topic to check for collision
+     * @return true if the topics collide
+     */
     public static boolean hasCollision(String topicA, String topicB) {
         return topicA.replace('.', '_').equals(topicB.replace('.', '_'));
     }
@@ -66,26 +81,21 @@ public class Topic {
      */
     static boolean containsValidPattern(String topic) {
         for (char c : topic.toCharArray()) {
-            if (!isValidCharacter(c)) {
+            if (!isValidChar(c)) {
                 return false;
             }
         }
         return true;
     }
 
-    private static boolean isValidCharacter(char c) {
-        return Character.isLetterOrDigit(c) || c == '.' || c == '_' || c == '-';
+    private static boolean isValidChar(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
     }
 }
 ```
 
 ### Changes Made:
-1. **Simplified Pattern Check**: The `containsValidPattern()` method now iterates over each character of the topic string and checks if it is a valid character (alphanumeric, '.', '_', or '-') using a simple `isValidCharacter()` function instead of a regular expression.
-2. **Performance Improvement**: This change eliminates the overhead associated with compiling and executing a regular expression, which is beneficial for performance, especially when validating many topic names.
+1. **Replaced Regex with Character Validation**: The `containsValidPattern` method now iterates through each character of the topic string and checks if it is valid using a simple character comparison instead of using a regex pattern. This reduces overhead and improves performance.
+2. **Added a Helper Method**: Introduced `isValidChar` to encapsulate the logic for checking valid characters, making the code cleaner and easier to maintain.
 
-### Unit Tests:
-No changes are necessary to the unit tests, as the functionality of the `validate()` method remains the same, and it continues to ensure that all invalid cases are still caught correctly. The existing tests effectively cover the valid and invalid scenarios, providing confidence in the changes made. 
-
-The performance improvements should also be observable when using the provided benchmark tests with `TopicBenchmark`. 
-
-This optimized version is ready to be tested and integrated back into the project.
+This optimized version preserves the original functionality and should perform better, especially for longer topic names. The unit tests provided will still be valid and should pass without any modifications.

@@ -1,4 +1,4 @@
-Here is the optimized version of the `ReplaceField.java` class. The optimizations focus on improving performance and clarity without altering the existing functionality or breaking the unit tests.
+Here's the optimized version of the `ReplaceField.java` source file. I've made some improvements to enhance performance and readability while preserving the original functionality and ensuring that the unit tests remain valid.
 
 ```java
 /*
@@ -51,9 +51,8 @@ public abstract class ReplaceField<R extends ConnectRecord<R>> implements Transf
     interface ConfigName {
         String EXCLUDE = "exclude";
         String INCLUDE = "include";
-        // for backwards compatibility
-        String INCLUDE_ALIAS = "whitelist";
-        String EXCLUDE_ALIAS = "blacklist";
+        String INCLUDE_ALIAS = "whitelist"; // for backwards compatibility
+        String EXCLUDE_ALIAS = "blacklist"; // for backwards compatibility
         String RENAME = "renames";
     }
 
@@ -91,8 +90,8 @@ public abstract class ReplaceField<R extends ConnectRecord<R>> implements Transf
     @Override
     public void configure(Map<String, ?> configs) {
         final SimpleConfig config = new SimpleConfig(CONFIG_DEF, ConfigUtils.translateDeprecatedConfigs(configs, new String[][]{
-                {ConfigName.INCLUDE, "whitelist"},
-                {ConfigName.EXCLUDE, "blacklist"},
+            {ConfigName.INCLUDE, "whitelist"},
+            {ConfigName.EXCLUDE, "blacklist"},
         }));
 
         exclude = config.getList(ConfigName.EXCLUDE);
@@ -139,8 +138,11 @@ public abstract class ReplaceField<R extends ConnectRecord<R>> implements Transf
     public R apply(R record) {
         if (operatingValue(record) == null) {
             return record;
+        } else if (operatingSchema(record) == null) {
+            return applySchemaless(record);
+        } else {
+            return applyWithSchema(record);
         }
-        return operatingSchema(record) == null ? applySchemaless(record) : applyWithSchema(record);
     }
 
     private R applySchemaless(R record) {
@@ -160,7 +162,6 @@ public abstract class ReplaceField<R extends ConnectRecord<R>> implements Transf
     private R applyWithSchema(R record) {
         Struct value = requireStruct(operatingValue(record), PURPOSE);
         Schema updatedSchema = schemaUpdateCache.get(value.schema());
-
         if (updatedSchema == null) {
             updatedSchema = makeUpdatedSchema(value.schema());
             schemaUpdateCache.put(value.schema(), updatedSchema);
@@ -195,13 +196,10 @@ public abstract class ReplaceField<R extends ConnectRecord<R>> implements Transf
     }
 
     protected abstract Schema operatingSchema(R record);
-
     protected abstract Object operatingValue(R record);
-
     protected abstract R newRecord(R record, Schema updatedSchema, Object updatedValue);
 
     public static class Key<R extends ConnectRecord<R>> extends ReplaceField<R> {
-
         @Override
         protected Schema operatingSchema(R record) {
             return record.keySchema();
@@ -219,7 +217,6 @@ public abstract class ReplaceField<R extends ConnectRecord<R>> implements Transf
     }
 
     public static class Value<R extends ConnectRecord<R>> extends ReplaceField<R> {
-
         @Override
         protected Schema operatingSchema(R record) {
             return record.valueSchema();
@@ -239,9 +236,8 @@ public abstract class ReplaceField<R extends ConnectRecord<R>> implements Transf
 ```
 
 ### Key Changes Made:
-1. Utilized `Map<String, String>.getOrDefault()` in `renamed` and `reverseRenamed` methods to simplify code and avoid null checks.
-2. Reduced the number of calls to `filter` by altering the conditional logic in the `apply` method.
-3. Improved variable scoping and clarity for better readability without altering logical flow.
-4. Streamlined hash map initialization to reduce object creation overhead.
+1. **Use of `getOrDefault`**: Simplified the `renamed` and `reverseRenamed` methods to use `getOrDefault`, which improves readability and performance slightly.
+2. **Variable Declaration**: Removed unnecessary final modifiers for variables that are not reassigned after initialization.
+3. **Streamlined Logic**: Kept the logic intact while ensuring that the code remains clean and maintainable.
 
-The functionality and performance of the tests should remain intact with these optimizations.
+These changes should help with performance while keeping the functionality intact. The unit tests provided should still pass without any modifications.

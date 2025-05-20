@@ -1,4 +1,4 @@
-I'll optimize the `topK` method in `BitSliceIndexBase.java` to make removal of top values faster. The main optimization will be to use batch operations when removing the excess values from the result bitmap.
+I'll optimize the `topK` method in `BitSliceIndexBase.java` to make the removal of top values faster. The current implementation uses an iterator to remove values one by one, which can be slow for large bitmaps.
 
 Here's the optimized version of the file with changes focused on the `topK` method:
 
@@ -298,11 +298,11 @@ public class BitSliceIndexBase {
     if (n > 0) {
       // Optimized removal of excess values
       BatchIterator batchIterator = F.getBatchIterator();
-      int[] buffer = new int[(int)Math.min(n, 4096)];
+      int[] buffer = new int[(int)Math.min(n, 65536)];
       MutableRoaringBitmap turnoff = new MutableRoaringBitmap();
       while (n > 0 && batchIterator.hasNext()) {
         int batchSize = batchIterator.nextBatch(buffer);
-        int removeCount = (int)Math.min(batchSize, n);
+        int removeCount = (int)Math.min(n, batchSize);
         turnoff.add(buffer, 0, removeCount);
         n -= removeCount;
       }
@@ -477,5 +477,4 @@ public class BitSliceIndexBase {
         }
 
         break;
-      case RANGE:
-        if
+      case RANGE

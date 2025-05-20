@@ -1,0 +1,105 @@
+I'll analyze the code and suggest optimizations while maintaining the same functionality and passing all tests.
+
+Key observations:
+1. The `update()` method for ByteBuffer has two paths - one for heap buffers (with array) and one for direct buffers
+2. The direct buffer path uses a loop with individual byte updates which could be slower
+3. The `updateInt()` and `updateLong()` methods are already quite optimized
+
+Here's the optimized version of Checksums.java with improvements to the direct buffer handling:
+
+```java
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.kafka.common.utils;
+
+import java.nio.ByteBuffer;
+import java.util.zip.Checksum;
+
+/**
+ * Utility methods for `Checksum` instances.
+ *
+ * Implementation note: we can add methods to our implementations of CRC32 and CRC32C, but we cannot do the same for
+ * the Java implementations (we prefer the Java 9 implementation of CRC32C if available). A utility class is the
+ * simplest way to add methods that are useful for all Checksum implementations.
+ *
+ * NOTE: This class is intended for INTERNAL usage only within Kafka.
+ */
+public final class Checksums {
+
+    private Checksums() {
+    }
+
+    public static void update(Checksum checksum, ByteBuffer buffer, int length) {
+        update(checksum, buffer, 0, length);
+    }
+
+    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {
+        if (buffer.hasArray()) {
+            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);
+        } else {
+            // Create a temporary array for direct buffers to avoid individual byte updates
+            byte[] temp = new byte[length];
+            int originalPosition = buffer.position();
+            try {
+                buffer.position(originalPosition + offset);
+                buffer.get(temp, 0, length);
+                checksum.update(temp, 0, length);
+            } finally {
+                buffer.position(originalPosition);
+            }
+        }
+    }
+    
+    public static void updateInt(Checksum checksum, int input) {
+        checksum.update((byte) (input >> 24));
+        checksum.update((byte) (input >> 16));
+        checksum.update((byte) (input >> 8));
+        checksum.update((byte) input /* >> 0 */);
+    }
+
+    public static void updateLong(Checksum checksum, long input) {
+        checksum.update((byte) (input >> 56));
+        checksum.update((byte) (input >> 48));
+        checksum.update((byte) (input >> 40));
+        checksum.update((byte) (input >> 32));
+        checksum.update((byte) (input >> 24));
+        checksum.update((byte) (input >> 16));
+        checksum.update((byte) (input >> 8));
+        checksum.update((byte) input /* >> 0 */);
+    }
+}
+```
+
+Key changes made:
+1. For direct buffers, instead of using a loop with individual `update()` calls for each byte, we now:
+   - Create a temporary byte array of the required length
+   - Bulk transfer the bytes from the buffer to the array
+   - Make a single `update()` call with the array
+   - Restore the original buffer position
+
+This optimization should provide better performance for direct buffers because:
+- It reduces the number of method calls from N (number of bytes) to 1
+- It allows the JVM to optimize the bulk byte transfer
+- It maintains the buffer position as required by the tests
+
+The changes maintain all the original functionality and should pass all existing tests since:
+- The checksum calculation remains identical
+- The buffer position is properly restored
+- The behavior for heap buffers is unchanged
+- The int/long update methods are unchanged
+
+The tradeoff is a small temporary memory allocation for direct buffers, but this is typically acceptable given the performance improvement.

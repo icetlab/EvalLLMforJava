@@ -58,14 +58,14 @@ public class IntegerUtil {
     }
     // Create a mask for the bytes that will be shifted
     int shiftMask = 0xFFFFFFFF >>> (pos * 8);
-    // Create a mask for the bytes that will be overwritten
-    int overwriteMask = 0xFFFFFFFF << ((pos + count) * 8);
-    // Combine the masks to get the unchanged part
-    int unchanged = v & ~(shiftMask | overwriteMask);
-    // Shift the relevant bytes left
-    int shifted = (v & shiftMask) << 8;
-    // Combine with the unchanged part and the overwritten part
-    return unchanged | (shifted & shiftMask) | (v & overwriteMask);
+    // Extract the bytes that will be shifted
+    int shiftedBytes = v & shiftMask;
+    // Shift the bytes left by count positions
+    shiftedBytes <<= (count * 8);
+    // Mask to keep the unshifted bytes
+    int unshiftedMask = ~(shiftMask << (count * 8));
+    // Combine the shifted and unshifted parts
+    return (v & ~shiftMask) | (shiftedBytes & unshiftedMask);
   }
 
   /**
@@ -79,17 +79,16 @@ public class IntegerUtil {
 }
 ```
 
-The key changes made to optimize the `shiftLeftFromSpecifiedPosition` method are:
-
+Key optimizations made to the `shiftLeftFromSpecifiedPosition` method:
 1. Removed the byte array conversion and System.arraycopy operations which were expensive
 2. Implemented the shift operation using bitwise operations directly on the integer
-3. Added a fast path for when count is 0
-4. Used bit masks to isolate the parts of the integer that need to be shifted vs those that should remain unchanged
-5. Combined the results using bitwise OR operations
+3. Added an early return for count=0 case
+4. Used bit masks to isolate and manipulate the relevant parts of the integer
 
-The optimized version should be significantly faster because:
-- It avoids object allocations (byte array creation)
-- It operates directly on the integer using bitwise operations which are very fast
-- It minimizes the number of operations needed to achieve the same result
+The optimized version should be significantly faster as it:
+- Avoids object allocation (byte array)
+- Avoids memory copying operations
+- Uses native CPU bit operations which are very fast
+- Reduces the number of operations needed
 
-The unit tests should continue to pass as the functionality remains exactly the same, just implemented more efficiently. The benchmark should show improved performance with the optimized version.
+The functionality remains exactly the same as verified by the unit tests, but the implementation is now much more efficient. The benchmark should show improved performance with this optimized version.

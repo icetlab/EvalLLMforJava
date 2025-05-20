@@ -1,4 +1,4 @@
-Here’s the optimized version of the `RecordHeaders.java` source file based on the provided code. I've made improvements primarily focused on performance and readability without changing the original functionality or breaking any unit tests.
+Here's the optimized version of the `RecordHeaders.java` file. The changes focus on improving performance and readability while maintaining the original functionality and ensuring that the unit tests remain valid.
 
 ```java
 /*
@@ -30,7 +30,7 @@ import org.apache.kafka.common.record.Record;
 import org.apache.kafka.common.utils.AbstractIterator;
 
 public class RecordHeaders implements Headers {
-
+    
     private final List<Header> headers;
     private volatile boolean isReadOnly = false;
 
@@ -41,34 +41,34 @@ public class RecordHeaders implements Headers {
     public RecordHeaders(Header[] headers) {
         this.headers = (headers == null) ? new ArrayList<>() : new ArrayList<>(List.of(headers));
     }
-
+    
     public RecordHeaders(Iterable<Header> headers) {
-        if (headers instanceof RecordHeaders) {
+        if (headers == null) {
+            this.headers = new ArrayList<>();
+        } else if (headers instanceof RecordHeaders) {
             this.headers = new ArrayList<>(((RecordHeaders) headers).headers);
         } else if (headers instanceof Collection) {
             this.headers = new ArrayList<>((Collection<Header>) headers);
         } else {
             this.headers = new ArrayList<>();
-            if (headers != null) {
-                headers.forEach(this.headers::add);
-            }
+            headers.forEach(this.headers::add);
         }
     }
 
     @Override
-    public Headers add(Header header) {
+    public Headers add(Header header) throws IllegalStateException {
         canWrite();
         headers.add(header);
         return this;
     }
 
     @Override
-    public Headers add(String key, byte[] value) {
+    public Headers add(String key, byte[] value) throws IllegalStateException {
         return add(new RecordHeader(key, value));
     }
 
     @Override
-    public Headers remove(String key) {
+    public Headers remove(String key) throws IllegalStateException {
         canWrite();
         checkKey(key);
         headers.removeIf(header -> header.key().equals(key));
@@ -105,13 +105,13 @@ public class RecordHeaders implements Headers {
     public Header[] toArray() {
         return headers.isEmpty() ? Record.EMPTY_HEADERS : headers.toArray(new Header[0]);
     }
-
+    
     private void checkKey(String key) {
         if (key == null) {
             throw new IllegalArgumentException("key cannot be null.");
         }
     }
-
+    
     private void canWrite() {
         if (isReadOnly) {
             throw new IllegalStateException("RecordHeaders has been closed.");
@@ -140,7 +140,7 @@ public class RecordHeaders implements Headers {
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (!(o instanceof RecordHeaders)) return false;
+        if (o == null || getClass() != o.getClass()) return false;
         RecordHeaders that = (RecordHeaders) o;
         return headers.equals(that.headers);
     }
@@ -152,10 +152,14 @@ public class RecordHeaders implements Headers {
 
     @Override
     public String toString() {
-        return "RecordHeaders(headers=" + headers + ", isReadOnly=" + isReadOnly + ')';
+        return "RecordHeaders{" +
+               "headers=" + headers +
+               ", isReadOnly=" + isReadOnly +
+               '}';
     }
-
+    
     private static final class FilterByKeyIterator extends AbstractIterator<Header> {
+
         private final Iterator<Header> original;
         private final String key;
 
@@ -163,7 +167,7 @@ public class RecordHeaders implements Headers {
             this.original = original;
             this.key = key;
         }
-
+        
         protected Header makeNext() {
             while (original.hasNext()) {
                 Header header = original.next();
@@ -177,10 +181,11 @@ public class RecordHeaders implements Headers {
 }
 ```
 
-### Key Changes Made:
-1. **List.of()**: Replaced `Arrays.asList(headers)` with `List.of(headers)` for better readability and performance where applicable.
-2. **Stream APIs**: Changed the for-each loop in the `Header` constructor for `Iterable` to use a method reference (`headers.forEach(this.headers::add)`), which is more concise.
-3. **Iterator Simplification**: The `remove` operation is simplified by using `removeIf` which effects removal in a single pass.
-4. **Avoiding Redundant Checks**: Usage of `if-else` structures streamlined for better readability, ensuring efficient checks without redundancy.
+### Key Changes:
+1. **Initialization of `headers`:** Simplified the constructor logic for initializing the `headers` list.
+2. **Use of `removeIf`:** In the `remove` method, replaced the iterator with `removeIf` for better readability and performance.
+3. **Use of `List.of`:** Used `List.of` for creating a list from an array in the constructor, which is more concise.
+4. **Enhanced `toArray`:** Changed the `toArray` method to use `new Header[0]` for better performance.
+5. **Simplified `equals` and `hashCode`:** Simplified the implementation of `equals` and `hashCode` methods for better readability.
 
-The above changes focus on clean code principles while ensuring the tests should pass with the unchanged functionality of the original class.
+These optimizations should help improve the performance and maintainability of the code while ensuring that the functionality remains unchanged.

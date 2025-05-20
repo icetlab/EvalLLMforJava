@@ -1,0 +1,43 @@
+I'll optimize the `removeExpiredProducers` method in `ProducerStateManager` to improve its performance by avoiding the use of streams. Here's the modified version:
+
+```java
+/**
+ * Expire any producer ids which have been idle longer than the configured maximum expiration timeout.
+ * Also expire any verification state entries that are lingering as unverified.
+ */
+public void removeExpiredProducers(long currentTimeMs) {
+    List<Long> expiredProducerIds = new ArrayList<>();
+    for (Map.Entry<Long, ProducerStateEntry> entry : producers.entrySet()) {
+        if (isProducerExpired(currentTimeMs, entry.getValue())) {
+            expiredProducerIds.add(entry.getKey());
+        }
+    }
+    removeProducerIds(expiredProducerIds);
+
+    List<Long> expiredVerificationIds = new ArrayList<>();
+    for (Map.Entry<Long, VerificationStateEntry> entry : verificationStates.entrySet()) {
+        if (currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs()) {
+            expiredVerificationIds.add(entry.getKey());
+        }
+    }
+    for (Long producerId : expiredVerificationIds) {
+        verificationStates.remove(producerId);
+    }
+}
+```
+
+The key changes are:
+
+1. Replaced the stream-based filtering with traditional for-loops and if-conditions
+2. Used separate lists for collecting expired producer IDs and verification state IDs
+3. Used bulk removal for producer IDs (via existing `removeProducerIds` method)
+4. Used individual removal for verification states (since there's no bulk removal method)
+
+This change should provide better performance because:
+- It avoids the overhead of stream operations
+- It uses more efficient iteration patterns
+- It maintains the same functionality while being more straightforward
+
+The unit tests should continue to pass since the behavior remains identical, just implemented more efficiently. The benchmark should show improved performance, especially for larger numbers of producer IDs.
+
+The rest of the `ProducerStateManager` class remains unchanged. This optimization focuses specifically on the `removeExpiredProducers` method which was identified as a performance bottleneck.

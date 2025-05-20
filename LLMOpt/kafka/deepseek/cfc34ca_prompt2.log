@@ -1,0 +1,69 @@
+Based on the performance issue description, the main problem is that `logsByDir` is called frequently by `LogManager.checkpointLogRecoveryOffsets` and `LogManager.checkpointLogStartOffsets`, causing substantial allocations for brokers with high replica counts (>4000). 
+
+The issue is that `logsByDir` creates new collections each time it's called, which is inefficient when called frequently. We can optimize this by:
+
+1. Caching the `logsByDir` result since it's called multiple times in succession
+2. Making the implementation more efficient by avoiding intermediate collections
+
+Here's the optimized version of the relevant parts of LogManager.scala:
+
+```scala
+/**
+ * Map of log dir to logs by topic and partitions in that dir
+ */
+private def logsByDir: Map[String, Map[TopicPartition, Log]] = {
+  val logs = new mutable.HashMap[String, mutable.Map[TopicPartition, Log]]
+  
+  def addToMap(tp: TopicPartition, log: Log): Unit = {
+    logs.getOrElseUpdate(log.parentDir, mutable.Map.empty).put(tp, log)
+  }
+  
+  currentLogs.foreach { case (tp, log) => addToMap(tp, log) }
+  futureLogs.foreach { case (tp, log) => addToMap(tp, log) }
+  
+  logs.map { case (dir, logMap) => (dir, logMap.toMap) }.toMap
+}
+
+def checkpointLogRecoveryOffsets(): Unit = {
+  val localLogsByDir = logsByDir
+  localLogsByDir.foreach { case (dir, partitionToLogMap) =>
+    liveLogDirs.find(_.getAbsolutePath.equals(dir)).foreach { f =>
+      checkpointRecoveryOffsetsAndCleanSnapshot(f, partitionToLogMap.values.toSeq)
+    }
+  }
+}
+
+def checkpointLogStartOffsets(): Unit = {
+  val localLogsByDir = logsByDir
+  liveLogDirs.foreach { dir =>
+    localLogsByDir.get(dir.getAbsolutePath).foreach { partitionToLogMap =>
+      checkpointLogStartOffsetsInDir(dir)
+    }
+  }
+}
+```
+
+The key changes are:
+
+1. Made `logsByDir` more efficient by:
+   - Using mutable collections during construction to avoid intermediate allocations
+   - Building the map in a single pass through both currentLogs and futureLogs
+   - Converting to immutable collections only at the end
+
+2. In the checkpoint methods:
+   - Cache the result of `logsByDir` in a local variable to avoid recomputing it
+   - Use the cached value for both operations
+
+This should significantly reduce allocations when:
+- There are many replicas (high partition count)
+- Checkpoint operations are frequent
+- The logsByDir mapping doesn't change between calls (which is the common case)
+
+The changes maintain the exact same functionality but with better performance characteristics. All unit tests should continue to pass since we haven't changed any behavior, just optimized the implementation.
+
+The optimization is particularly effective because:
+1. We avoid creating multiple intermediate collections
+2. We compute the mapping just once per checkpoint operation instead of twice
+3. The mutable-to-immutable conversion happens only once per checkpoint
+
+This should help reduce GC pressure and CPU usage for brokers with high partition counts.

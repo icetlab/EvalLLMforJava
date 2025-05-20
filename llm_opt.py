@@ -1,5 +1,7 @@
 import os
 import json
+import transformers
+import torch
 from openai import OpenAI
 
 persona = """You are a Java software performance assistant.
@@ -12,36 +14,48 @@ def read_file(file_path):
     with open(file_path, 'r') as file:
         return file.read()
 
+def extract_function(file_path, function_name):
+    source_code = read_file(file_path)
+    # Extract the specific function from the file
+    start_marker = f"{function_name}("
+    start_index = source_code.find(start_marker)
+    if start_index != -1:
+        # Extract the specific function by finding its boundaries
+        brace_count = 0
+        end_index = start_index
+        while end_index < len(source_code):
+            char = source_code[end_index]
+            if char == '{':
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+            end_index += 1
+            if brace_count == 0:
+                break
+        source_code = source_code[start_index:end_index].strip()
+    else:
+        raise ValueError(f"Function {function_name} not found in {file_path}")
+    
+    return source_code
+
 def extract_benchmark_function(benchmark_path):
     if "." in benchmark_path:
         file_path, function_name = benchmark_path.rsplit(".", 1)
-        benchmark_path = os.path.join("../", file_path+".java")
-        benchmark_code = read_file(benchmark_path)
-        # Extract the specific function from the file
-        start_marker = f"{function_name}("
-        start_index = benchmark_code.find(start_marker)
-        if start_index != -1:
-            # Extract the specific function by finding its boundaries
-            brace_count = 0
-            end_index = start_index
-            while end_index < len(benchmark_code):
-                char = benchmark_code[end_index]
-                if char == '{':
-                    brace_count += 1
-                elif char == '}':
-                    brace_count -= 1
-                end_index += 1
-                if brace_count == 0:
-                    break
-            benchmark_code = benchmark_code[start_index:end_index].strip()
-        else:
-            raise ValueError(f"Function {function_name} not found in {file_path}")
+        file_path = os.path.join("../", file_path+".java")
+        benchmark_code = extract_function(file_path, function_name)
     else:
         benchmark_path = os.path.join("../", benchmark_path+".java")
         benchmark_code = read_file(benchmark_path)
-    benchmark_code = read_file(benchmark_path)
-
     return benchmark_code
+
+def extract_source_code_funtion(source_code_path):
+    if not source_code_path.endswith((".java", ".scala")):
+        file_path, function_name = source_code_path.rsplit(".", 1)
+        file_path = os.path.join(file_path + ".java")
+        source_code = extract_function(file_path, function_name)
+    else:
+        source_code = read_file(source_code_path)
+    return source_code
 
 def generate_prompts(json_data, repo_name):
     repo_dir = os.path.join("../", repo_name)
@@ -60,13 +74,13 @@ def generate_prompts(json_data, repo_name):
 
     # Read the benchmark function
     benchmark_path = os.path.join(repo_name, json_data["jmh_case"])
-    benchmark_code = extract_benchmark_function(benchmark_path) if benchmark_path else ""
+    benchmark_code = extract_benchmark_function(benchmark_path)
 
     # Read the source code files (before developer's patch)
     os.system(f"cd {repo_dir} && git reset --hard HEAD~1")
     source_code_paths = [os.path.join(repo_dir, path.strip()) for path in json_data["source_code"].split()]
     source_code = "\n".join(
-        [f"{path}\n{read_file(path)}" for path in source_code_paths]
+        [f"{path}\n{extract_source_code_funtion(path)}" for path in source_code_paths]
     )
 
     description = json_data["description"]
@@ -85,17 +99,35 @@ def improve_code_with_gpt(prompt):
     )
     completion = client.chat.completions.create(
         model="gpt-4o-mini",
-        store=True,
         messages=[
             {"role": "system", "content": persona},
             {"role": "user", "content": prompt},
-        ]
+        ],
+        temperature=0.3,
+        top_p=0.95,
     )
     return  completion.choices[0].message.content
 
 def improve_code_with_llama(prompt):
-    response = "call llama"  # Placeholder for actual Llama call
-    return response
+    # Meta-Llama-3.1
+    model_id = "meta-llama/Meta-Llama-3.1-8B-Instruct"
+    pipeline = transformers.pipeline(
+        "text-generation",
+        model=model_id,
+        model_kwargs={"torch_dtype": torch.bfloat16},
+        device_map="auto",
+    )
+    messages=[
+        {"role": "system", "content": persona},
+        {"role": "user", "content": prompt},
+    ]
+    outputs = pipeline(
+        messages,
+        do_sample=True,
+        temperature=0.3,
+        top_p=0.95,
+    )
+    return str(outputs[0]["generated_text"])
 
 def improve_code_with_deepseek(prompt):
     # DeepSeek-V3
@@ -106,7 +138,9 @@ def improve_code_with_deepseek(prompt):
             {"role": "system", "content": persona},
             {"role": "user", "content": prompt},
         ],
-        stream=False
+        stream=False,
+        temperature=0.3,
+        top_p=0.95,
     )
     return response.choices[0].message.content
 
@@ -121,11 +155,8 @@ def call_llm(model_name, prompt):
         raise ValueError("Unsupported model name. Choose from 'gpt', 'llama', or 'deepseek'.")
 
 def main():
-    # model_name = input("Enter the model name (e.g., gpt): ")
-    # repo_name = input("Enter the repository name (e.g., kafka): ")
-
-    model_name = "gpt"
-    repo_name = "kafka"
+    repo_name = input("Enter the repository name (kafka, netty, presto, RoaringBitmap): ")
+    model_name = input("Enter the model name (gpt, deepseek, llama): ")
 
     prompts_dir = os.path.join("prompts", repo_name)
     if not os.path.exists(prompts_dir):

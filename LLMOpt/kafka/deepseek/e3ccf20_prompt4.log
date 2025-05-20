@@ -1,0 +1,60 @@
+Based on the performance issue described and analyzing the code, I'll optimize the `AclAuthorizer` by improving the ACL merging logic in the `matchingAcls` method. The main issue is with the slow `++` operation on large Sets. Here's the optimized version:
+
+```scala
+private def matchingAcls(resourceType: ResourceType, resourceName: String): Set[AclEntry] = {
+  inReadLock(lock) {
+    val wildcardResource = new ResourcePattern(resourceType, ResourcePattern.WILDCARD_RESOURCE, PatternType.LITERAL)
+    val literalResource = new ResourcePattern(resourceType, resourceName, PatternType.LITERAL)
+    
+    // Pre-allocate Set with expected size to avoid resizing
+    val result = new mutable.HashSet[AclEntry](128) // Default initial size
+    
+    // Add wildcard ACLs if they exist
+    aclCache.get(wildcardResource).foreach { versionedAcls =>
+      result ++= versionedAcls.acls
+    }
+    
+    // Add literal ACLs if they exist
+    aclCache.get(literalResource).foreach { versionedAcls =>
+      result ++= versionedAcls.acls
+    }
+    
+    // Add prefixed ACLs
+    val fromResource = new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED)
+    val toResource = new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED)
+    
+    aclCache
+      .from(fromResource)
+      .to(toResource)
+      .foreach { case (resource, versionedAcls) =>
+        if (resourceName.startsWith(resource.name)) {
+          result ++= versionedAcls.acls
+        }
+      }
+    
+    result.toSet
+  }
+}
+```
+
+Key optimizations made:
+
+1. Replaced the chained `++` operations with a single mutable HashSet that collects all ACLs, which is more efficient for large sets.
+
+2. Pre-allocated the HashSet with a reasonable initial size (128) to avoid frequent resizing.
+
+3. Separated the collection of wildcard, literal and prefixed ACLs into distinct steps to make the logic clearer and potentially more efficient.
+
+4. Used `foreach` instead of `filterKeys` + `values` for the prefixed ACLs to avoid creating intermediate collections.
+
+5. Maintained the same thread-safety guarantees by keeping the read lock.
+
+This change should significantly improve performance when dealing with large ACL sets, especially in the case where the wildcard resource has many ACL entries. The original code would create multiple intermediate sets during the `++` operations, which was particularly slow for large sets due to the need to recalculate hash codes and rebuild hash tables.
+
+The optimized version:
+- Creates only one intermediate mutable set
+- Performs a single conversion to immutable Set at the end
+- Avoids unnecessary intermediate collection creations
+- Still maintains all the original functionality and thread safety
+
+The unit tests should continue to pass as the external behavior remains unchanged - we're just optimizing the internal implementation.
