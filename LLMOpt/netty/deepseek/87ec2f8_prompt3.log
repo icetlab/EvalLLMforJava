@@ -1,0 +1,159 @@
+I'll analyze the code and suggest optimizations for the `ByteBufUtil` class, focusing on the string decoding functionality that's being benchmarked.
+
+Key observations from the benchmark:
+1. The benchmark tests decoding strings from different buffer types (direct, heap, composite)
+2. It tests with different string lengths and charsets (US-ASCII and UTF-8)
+3. The current implementation has some overhead when dealing with non-heap buffers
+
+Here's the optimized version of `ByteBufUtil.java` with improvements focused on the string decoding path:
+
+```java
+/*
+ * Copyright 2012 The Netty Project
+ *
+ * The Netty Project licenses this file to you under the Apache License,
+ * version 2.0 (the "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at:
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations
+ * under the License.
+ */
+package io.netty.buffer;
+
+import io.netty.util.AsciiString;
+import io.netty.util.ByteProcessor;
+import io.netty.util.CharsetUtil;
+import io.netty.util.Recycler;
+import io.netty.util.Recycler.Handle;
+import io.netty.util.concurrent.FastThreadLocal;
+import io.netty.util.internal.PlatformDependent;
+import io.netty.util.internal.StringUtil;
+import io.netty.util.internal.SystemPropertyUtil;
+import io.netty.util.internal.logging.InternalLogger;
+import io.netty.util.internal.logging.InternalLoggerFactory;
+
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.CharBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CharsetEncoder;
+import java.nio.charset.CoderResult;
+import java.nio.charset.CodingErrorAction;
+import java.util.Arrays;
+import java.util.Locale;
+
+import static io.netty.util.internal.MathUtil.isOutOfBounds;
+import static io.netty.util.internal.ObjectUtil.checkNotNull;
+import static io.netty.util.internal.StringUtil.NEWLINE;
+import static io.netty.util.internal.StringUtil.isSurrogate;
+
+/**
+ * A collection of utility methods that is related with handling {@link ByteBuf},
+ * such as the generation of hex dump and swapping an integer's byte order.
+ */
+public final class ByteBufUtil {
+
+    // ... [previous constant and field declarations remain the same] ...
+
+    static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {
+        if (len == 0) {
+            return StringUtil.EMPTY_STRING;
+        }
+        
+        // Fast-path for US-ASCII which is a single byte per char
+        if (charset == CharsetUtil.US_ASCII) {
+            byte[] bytes = new byte[len];
+            src.getBytes(readerIndex, bytes);
+            return new String(bytes, 0, len, CharsetUtil.US_ASCII);
+        }
+
+        final CharsetDecoder decoder = CharsetUtil.decoder(charset);
+        final int maxLength = (int) ((double) len * decoder.maxCharsPerByte());
+        
+        // Try to use thread-local buffer first
+        CharBuffer dst = CHAR_BUFFERS.get();
+        if (dst == null || dst.capacity() < maxLength) {
+            if (maxLength <= MAX_CHAR_BUFFER_SIZE) {
+                dst = CharBuffer.allocate(maxLength);
+                CHAR_BUFFERS.set(dst);
+            } else {
+                dst = CharBuffer.allocate(maxLength);
+            }
+        } else {
+            dst.clear();
+        }
+
+        if (src.nioBufferCount() == 1) {
+            // Use direct decoding for buffers with single nio buffer
+            decodeString(decoder, src.internalNioBuffer(readerIndex, len), dst);
+        } else if (src.hasArray()) {
+            // Use array directly for heap buffers
+            decodeString(decoder, ByteBuffer.wrap(src.array(), src.arrayOffset() + readerIndex, len), dst);
+        } else {
+            // Fallback to temporary heap buffer for composite or other buffer types
+            ByteBuf buffer = src.alloc().heapBuffer(len);
+            try {
+                buffer.writeBytes(src, readerIndex, len);
+                decodeString(decoder, buffer.internalNioBuffer(buffer.readerIndex(), len), dst);
+            } finally {
+                buffer.release();
+            }
+        }
+        return dst.flip().toString();
+    }
+
+    private static void decodeString(CharsetDecoder decoder, ByteBuffer src, CharBuffer dst) {
+        try {
+            CoderResult cr = decoder.decode(src, dst, true);
+            if (!cr.isUnderflow()) {
+                cr.throwException();
+            }
+            cr = decoder.flush(dst);
+            if (!cr.isUnderflow()) {
+                cr.throwException();
+            }
+        } catch (CharacterCodingException x) {
+            throw new IllegalStateException(x);
+        }
+    }
+
+    // ... [rest of the file remains unchanged] ...
+}
+```
+
+Key optimizations made:
+
+1. **Added fast-path for US-ASCII**: Since US-ASCII is a simple 1-byte-per-char encoding, we can handle it more efficiently by directly creating a String from the bytes.
+
+2. **Optimized buffer access patterns**:
+   - For single NIO buffer cases, use `internalNioBuffer()` directly
+   - For heap buffers with backing arrays, use the array directly via `ByteBuffer.wrap()`
+   - Only fall back to temporary buffer allocation for composite or other complex buffer types
+
+3. **Improved thread-local buffer handling**:
+   - Check for null thread-local buffer first
+   - Only allocate new buffer if needed
+   - Still maintain the size limit for thread-local buffers
+
+4. **Reduced object allocations**:
+   - Avoid unnecessary buffer copies when possible
+   - Reuse thread-local buffers more effectively
+
+These changes should significantly improve performance for:
+- Small strings (due to better handling of thread-local buffers)
+- US-ASCII encoded strings (special fast path)
+- Heap buffers (direct array access)
+- Direct buffers (single NIO buffer optimization)
+
+The changes maintain all existing functionality while optimizing the common cases seen in the benchmark. The optimizations are particularly effective for the benchmark cases that use US-ASCII and heap buffers.
+
+The rest of the file remains unchanged since the optimizations are focused on the string decoding path that's being benchmarked. Other utility methods in the class don't need modification as they're not part of the critical path being measured.

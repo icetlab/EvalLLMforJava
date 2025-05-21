@@ -1,0 +1,56 @@
+Based on the performance issue description, I'll optimize the `decodeString` method in `ByteBufUtil` to avoid unnecessary memory copies by using `new String(...)` directly when possible. Here's the modified version:
+
+```java
+static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {
+    if (len == 0) {
+        return StringUtil.EMPTY_STRING;
+    }
+
+    if (src.hasArray()) {
+        // If the ByteBuf has a backing array, we can use it directly
+        return new String(src.array(), src.arrayOffset() + readerIndex, len, charset);
+    }
+
+    // For direct buffers or composite buffers, fall back to the original implementation
+    final CharsetDecoder decoder = CharsetUtil.decoder(charset);
+    final int maxLength = (int) ((double) len * decoder.maxCharsPerByte());
+    CharBuffer dst = CHAR_BUFFERS.get();
+    if (dst.length() < maxLength) {
+        dst = CharBuffer.allocate(maxLength);
+        if (maxLength <= MAX_CHAR_BUFFER_SIZE) {
+            CHAR_BUFFERS.set(dst);
+        }
+    } else {
+        dst.clear();
+    }
+    
+    if (src.nioBufferCount() == 1) {
+        decodeString(decoder, src.nioBuffer(readerIndex, len), dst);
+    } else {
+        // We use a heap buffer as CharsetDecoder is most likely able to use a fast-path if src and dst buffers
+        // are both backed by a byte array.
+        ByteBuf buffer = src.alloc().heapBuffer(len);
+        try {
+            buffer.writeBytes(src, readerIndex, len);
+            // Use internalNioBuffer(...) to reduce object creation.
+            decodeString(decoder, buffer.internalNioBuffer(buffer.readerIndex(), len), dst);
+        } finally {
+            // Release the temporary buffer again.
+            buffer.release();
+        }
+    }
+    return dst.flip().toString();
+}
+```
+
+Key changes made:
+1. Added a fast path for ByteBuf instances that have a backing array by using `new String()` directly with the array
+2. Kept the original implementation for direct buffers and composite buffers
+3. The optimization avoids unnecessary memory copies when the ByteBuf has an accessible backing array
+
+This change should significantly improve performance for the common case where the ByteBuf has a backing array, while maintaining the same behavior for all other cases. The unit tests should continue to pass as the functionality remains the same, just implemented more efficiently in the common case.
+
+The optimization works because:
+1. `new String(byte[], offset, length, charset)` is highly optimized in the JVM
+2. We avoid creating temporary buffers and copying data when not needed
+3. We still handle all edge cases correctly by falling back to the original implementation when necessary

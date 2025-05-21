@@ -1,0 +1,131 @@
+Based on the benchmark results showing that the newEquals() method using PlatformDependent.equalsConstantTime() is slower than the oldEquals() method, I'll optimize the PlatformDependent.equalsConstantTime() implementation in PlatformDependent.java.
+
+Here's the optimized version of PlatformDependent.java with improvements to the equalsConstantTime() method:
+
+```java
+/*
+ * Copyright 2012 The Netty Project
+ *
+ * The Netty Project licenses this file to you under the Apache License,
+ * version 2.0 (the "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at:
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations
+ * under the License.
+ */
+package io.netty.util.internal;
+
+import io.netty.util.internal.logging.InternalLogger;
+import io.netty.util.internal.logging.InternalLoggerFactory;
+import org.jctools.queues.MpscArrayQueue;
+import org.jctools.queues.MpscChunkedArrayQueue;
+import org.jctools.queues.MpscUnboundedArrayQueue;
+import org.jctools.queues.SpscLinkedQueue;
+import org.jctools.queues.atomic.MpscAtomicArrayQueue;
+import org.jctools.queues.atomic.MpscGrowableAtomicArrayQueue;
+import org.jctools.queues.atomic.MpscUnboundedAtomicArrayQueue;
+import org.jctools.queues.atomic.SpscLinkedAtomicQueue;
+import org.jctools.util.Pow2;
+import org.jctools.util.UnsafeAccess;
+
+import java.io.File;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.security.AccessController;
+import java.security.PrivilegedAction;
+import java.util.Deque;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Queue;
+import java.util.Random;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import static io.netty.util.internal.PlatformDependent0.HASH_CODE_ASCII_SEED;
+import static io.netty.util.internal.PlatformDependent0.HASH_CODE_C1;
+import static io.netty.util.internal.PlatformDependent0.HASH_CODE_C2;
+import static io.netty.util.internal.PlatformDependent0.hashCodeAsciiSanitize;
+import static io.netty.util.internal.PlatformDependent0.unalignedAccess;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+
+/**
+ * Utility that detects various properties specific to the current runtime
+ * environment, such as Java version and the availability of the
+ * {@code sun.misc.Unsafe} object.
+ * <p>
+ * You can disable the use of {@code sun.misc.Unsafe} if you specify
+ * the system property <strong>io.netty.noUnsafe</strong>.
+ */
+public final class PlatformDependent {
+
+    // ... [previous code remains unchanged until equalsConstantTime method] ...
+
+    /**
+     * Compare two {@code byte} arrays for equality without leaking timing information.
+     * For performance reasons no bounds checking on the parameters is performed.
+     * <p>
+     * The {@code int} return type is intentional and is designed to allow cascading of constant time operations:
+     * <pre>
+     *     byte[] s1 = new {1, 2, 3};
+     *     byte[] s2 = new {1, 2, 3};
+     *     byte[] s3 = new {1, 2, 3};
+     *     byte[] s4 = new {4, 5, 6};
+     *     boolean equals = (equalsConstantTime(s1, 0, s2, 0, s1.length) &
+     *                       equalsConstantTime(s3, 0, s4, 0, s3.length)) != 0;
+     * </pre>
+     * @param bytes1 the first byte array.
+     * @param startPos1 the position (inclusive) to start comparing in {@code bytes1}.
+     * @param bytes2 the second byte array.
+     * @param startPos2 the position (inclusive) to start comparing in {@code bytes2}.
+     * @param length the amount of bytes to compare. This is assumed to be validated as not going out of bounds
+     * by the caller.
+     * @return {@code 0} if not equal. {@code 1} if equal.
+     */
+    public static int equalsConstantTime(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {
+        if (!hasUnsafe() || !unalignedAccess()) {
+            return ConstantTimeUtils.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);
+        }
+        
+        // Fast path for small arrays
+        if (length <= 16) {
+            int result = 0;
+            for (int i = 0; i < length; i++) {
+                result |= bytes1[startPos1 + i] ^ bytes2[startPos2 + i];
+            }
+            return ConstantTimeUtils.equalsConstantTime(result, 0);
+        }
+        
+        return PlatformDependent0.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);
+    }
+
+    // ... [rest of the code remains unchanged] ...
+}
+```
+
+Key optimizations made:
+
+1. Added a fast path for small arrays (length <= 16) that avoids the overhead of PlatformDependent0.equalsConstantTime() for small comparisons. This is based on the observation that for small arrays, a simple loop is often faster than the more complex unaligned memory access operations.
+
+2. The fast path uses a simple XOR-based comparison that is still constant-time but more efficient for small arrays.
+
+3. For larger arrays, we still delegate to the optimized PlatformDependent0 implementation which uses Unsafe for better performance.
+
+The changes maintain the constant-time property required for security while improving performance for common small-header cases that are typical in HTTP/2 header comparisons.
+
+The benchmark shows this is particularly important since the HpackUtilBenchmark is comparing relatively short header names (typically less than 16 bytes). The fast path will handle these cases more efficiently while still falling back to the optimized unsafe implementation for larger buffers.
+
+This change should make the newEquals() method in HpackUtilBenchmark competitive with or faster than the oldEquals() method while maintaining the security benefits of constant-time comparison.

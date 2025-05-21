@@ -1,0 +1,1405 @@
+The source files are:
+../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.facebook.presto.geospatial;
+
+import com.esri.core.geometry.Envelope;
+import com.esri.core.geometry.Geometry;
+import com.esri.core.geometry.MultiPoint;
+import com.esri.core.geometry.OperatorImportFromESRIShape;
+import com.esri.core.geometry.Point;
+import com.esri.core.geometry.Polygon;
+import com.esri.core.geometry.Polyline;
+import com.esri.core.geometry.ogc.OGCConcreteGeometryCollection;
+import com.esri.core.geometry.ogc.OGCGeometry;
+import com.esri.core.geometry.ogc.OGCGeometryCollection;
+import com.esri.core.geometry.ogc.OGCLineString;
+import com.esri.core.geometry.ogc.OGCMultiLineString;
+import com.esri.core.geometry.ogc.OGCMultiPoint;
+import com.esri.core.geometry.ogc.OGCMultiPolygon;
+import com.esri.core.geometry.ogc.OGCPoint;
+import com.esri.core.geometry.ogc.OGCPolygon;
+import io.airlift.slice.BasicSliceInput;
+import io.airlift.slice.DynamicSliceOutput;
+import io.airlift.slice.Slice;
+
+import javax.annotation.Nullable;
+
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
+
+import static com.esri.core.geometry.Geometry.Type.Unknown;
+import static com.esri.core.geometry.GeometryEngine.geometryToEsriShape;
+import static com.facebook.presto.geospatial.GeometryUtils.isEsriNaN;
+import static com.google.common.base.Verify.verify;
+import static java.lang.Math.toIntExact;
+import static java.util.Objects.requireNonNull;
+
+public class GeometrySerde
+{
+    private GeometrySerde() {}
+
+    public static Slice serialize(OGCGeometry input)
+    {
+        requireNonNull(input, "input is null");
+        DynamicSliceOutput output = new DynamicSliceOutput(100);
+        writeGeometry(output, input);
+        return output.slice();
+    }
+
+    private static void writeGeometry(DynamicSliceOutput output, OGCGeometry geometry)
+    {
+        GeometryType type = GeometryType.getForEsriGeometryType(geometry.geometryType());
+        switch (type) {
+            case POINT:
+            case MULTI_POINT:
+            case LINE_STRING:
+            case MULTI_LINE_STRING:
+            case POLYGON:
+            case MULTI_POLYGON:
+                writeSimpleGeometry(output, type, geometry);
+                break;
+            case GEOMETRY_COLLECTION: {
+                verify(geometry instanceof OGCConcreteGeometryCollection);
+                writeGeometryCollection(output, (OGCConcreteGeometryCollection) geometry);
+                break;
+            }
+            default:
+                throw new IllegalArgumentException("Unexpected type: " + type);
+        }
+    }
+
+    private static void writeGeometryCollection(DynamicSliceOutput output, OGCGeometryCollection collection)
+    {
+        output.appendByte(GeometryType.GEOMETRY_COLLECTION.code());
+        for (int geometryIndex = 0; geometryIndex < collection.numGeometries(); geometryIndex++) {
+            OGCGeometry geometry = collection.geometryN(geometryIndex);
+            int startPosition = output.size();
+
+            // leave 4 bytes for the shape length
+            output.appendInt(0);
+            writeGeometry(output, geometry);
+
+            int endPosition = output.size();
+            int length = endPosition - startPosition - Integer.BYTES;
+
+            output.getUnderlyingSlice().setInt(startPosition, length);
+        }
+    }
+
+    private static void writeSimpleGeometry(DynamicSliceOutput output, GeometryType type, OGCGeometry geometry)
+    {
+        output.appendByte(type.code());
+        Geometry esriGeometry = requireNonNull(geometry.getEsriGeometry(), "esriGeometry is null");
+        byte[] shape = geometryToEsriShape(esriGeometry);
+        output.appendBytes(shape);
+    }
+
+    public static OGCGeometry deserialize(Slice shape)
+    {
+        requireNonNull(shape, "shape is null");
+        BasicSliceInput input = shape.getInput();
+        verify(input.available() > 0);
+        int length = input.available() - 1;
+        GeometryType type = GeometryType.getForCode(input.readByte());
+        return readGeometry(input, shape, type, length);
+    }
+
+    private static OGCGeometry readGeometry(BasicSliceInput input, Slice inputSlice, GeometryType type, int length)
+    {
+        switch (type) {
+            case POINT:
+            case MULTI_POINT:
+            case LINE_STRING:
+            case MULTI_LINE_STRING:
+            case POLYGON:
+            case MULTI_POLYGON:
+                return readSimpleGeometry(input, inputSlice, type, length);
+            case GEOMETRY_COLLECTION:
+                return readGeometryCollection(input, inputSlice);
+            default:
+                throw new IllegalArgumentException("Unexpected type: " + type);
+        }
+    }
+
+    private static OGCConcreteGeometryCollection readGeometryCollection(BasicSliceInput input, Slice inputSlice)
+    {
+        // GeometryCollection: geometryType|len-of-shape1|bytes-of-shape1|len-of-shape2|bytes-of-shape2...
+        List<OGCGeometry> geometries = new ArrayList<>();
+        while (input.available() > 0) {
+            int length = input.readInt() - 1;
+            GeometryType type = GeometryType.getForCode(input.readByte());
+            geometries.add(readGeometry(input, inputSlice, type, length));
+        }
+        return new OGCConcreteGeometryCollection(geometries, null);
+    }
+
+    private static OGCGeometry readSimpleGeometry(BasicSliceInput input, Slice inputSlice, GeometryType type, int length)
+    {
+        int currentPosition = toIntExact(input.position());
+        ByteBuffer geometryBuffer = inputSlice.toByteBuffer(currentPosition, length).slice();
+        input.setPosition(currentPosition + length);
+        Geometry esriGeometry = OperatorImportFromESRIShape.local().execute(0, Unknown, geometryBuffer);
+        return createFromEsriGeometry(esriGeometry, type.isMultitype());
+    }
+
+    private static OGCGeometry createFromEsriGeometry(Geometry geometry, boolean multiType)
+    {
+        Geometry.Type type = geometry.getType();
+        switch (type) {
+            case Polygon: {
+                if (!multiType && ((Polygon) geometry).getExteriorRingCount() <= 1) {
+                    return new OGCPolygon((Polygon) geometry, null);
+                }
+                return new OGCMultiPolygon((Polygon) geometry, null);
+            }
+            case Polyline: {
+                if (!multiType && ((Polyline) geometry).getPathCount() <= 1) {
+                    return new OGCLineString((Polyline) geometry, 0, null);
+                }
+                return new OGCMultiLineString((Polyline) geometry, null);
+            }
+            case MultiPoint: {
+                if (!multiType && ((MultiPoint) geometry).getPointCount() <= 1) {
+                    if (geometry.isEmpty()) {
+                        return new OGCPoint(new Point(), null);
+                    }
+                    return new OGCPoint(((MultiPoint) geometry).getPoint(0), null);
+                }
+                return new OGCMultiPoint((MultiPoint) geometry, null);
+            }
+            case Point: {
+                if (!multiType) {
+                    return new OGCPoint((Point) geometry, null);
+                }
+                return new OGCMultiPoint((Point) geometry, null);
+            }
+            default:
+                throw new IllegalArgumentException("Unexpected geometry type: " + type);
+        }
+    }
+
+    @Nullable
+    public static Envelope deserializeEnvelope(Slice shape)
+    {
+        requireNonNull(shape, "shape is null");
+        BasicSliceInput input = shape.getInput();
+
+        if (input.available() == 0) {
+            return null;
+        }
+
+        int length = input.available() - 1;
+        GeometryType type = GeometryType.getForCode(input.readByte());
+        return getEnvelope(input, type, length);
+    }
+
+    private static Envelope getEnvelope(BasicSliceInput input, GeometryType type, int length)
+    {
+        switch (type) {
+            case POINT:
+                return getPointEnvelope(input);
+            case MULTI_POINT:
+            case LINE_STRING:
+            case MULTI_LINE_STRING:
+            case POLYGON:
+            case MULTI_POLYGON:
+                return getSimpleGeometryEnvelope(input, length);
+            case GEOMETRY_COLLECTION:
+                return getGeometryCollectionOverallEnvelope(input);
+            default:
+                throw new IllegalArgumentException("Unexpected type: " + type);
+        }
+    }
+
+    private static Envelope getGeometryCollectionOverallEnvelope(BasicSliceInput input)
+    {
+        Envelope overallEnvelope = null;
+        while (input.available() > 0) {
+            int length = input.readInt() - 1;
+            GeometryType type = GeometryType.getForCode(input.readByte());
+            Envelope envelope = getEnvelope(input, type, length);
+            overallEnvelope = merge(overallEnvelope, envelope);
+        }
+        return overallEnvelope;
+    }
+
+    private static Envelope getSimpleGeometryEnvelope(BasicSliceInput input, int length)
+    {
+        // skip type injected by esri
+        input.readInt();
+
+        double xMin = input.readDouble();
+        double yMin = input.readDouble();
+        double xMax = input.readDouble();
+        double yMax = input.readDouble();
+
+        int skipLength = length - (4 * Double.BYTES) - Integer.BYTES;
+        verify(input.skip(skipLength) == skipLength);
+
+        if (isEsriNaN(xMin) || isEsriNaN(yMin) || isEsriNaN(xMax) || isEsriNaN(yMax)) {
+            // TODO: isn't it better to return empty envelope instead?
+            return null;
+        }
+        return new Envelope(xMin, yMin, xMax, yMax);
+    }
+
+    private static Envelope getPointEnvelope(BasicSliceInput input)
+    {
+        // skip type injected by esri
+        input.readInt();
+
+        double x = input.readDouble();
+        double y = input.readDouble();
+        if (isEsriNaN(x) || isEsriNaN(y)) {
+            // TODO: isn't it better to return empty envelope instead?
+            return null;
+        }
+        return new Envelope(x, y, x, y);
+    }
+
+    @Nullable
+    private static Envelope merge(@Nullable Envelope left, @Nullable Envelope right)
+    {
+        if (left == null) {
+            return right;
+        }
+        else if (right == null) {
+            return left;
+        }
+        else {
+            right.merge(left);
+        }
+        return right;
+    }
+}
+
+../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.facebook.presto.geospatial;
+
+import io.airlift.slice.BasicSliceInput;
+import io.airlift.slice.DynamicSliceOutput;
+import io.airlift.slice.Slice;
+import io.airlift.slice.SliceInput;
+import io.airlift.slice.SliceOutput;
+import org.locationtech.jts.geom.Coordinate;
+import org.locationtech.jts.geom.Envelope;
+import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.GeometryFactory;
+import org.locationtech.jts.geom.LineString;
+import org.locationtech.jts.geom.LinearRing;
+import org.locationtech.jts.geom.MultiPoint;
+import org.locationtech.jts.geom.Point;
+import org.locationtech.jts.geom.Polygon;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import static com.facebook.presto.geospatial.GeometryUtils.isEsriNaN;
+import static com.facebook.presto.geospatial.GeometryUtils.translateToAVNaN;
+import static com.google.common.base.Verify.verify;
+import static com.google.common.collect.Iterables.getOnlyElement;
+import static io.airlift.slice.SizeOf.SIZE_OF_DOUBLE;
+import static java.util.Objects.requireNonNull;
+
+public class JtsGeometrySerde
+{
+    // TODO: Are we sure this is thread safe?
+    private static final GeometryFactory GEOMETRY_FACTORY = new GeometryFactory();
+
+    private JtsGeometrySerde() {}
+
+    public static Geometry deserialize(Slice shape)
+    {
+        requireNonNull(shape, "shape is null");
+        BasicSliceInput input = shape.getInput();
+        verify(input.available() > 0);
+        GeometryType type = GeometryType.getForCode(input.readByte());
+        return readGeometry(input, type);
+    }
+
+    private static Geometry readGeometry(BasicSliceInput input, GeometryType type)
+    {
+        switch (type) {
+            case POINT:
+                return readPoint(input, true);
+            case MULTI_POINT:
+                return readMultiPoint(input);
+            case LINE_STRING:
+                return readPolyline(input, false);
+            case MULTI_LINE_STRING:
+                return readPolyline(input, true);
+            case POLYGON:
+                return readPolygon(input, false);
+            case MULTI_POLYGON:
+                return readPolygon(input, true);
+            case GEOMETRY_COLLECTION:
+                return readGeometryCollection(input);
+            default:
+                throw new UnsupportedOperationException("Unexpected type: " + type);
+        }
+    }
+
+    private static Point readPoint(SliceInput input, boolean skipType)
+    {
+        if (skipType) {
+            skipEsriType(input);
+        }
+        Coordinate coordinates = readCoordinate(input);
+        if (isEsriNaN(coordinates.x) || isEsriNaN(coordinates.y)) {
+            return GEOMETRY_FACTORY.createPoint();
+        }
+        return GEOMETRY_FACTORY.createPoint(coordinates);
+    }
+
+    private static Geometry readMultiPoint(SliceInput input)
+    {
+        skipEsriType(input);
+        skipEnvelope(input);
+        int pointCount = input.readInt();
+        Point[] points = new Point[pointCount];
+        for (int i = 0; i < pointCount; i++) {
+            points[i] = readPoint(input, false);
+        }
+        return GEOMETRY_FACTORY.createMultiPoint(points);
+    }
+
+    private static Geometry readPolyline(SliceInput input, boolean multitype)
+    {
+        skipEsriType(input);
+        skipEnvelope(input);
+        int partCount = input.readInt();
+        if (partCount == 0) {
+            if (multitype) {
+                return GEOMETRY_FACTORY.createMultiLineString();
+            }
+            return GEOMETRY_FACTORY.createLineString();
+        }
+
+        int pointCount = input.readInt();
+        int[] startIndexes = new int[partCount];
+        for (int i = 0; i < partCount; i++) {
+            startIndexes[i] = input.readInt();
+        }
+
+        int[] partLengths = new int[partCount];
+        if (partCount > 1) {
+            partLengths[0] = startIndexes[1];
+            for (int i = 1; i < partCount - 1; i++) {
+                partLengths[i] = startIndexes[i + 1] - startIndexes[i];
+            }
+        }
+        partLengths[partCount - 1] = pointCount - startIndexes[partCount - 1];
+
+        LineString[] lineStrings = new LineString[partCount];
+
+        for (int i = 0; i < partCount; i++) {
+            lineStrings[i] = GEOMETRY_FACTORY.createLineString(readCoordinates(input, partLengths[i]));
+        }
+
+        if (multitype) {
+            return GEOMETRY_FACTORY.createMultiLineString(lineStrings);
+        }
+        verify(lineStrings.length == 1);
+        return lineStrings[0];
+    }
+
+    private static Geometry readPolygon(SliceInput input, boolean multitype)
+    {
+        skipEsriType(input);
+        skipEnvelope(input);
+        int partCount = input.readInt();
+        if (partCount == 0) {
+            if (multitype) {
+                return GEOMETRY_FACTORY.createMultiPolygon();
+            }
+            return GEOMETRY_FACTORY.createPolygon();
+        }
+
+        int pointCount = input.readInt();
+        int[] startIndexes = new int[partCount];
+        for (int i = 0; i < partCount; i++) {
+            startIndexes[i] = input.readInt();
+        }
+
+        int[] partLengths = new int[partCount];
+        if (partCount > 1) {
+            partLengths[0] = startIndexes[1];
+            for (int i = 1; i < partCount - 1; i++) {
+                partLengths[i] = startIndexes[i + 1] - startIndexes[i];
+            }
+        }
+        partLengths[partCount - 1] = pointCount - startIndexes[partCount - 1];
+
+        LinearRing shell = null;
+        List<LinearRing> holes = new ArrayList<>();
+        List<Polygon> polygons = new ArrayList<>();
+        for (int i = 0; i < partCount; i++) {
+            Coordinate[] coordinates = readCoordinates(input, partLengths[i]);
+            if (isClockwise(coordinates)) {
+                // next polygon has started
+                if (shell != null) {
+                    polygons.add(GEOMETRY_FACTORY.createPolygon(shell, holes.toArray(new LinearRing[0])));
+                    holes.clear();
+                }
+                else {
+                    verify(holes.isEmpty(), "shell is null but holes found");
+                }
+                shell = GEOMETRY_FACTORY.createLinearRing(coordinates);
+            }
+            else {
+                verify(shell != null, "shell is null but hole found");
+                holes.add(GEOMETRY_FACTORY.createLinearRing(coordinates));
+            }
+        }
+        polygons.add(GEOMETRY_FACTORY.createPolygon(shell, holes.toArray(new LinearRing[0])));
+
+        if (multitype) {
+            return GEOMETRY_FACTORY.createMultiPolygon(polygons.toArray(new Polygon[0]));
+        }
+        return getOnlyElement(polygons);
+    }
+
+    private static Geometry readGeometryCollection(BasicSliceInput input)
+    {
+        List<Geometry> geometries = new ArrayList<>();
+        while (input.available() > 0) {
+            // skip length
+            input.readInt();
+            GeometryType type = GeometryType.getForCode(input.readByte());
+            geometries.add(readGeometry(input, type));
+        }
+        return GEOMETRY_FACTORY.createGeometryCollection(geometries.toArray(new Geometry[0]));
+    }
+
+    private static void skipEsriType(SliceInput input)
+    {
+        input.readInt();
+    }
+
+    private static void skipEnvelope(SliceInput input)
+    {
+        requireNonNull(input, "input is null");
+        int skipLength = 4 * SIZE_OF_DOUBLE;
+        verify(input.skip(skipLength) == skipLength);
+    }
+
+    private static Coordinate readCoordinate(SliceInput input)
+    {
+        requireNonNull(input, "input is null");
+        return new Coordinate(input.readDouble(), input.readDouble());
+    }
+
+    private static Coordinate[] readCoordinates(SliceInput input, int count)
+    {
+        requireNonNull(input, "input is null");
+        verify(count > 0);
+        Coordinate[] coordinates = new Coordinate[count];
+        for (int i = 0; i < count; i++) {
+            coordinates[i] = readCoordinate(input);
+        }
+        return coordinates;
+    }
+
+    /**
+     * Serialize JTS {@link Geometry} shape into an ESRI shape
+     */
+    public static Slice serialize(Geometry geometry)
+    {
+        requireNonNull(geometry, "input is null");
+        DynamicSliceOutput output = new DynamicSliceOutput(100);
+        writeGeometry(geometry, output);
+        return output.slice();
+    }
+
+    private static void writeGeometry(Geometry geometry, DynamicSliceOutput output)
+    {
+        switch (geometry.getGeometryType()) {
+            case "Point":
+                writePoint((Point) geometry, output);
+                break;
+            case "MultiPoint":
+                writeMultiPoint((MultiPoint) geometry, output);
+                break;
+            case "LineString":
+                writePolyline(geometry, output, false);
+                break;
+            case "MultiLineString":
+                writePolyline(geometry, output, true);
+                break;
+            case "Polygon":
+                writePolygon(geometry, output, false);
+                break;
+            case "MultiPolygon":
+                writePolygon(geometry, output, true);
+                break;
+            case "GeometryCollection":
+                writeGeometryCollection(geometry, output);
+                break;
+            default:
+                throw new IllegalArgumentException("Unsupported geometry type : " + geometry.getGeometryType());
+        }
+    }
+
+    private static void writePoint(Point point, SliceOutput output)
+    {
+        output.writeByte(GeometryType.POINT.code());
+        output.writeInt(EsriShapeType.POINT.code);
+        if (!point.isEmpty()) {
+            writeCoordinate(point.getCoordinate(), output);
+        }
+        else {
+            writeCoordinate(new Coordinate(translateToAVNaN(Double.NaN), translateToAVNaN(Double.NaN)), output);
+        }
+    }
+
+    private static void writeMultiPoint(MultiPoint geometry, SliceOutput output)
+    {
+        output.writeByte(GeometryType.MULTI_POINT.code());
+        output.writeInt(EsriShapeType.MULTI_POINT.code);
+        writeEnvelope(geometry, output);
+        output.writeInt(geometry.getNumPoints());
+        for (Coordinate coordinate : geometry.getCoordinates()) {
+            writeCoordinate(coordinate, output);
+        }
+    }
+
+    private static void writePolyline(Geometry geometry, SliceOutput output, boolean multitype)
+    {
+        int numParts;
+        int numPoints = geometry.getNumPoints();
+        if (multitype) {
+            numParts = geometry.getNumGeometries();
+            output.writeByte(GeometryType.MULTI_LINE_STRING.code());
+        }
+        else {
+            numParts = numPoints > 0 ? 1 : 0;
+            output.writeByte(GeometryType.LINE_STRING.code());
+        }
+
+        output.writeInt(EsriShapeType.POLYLINE.code);
+
+        writeEnvelope(geometry, output);
+
+        output.writeInt(numParts);
+        output.writeInt(numPoints);
+
+        int partIndex = 0;
+        for (int i = 0; i < numParts; i++) {
+            output.writeInt(partIndex);
+            partIndex += geometry.getGeometryN(i).getNumPoints();
+        }
+
+        writeCoordinates(geometry.getCoordinates(), output);
+    }
+
+    private static void writePolygon(Geometry geometry, SliceOutput output, boolean multitype)
+    {
+        int numGeometries = geometry.getNumGeometries();
+        int numParts = 0;
+        int numPoints = geometry.getNumPoints();
+        for (int i = 0; i < numGeometries; i++) {
+            Polygon polygon = (Polygon) geometry.getGeometryN(i);
+            if (polygon.getNumPoints() > 0) {
+                numParts += polygon.getNumInteriorRing() + 1;
+            }
+        }
+
+        if (multitype) {
+            output.writeByte(GeometryType.MULTI_POLYGON.code());
+        }
+        else {
+            output.writeByte(GeometryType.POLYGON.code());
+        }
+
+        output.writeInt(EsriShapeType.POLYGON.code);
+
+        writeEnvelope(geometry, output);
+
+        output.writeInt(numParts);
+        output.writeInt(numPoints);
+
+        if (numParts == 0) {
+            return;
+        }
+
+        int[] partIndexes = new int[numParts];
+        boolean[] shellPart = new boolean[numParts];
+
+        int currentPart = 0;
+        int currentPoint = 0;
+        for (int i = 0; i < numGeometries; i++) {
+            Polygon polygon = (Polygon) geometry.getGeometryN(i);
+
+            partIndexes[currentPart] = currentPoint;
+            shellPart[currentPart] = true;
+            currentPart++;
+            currentPoint += polygon.getExteriorRing().getNumPoints();
+
+            int holesCount = polygon.getNumInteriorRing();
+            for (int holeIndex = 0; holeIndex < holesCount; holeIndex++) {
+                partIndexes[currentPart] = currentPoint;
+                shellPart[currentPart] = false;
+                currentPart++;
+                currentPoint += polygon.getInteriorRingN(holeIndex).getNumPoints();
+            }
+        }
+
+        for (int partIndex : partIndexes) {
+            output.writeInt(partIndex);
+        }
+
+        Coordinate[] coordinates = geometry.getCoordinates();
+        canonicalizePolygonCoordinates(coordinates, partIndexes, shellPart);
+        writeCoordinates(coordinates, output);
+    }
+
+    private static void writeGeometryCollection(Geometry collection, DynamicSliceOutput output)
+    {
+        output.appendByte(GeometryType.GEOMETRY_COLLECTION.code());
+        for (int geometryIndex = 0; geometryIndex < collection.getNumGeometries(); geometryIndex++) {
+            Geometry geometry = collection.getGeometryN(geometryIndex);
+            int startPosition = output.size();
+
+            // leave 4 bytes for the shape length
+            output.appendInt(0);
+            writeGeometry(geometry, output);
+
+            int endPosition = output.size();
+            int length = endPosition - startPosition - Integer.BYTES;
+
+            output.getUnderlyingSlice().setInt(startPosition, length);
+        }
+    }
+
+    private static void writeCoordinate(Coordinate coordinate, SliceOutput output)
+    {
+        output.writeDouble(translateToAVNaN(coordinate.x));
+        output.writeDouble(translateToAVNaN(coordinate.y));
+    }
+
+    private static void writeCoordinates(Coordinate[] coordinates, SliceOutput output)
+    {
+        for (Coordinate coordinate : coordinates) {
+            writeCoordinate(coordinate, output);
+        }
+    }
+
+    private static void writeEnvelope(Geometry geometry, SliceOutput output)
+    {
+        if (geometry.isEmpty()) {
+            for (int i = 0; i < 4; i++) {
+                output.writeDouble(Double.NaN);
+            }
+            return;
+        }
+
+        Envelope envelope = geometry.getEnvelopeInternal();
+        output.writeDouble(envelope.getMinX());
+        output.writeDouble(envelope.getMinY());
+        output.writeDouble(envelope.getMaxX());
+        output.writeDouble(envelope.getMaxY());
+    }
+
+    private static void canonicalizePolygonCoordinates(Coordinate[] coordinates, int[] partIndexes, boolean[] shellPart)
+    {
+        for (int part = 0; part < partIndexes.length - 1; part++) {
+            canonicalizePolygonCoordinates(coordinates, partIndexes[part], partIndexes[part + 1], shellPart[part]);
+        }
+        if (partIndexes.length > 0) {
+            canonicalizePolygonCoordinates(coordinates, partIndexes[partIndexes.length - 1], coordinates.length, shellPart[partIndexes.length - 1]);
+        }
+    }
+
+    private static void canonicalizePolygonCoordinates(Coordinate[] coordinates, int start, int end, boolean isShell)
+    {
+        boolean isClockwise = isClockwise(coordinates, start, end);
+
+        if ((isShell && !isClockwise) || (!isShell && isClockwise)) {
+            // shell has to be counter clockwise
+            reverse(coordinates, start, end);
+        }
+    }
+
+    private static boolean isClockwise(Coordinate[] coordinates)
+    {
+        return isClockwise(coordinates, 0, coordinates.length);
+    }
+
+    private static boolean isClockwise(Coordinate[] coordinates, int start, int end)
+    {
+        // Sum over the edges: (x2 − x1) * (y2 + y1).
+        // If the result is positive the curve is clockwise,
+        // if it's negative the curve is counter-clockwise.
+        double area = 0;
+        for (int i = start + 1; i < end; i++) {
+            area += (coordinates[i].x - coordinates[i - 1].x) * (coordinates[i].y + coordinates[i - 1].y);
+        }
+        area += (coordinates[start].x - coordinates[end - 1].x) * (coordinates[start].y + coordinates[end - 1].y);
+        return area > 0;
+    }
+
+    private static void reverse(Coordinate[] coordinates, int start, int end)
+    {
+        verify(start <= end, "start must be less or equal than end");
+        for (int i = start; i < start + ((end - start) / 2); i++) {
+            Coordinate buffer = coordinates[i];
+            coordinates[i] = coordinates[start + end - i - 1];
+            coordinates[start + end - i - 1] = buffer;
+        }
+    }
+
+    /**
+     * Shape type codes from ERSI's specification
+     * https://www.esri.com/library/whitepapers/pdfs/shapefile.pdf
+     */
+    private enum EsriShapeType
+    {
+        POINT(1),
+        POLYLINE(3),
+        POLYGON(5),
+        MULTI_POINT(8);
+
+        final int code;
+
+        EsriShapeType(int code)
+        {
+            this.code = code;
+        }
+    }
+}
+
+---------
+The unit test is:
+../presto/presto-geospatial-toolkit/src/test/java/com/facebook/presto/geospatial/TestGeometrySerialization.java
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.facebook.presto.geospatial;
+
+import com.esri.core.geometry.Envelope;
+import com.esri.core.geometry.ogc.OGCGeometry;
+import io.airlift.slice.Slice;
+import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.io.ParseException;
+import org.locationtech.jts.io.WKTReader;
+import org.testng.annotations.Test;
+
+import static com.facebook.presto.geospatial.GeometrySerde.deserialize;
+import static com.facebook.presto.geospatial.GeometrySerde.deserializeEnvelope;
+import static com.facebook.presto.geospatial.GeometrySerde.serialize;
+import static org.testng.Assert.assertEquals;
+
+public class TestGeometrySerialization
+{
+    @Test
+    public void testPoint()
+    {
+        testSerialization("POINT (1 2)");
+        testSerialization("POINT (-1 -2)");
+        testSerialization("POINT (0 0)");
+        testSerialization("POINT (-2e3 -4e33)");
+        testSerialization("POINT EMPTY");
+    }
+
+    @Test
+    public void testMultiPoint()
+    {
+        testSerialization("MULTIPOINT (0 0)");
+        testSerialization("MULTIPOINT (0 0, 0 0)");
+        testSerialization("MULTIPOINT (0 0, 1 1, 2 3)");
+        testSerialization("MULTIPOINT EMPTY");
+    }
+
+    @Test
+    public void testLineString()
+    {
+        testSerialization("LINESTRING (0 1, 2 3)");
+        testSerialization("LINESTRING (0 1, 2 3, 4 5)");
+        testSerialization("LINESTRING (0 1, 2 3, 4 5, 0 1)");
+        testSerialization("LINESTRING EMPTY");
+    }
+
+    @Test
+    public void testMultiLineString()
+    {
+        testSerialization("MULTILINESTRING ((0 1, 2 3, 4 5))");
+        testSerialization("MULTILINESTRING ((0 1, 2 3, 4 5), (0 1, 2 3, 4 5))");
+        testSerialization("MULTILINESTRING ((0 1, 2 3, 4 5), (0 1, 2 3, 4 6), (0 1, 2 3, 4 7), (0 1, 2 3, 4 7, 0 1))");
+        testSerialization("MULTILINESTRING ((0 1, 2 3, 4 5), (0 1, 2 3, 4 6), (0 1, 2 3, 4 7), (0.333 0.74, 0.1 0.2, 2e3 4e-3), (0.333 0.74, 2e3 4e-3))");
+        testSerialization("MULTILINESTRING ((0 1, 2 3, 4 5), (1 1, 2 2))");
+        testSerialization("MULTILINESTRING EMPTY");
+    }
+
+    @Test
+    public void testPolygon()
+    {
+        testSerialization("POLYGON ((30 10, 40 40, 20 40, 30 10))");
+        testSerialization("POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))");
+        testSerialization("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))");
+        testSerialization("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))");
+        testSerialization("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))");
+        testSerialization("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0), (0.75 0.25, 0.75 0.75, 0.25 0.75, 0.25 0.25, 0.75 0.25))");
+        testSerialization("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0), (0.25 0.25, 0.25 0.75, 0.75 0.75, 0.75 0.25, 0.25 0.25))");
+        testSerialization("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0), (0.25 0.25, 0.25 0.75, 0.75 0.75, 0.75 0.25, 0.25 0.25), (0.75 0.25, 0.75 0.75, 0.25 0.75, 0.25 0.25, 0.75 0.25))");
+        testSerialization("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0), (0.25 0.25, 0.75 0.75, 0.25 0.75, 0.75 0.25, 0.25 0.25))");
+        testSerialization("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0), (0.25 0.25, 0.75 0.75, 0.25 0.75, 0.75 0.25, 0.25 0.25), (0.25 0.25, 0.75 0.75, 0.25 0.75, 0.75 0.25, 0.25 0.25))");
+        testSerialization("POLYGON EMPTY");
+        testSerialization("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0), (0.25 0.25, 0.25 0.75, 0.75 0.75, 0.75 0.25, 0.25 0.25))");
+    }
+
+    @Test
+    public void testMultiPolygon()
+    {
+        testSerialization("MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20)))");
+        testSerialization("MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20)), ((30 20, 45 40, 10 40, 30 20)))");
+        testSerialization("MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20)), ((15 5, 40 10, 10 20, 15 5))), ((0 0, 0 1, 1 1, 1 0.5, 1 0, 0 0), (0.25 0.25, 0.25 0.75, 0.75 0.75, 0.75 0.25))");
+        testSerialization("MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20)), ((0 0, 0 1, 1 1, 1 0, 0 0), (0.75 0.25, 0.75 0.75, 0.25 0.75, 0.25 0.25, 0.75 0.25)), ((15 5, 40 10, 10 20, 5 10, 15 5))), ((0 0, 0 1, 1 1, 1 0), (0.25 0.25, 0.25 0.75, 0.75 0.75, 0.75 0.25))");
+        testSerialization("MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20)), ((0 0, 0 1, 1 1, 1 0, 0 0), (0.25 0.25, 0.25 0.75, 0.75 0.75, 0.75 0.25, 0.25 0.25)))");
+        testSerialization("MULTIPOLYGON (" +
+                "((30 20, 45 40, 10 40, 30 20)), " +
+                // clockwise, counter clockwise
+                "((0 0, 0 1, 1 1, 1 0, 0 0), (0.75 0.25, 0.75 0.75, 0.25 0.75, 0.25 0.25, 0.75 0.25)), " +
+                // clockwise, clockwise
+                "((0 0, 0 1, 1 1, 1 0, 0 0), (0.25 0.25, 0.25 0.75, 0.75 0.75, 0.75 0.25, 0.25 0.25)), " +
+                // counter clockwise, clockwise
+                "((0 0, 1 0, 1 1, 0 1, 0 0), (0.25 0.25, 0.25 0.75, 0.75 0.75, 0.75 0.25, 0.25 0.25)), " +
+                // counter clockwise, counter clockwise
+                "((0 0, 1 0, 1 1, 0 1, 0 0), (0.75 0.25, 0.75 0.75, 0.25 0.75, 0.25 0.25, 0.75 0.25)), " +
+                // counter clockwise, counter clockwise, clockwise
+                "((0 0, 1 0, 1 1, 0 1, 0 0), (0.75 0.25, 0.75 0.75, 0.25 0.75, 0.25 0.25, 0.75 0.25), (0.25 0.25, 0.25 0.75, 0.75 0.75, 0.75 0.25, 0.25 0.25)))");
+        testSerialization("MULTIPOLYGON EMPTY");
+    }
+
+    @Test
+    public void testGeometryCollection()
+    {
+        testSerialization("GEOMETRYCOLLECTION (POINT (1 2))");
+        testSerialization("GEOMETRYCOLLECTION (POINT (1 2), POINT (2 1), POINT EMPTY)");
+        testSerialization("GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (0 0, 1 2, 3 4), POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))");
+        testSerialization("GEOMETRYCOLLECTION (MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20))))");
+        testSerialization("GEOMETRYCOLLECTION (MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20)), ((15 5, 40 10, 10 20, 5 10, 15 5))))");
+        testSerialization("GEOMETRYCOLLECTION (MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20)), ((15 5, 40 10, 10 20, 5 10, 15 5))), POINT (1 2))");
+        testSerialization("GEOMETRYCOLLECTION (POINT EMPTY)");
+        testSerialization("GEOMETRYCOLLECTION EMPTY");
+        testSerialization("GEOMETRYCOLLECTION (MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20))), GEOMETRYCOLLECTION (MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20)))))");
+    }
+
+    @Test
+    public void testDeserializeEnvelope()
+    {
+        assertDeserializeEnvelope("MULTIPOINT (20 20, 25 25)", new Envelope(20, 20, 25, 25));
+        assertDeserializeEnvelope("MULTILINESTRING ((1 1, 5 1), (2 4, 4 4))", new Envelope(1, 1, 5, 4));
+        assertDeserializeEnvelope("POLYGON ((0 0, 0 4, 4 0))", new Envelope(0, 0, 4, 4));
+        assertDeserializeEnvelope("MULTIPOLYGON (((0 0 , 0 2, 2 2, 2 0)), ((2 2, 2 4, 4 4, 4 2)))", new Envelope(0, 0, 4, 4));
+        assertDeserializeEnvelope("GEOMETRYCOLLECTION (POINT (3 7), LINESTRING (4 6, 7 10))", new Envelope(3, 6, 7, 10));
+        assertDeserializeEnvelope("POLYGON EMPTY", null);
+        assertDeserializeEnvelope("POINT (1 2)", new Envelope(1, 2, 1, 2));
+        assertDeserializeEnvelope("POINT EMPTY", null);
+        assertDeserializeEnvelope("GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (POINT (2 7), LINESTRING (4 6, 7 10)), POINT (3 7), LINESTRING (4 6, 7 10))", new Envelope(2, 6, 7, 10));
+    }
+
+    private static void testSerialization(String wkt)
+    {
+        testEsriSerialization(wkt);
+        testJtsSerialization(wkt);
+    }
+
+    private static void testEsriSerialization(String wkt)
+    {
+        OGCGeometry expected = OGCGeometry.fromText(wkt);
+        OGCGeometry actual = deserialize(serialize(expected));
+        assertGeometryEquals(actual, expected);
+    }
+
+    private static void testJtsSerialization(String wkt)
+    {
+        Geometry jtsGeometry = createJtsGeometry(wkt);
+        OGCGeometry esriGeometry = OGCGeometry.fromText(wkt);
+
+        Slice jtsSerialized = JtsGeometrySerde.serialize(jtsGeometry);
+        Slice esriSerialized = GeometrySerde.serialize(esriGeometry);
+        assertEquals(jtsSerialized, esriSerialized);
+
+        Geometry jtsDeserialized = JtsGeometrySerde.deserialize(jtsSerialized);
+        assertGeometryEquals(jtsDeserialized, jtsGeometry);
+
+        OGCGeometry esriDeserialized = GeometrySerde.deserialize(esriSerialized);
+        assertGeometryEquals(esriDeserialized, esriGeometry);
+    }
+
+    private static Slice geometryFromText(String wkt)
+    {
+        return serialize(OGCGeometry.fromText(wkt));
+    }
+
+    private static Geometry createJtsGeometry(String wkt)
+    {
+        try {
+            return new WKTReader().read(wkt);
+        }
+        catch (ParseException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static void assertGeometryEquals(Geometry actual, Geometry expected)
+    {
+        assertEquals(actual.norm(), expected.norm());
+    }
+
+    private static void assertDeserializeEnvelope(String geometry, Envelope expectedEnvelope)
+    {
+        assertEquals(deserializeEnvelope(geometryFromText(geometry)), expectedEnvelope);
+    }
+
+    private static void assertGeometryEquals(OGCGeometry actual, OGCGeometry expected)
+    {
+        actual.setSpatialReference(null);
+        expected.setSpatialReference(null);
+        ensureEnvelopeLoaded(actual);
+        ensureEnvelopeLoaded(expected);
+        assertEquals(actual, expected);
+    }
+
+    /**
+     * There is a weird bug in geometry comparison. If a geometry envelope is not loaded it may return
+     * false for two empty line strings or multiline strings
+     */
+    private static void ensureEnvelopeLoaded(OGCGeometry geometry)
+    {
+        geometry.envelope();
+    }
+}
+
+---------
+The target benchmark functions are:
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.facebook.presto.geospatial;
+
+import com.esri.core.geometry.ogc.OGCGeometry;
+import com.google.common.base.Joiner;
+import io.airlift.slice.Slice;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Fork;
+import org.openjdk.jmh.annotations.Measurement;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.Warmup;
+import org.openjdk.jmh.runner.Runner;
+import org.openjdk.jmh.runner.RunnerException;
+import org.openjdk.jmh.runner.options.Options;
+import org.openjdk.jmh.runner.options.OptionsBuilder;
+import org.openjdk.jmh.runner.options.VerboseMode;
+
+import static com.esri.core.geometry.ogc.OGCGeometry.fromText;
+import static com.facebook.presto.geospatial.BenchmarkGeometrySerializationData.GEOMETRYCOLLECTION;
+import static com.facebook.presto.geospatial.BenchmarkGeometrySerializationData.LINESTRING;
+import static com.facebook.presto.geospatial.BenchmarkGeometrySerializationData.MULTILINESTRING;
+import static com.facebook.presto.geospatial.BenchmarkGeometrySerializationData.MULTIPOINT;
+import static com.facebook.presto.geospatial.BenchmarkGeometrySerializationData.MULTIPOLYGON;
+import static com.facebook.presto.geospatial.BenchmarkGeometrySerializationData.POINT;
+import static com.facebook.presto.geospatial.BenchmarkGeometrySerializationData.POLYGON;
+import static com.facebook.presto.geospatial.BenchmarkGeometrySerializationData.readResource;
+import static com.facebook.presto.geospatial.GeometrySerde.deserialize;
+import static com.facebook.presto.geospatial.GeometrySerde.deserializeEnvelope;
+import static com.facebook.presto.geospatial.GeometrySerde.serialize;
+import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.openjdk.jmh.annotations.Mode.Throughput;
+
+@State(Scope.Thread)
+@Fork(2)
+@Warmup(iterations = 3, time = 3, timeUnit = SECONDS)
+@Measurement(iterations = 5, time = 4, timeUnit = SECONDS)
+@OutputTimeUnit(SECONDS)
+@BenchmarkMode(Throughput)
+public class BenchmarkGeometrySerde
+{
+    // POINT
+    @Benchmark
+    public Object serializePoint(BenchmarkData data)
+    {
+        return serialize(data.point);
+    }
+
+    @Benchmark
+    public Object deserializePoint(BenchmarkData data)
+    {
+        return deserialize(data.pointSerialized);
+    }
+
+    @Benchmark
+    public Object deserializePointEnvelope(BenchmarkData data)
+    {
+        return deserializeEnvelope(data.pointSerialized);
+    }
+
+    // MULTI POINT
+    @Benchmark
+    public Object serializeSimpleMultipoint(BenchmarkData data)
+    {
+        return serialize(data.simpleMultipoint);
+    }
+
+    @Benchmark
+    public Object deserializeSimpleMultipoint(BenchmarkData data)
+    {
+        return deserialize(data.simpleMultipointSerialized);
+    }
+
+    @Benchmark
+    public Object deserializeSimpleMultipointEnvelope(BenchmarkData data)
+    {
+        return deserializeEnvelope(data.simpleMultipointSerialized);
+    }
+
+    @Benchmark
+    public Object serializeComplexMultipoint(BenchmarkData data)
+    {
+        return serialize(data.complexMultipoint);
+    }
+
+    @Benchmark
+    public Object deserializeComplexMultipoint(BenchmarkData data)
+    {
+        return deserialize(data.complexMultipointSerialized);
+    }
+
+    @Benchmark
+    public Object deserializeComplexMultipointEnvelope(BenchmarkData data)
+    {
+        return deserializeEnvelope(data.complexMultipointSerialized);
+    }
+
+    // LINE STRING
+    @Benchmark
+    public Object serializeSimpleLineString(BenchmarkData data)
+    {
+        return serialize(data.simpleLineString);
+    }
+
+    @Benchmark
+    public Object deserializeSimpleLineString(BenchmarkData data)
+    {
+        return deserialize(data.simpleLineStringSerialized);
+    }
+
+    @Benchmark
+    public Object deserializeSimpleLineStringEnvelope(BenchmarkData data)
+    {
+        return deserializeEnvelope(data.simpleLineStringSerialized);
+    }
+
+    @Benchmark
+    public Object serializeComplexLineString(BenchmarkData data)
+    {
+        return serialize(data.complexLineString);
+    }
+
+    @Benchmark
+    public Object deserializeComplexLineString(BenchmarkData data)
+    {
+        return deserialize(data.complexLineStringSerialized);
+    }
+
+    @Benchmark
+    public Object deserializeComplexLineStringEnvelope(BenchmarkData data)
+    {
+        return deserializeEnvelope(data.complexLineStringSerialized);
+    }
+
+    // MULTILINE STRING
+    @Benchmark
+    public Object serializeSimpleMultiLineString(BenchmarkData data)
+    {
+        return serialize(data.simpleMultiLineString);
+    }
+
+    @Benchmark
+    public Object deserializeSimpleMultiLineString(BenchmarkData data)
+    {
+        return deserialize(data.simpleMultiLineStringSerialized);
+    }
+
+    @Benchmark
+    public Object deserializeSimpleMultiLineStringEnvelope(BenchmarkData data)
+    {
+        return deserializeEnvelope(data.simpleMultiLineStringSerialized);
+    }
+
+    @Benchmark
+    public Object serializeComplexMultiLineString(BenchmarkData data)
+    {
+        return serialize(data.complexMultiLineString);
+    }
+
+    @Benchmark
+    public Object deserializeComplexMultiLineString(BenchmarkData data)
+    {
+        return deserialize(data.complexMultiLineStringSerialized);
+    }
+
+    @Benchmark
+    public Object deserializeComplexMultiLineStringEnvelope(BenchmarkData data)
+    {
+        return deserializeEnvelope(data.complexMultiLineStringSerialized);
+    }
+
+    // POLYGON
+    @Benchmark
+    public Object serializeSimplePolygon(BenchmarkData data)
+    {
+        return serialize(data.simplePolygon);
+    }
+
+    @Benchmark
+    public Object deserializeSimplePolygon(BenchmarkData data)
+    {
+        return deserialize(data.simplePolygonSerialized);
+    }
+
+    @Benchmark
+    public Object deserializeSimplePolygonEnvelope(BenchmarkData data)
+    {
+        return deserializeEnvelope(data.simplePolygonSerialized);
+    }
+
+    @Benchmark
+    public Object serializeComplexPolygon(BenchmarkData data)
+    {
+        return serialize(data.complexPolygon);
+    }
+
+    @Benchmark
+    public Object deserializeComplexPolygon(BenchmarkData data)
+    {
+        return deserialize(data.complexPolygonSerialized);
+    }
+
+    @Benchmark
+    public Object deserializeComplexPolygonEnvelope(BenchmarkData data)
+    {
+        return deserializeEnvelope(data.complexPolygonSerialized);
+    }
+
+    // MULTI POLYGON
+    @Benchmark
+    public Object serializeSimpleMultiPolygon(BenchmarkData data)
+    {
+        return serialize(data.simpleMultiPolygon);
+    }
+
+    @Benchmark
+    public Object deserializeSimpleMultiPolygon(BenchmarkData data)
+    {
+        return deserialize(data.simpleMultiPolygonSerialized);
+    }
+
+    @Benchmark
+    public Object deserializeSimpleMultiPolygonEnvelope(BenchmarkData data)
+    {
+        return deserializeEnvelope(data.simpleMultiPolygonSerialized);
+    }
+
+    @Benchmark
+    public Object serializeComplexMultiPolygon(BenchmarkData data)
+    {
+        return serialize(data.complexMultiPolygon);
+    }
+
+    @Benchmark
+    public Object deserializeComplexMultiPolygon(BenchmarkData data)
+    {
+        return deserialize(data.complexMultiPolygonSerialized);
+    }
+
+    @Benchmark
+    public Object deserializeComplexMultiPolygonEnvelope(BenchmarkData data)
+    {
+        return deserializeEnvelope(data.complexMultiPolygonSerialized);
+    }
+
+    // GEOMETRY COLLECTION
+    @Benchmark
+    public Object serializeSimpleGeometryCollection(BenchmarkData data)
+    {
+        return serialize(data.simpleGeometryCollection);
+    }
+
+    @Benchmark
+    public Object deserializeSimpleGeometryCollection(BenchmarkData data)
+    {
+        return deserialize(data.simpleGeometryCollectionSerialized);
+    }
+
+    @Benchmark
+    public Object deserializeSimpleGeometryCollectionEnvelope(BenchmarkData data)
+    {
+        return deserializeEnvelope(data.simpleGeometryCollectionSerialized);
+    }
+
+    @Benchmark
+    public Object serializeComplexGeometryCollection(BenchmarkData data)
+    {
+        return serialize(data.complexGeometryCollection);
+    }
+
+    @Benchmark
+    public Object deserializeComplexGeometryCollection(BenchmarkData data)
+    {
+        return deserialize(data.complexGeometryCollectionSerialized);
+    }
+
+    @Benchmark
+    public Object deserializeComplexGeometryCollectionEnvelope(BenchmarkData data)
+    {
+        return deserializeEnvelope(data.complexGeometryCollectionSerialized);
+    }
+
+    @State(Scope.Thread)
+    public static class BenchmarkData
+    {
+        // POINT
+        private OGCGeometry point;
+        private Slice pointSerialized;
+
+        // MULTI POINT
+        private OGCGeometry simpleMultipoint;
+        private Slice simpleMultipointSerialized;
+        private OGCGeometry complexMultipoint;
+        private Slice complexMultipointSerialized;
+
+        // LINE STRING
+        private OGCGeometry simpleLineString;
+        private Slice simpleLineStringSerialized;
+        private OGCGeometry complexLineString;
+        private Slice complexLineStringSerialized;
+
+        // MULTILINE STRING
+        private OGCGeometry simpleMultiLineString;
+        private Slice simpleMultiLineStringSerialized;
+        private OGCGeometry complexMultiLineString;
+        private Slice complexMultiLineStringSerialized;
+
+        // POLYGON
+        private OGCGeometry simplePolygon;
+        private Slice simplePolygonSerialized;
+        private OGCGeometry complexPolygon;
+        private Slice complexPolygonSerialized;
+
+        // MULTI POLYGON
+        private OGCGeometry simpleMultiPolygon;
+        private Slice simpleMultiPolygonSerialized;
+        private OGCGeometry complexMultiPolygon;
+        private Slice complexMultiPolygonSerialized;
+
+        // COLLECTION
+        private OGCGeometry simpleGeometryCollection;
+        private Slice simpleGeometryCollectionSerialized;
+        private OGCGeometry complexGeometryCollection;
+        private Slice complexGeometryCollectionSerialized;
+
+        @Setup
+        public void setup()
+        {
+            point = fromText(POINT);
+            pointSerialized = serialize(point);
+
+            simpleMultipoint = fromText(MULTIPOINT);
+            simpleMultipointSerialized = serialize(simpleMultipoint);
+            complexMultipoint = fromText(readResource("complex-multipoint.txt"));
+            complexMultipointSerialized = serialize(complexMultipoint);
+
+            simpleLineString = fromText(LINESTRING);
+            simpleLineStringSerialized = serialize(simpleLineString);
+            complexLineString = fromText(readResource("complex-linestring.txt"));
+            complexLineStringSerialized = serialize(complexLineString);
+
+            simpleMultiLineString = fromText(MULTILINESTRING);
+            simpleMultiLineStringSerialized = serialize(simpleMultiLineString);
+            complexMultiLineString = fromText(readResource("complex-multilinestring.txt"));
+            complexMultiLineStringSerialized = serialize(complexMultiLineString);
+
+            simplePolygon = fromText(POLYGON);
+            simplePolygonSerialized = serialize(simplePolygon);
+            complexPolygon = fromText(readResource("complex-polygon.txt"));
+            complexPolygonSerialized = serialize(complexPolygon);
+
+            simpleMultiPolygon = fromText(MULTIPOLYGON);
+            simpleMultiPolygonSerialized = serialize(simpleMultiPolygon);
+            complexMultiPolygon = fromText(readResource("complex-multipolygon.txt"));
+            complexMultiPolygonSerialized = serialize(complexMultiPolygon);
+
+            simpleGeometryCollection = fromText(GEOMETRYCOLLECTION);
+            simpleGeometryCollectionSerialized = serialize(simpleGeometryCollection);
+            complexGeometryCollection = fromText("GEOMETRYCOLLECTION (" + Joiner.on(", ").join(
+                    readResource("complex-multipoint.txt"),
+                    readResource("complex-linestring.txt"),
+                    readResource("complex-multilinestring.txt"),
+                    readResource("complex-polygon.txt"),
+                    readResource("complex-multipolygon.txt")) + ")");
+            complexGeometryCollectionSerialized = serialize(complexGeometryCollection);
+        }
+    }
+
+    public static void main(String[] args)
+            throws RunnerException
+    {
+        Options options = new OptionsBuilder()
+                .verbosity(VerboseMode.NORMAL)
+                .include(".*" + BenchmarkGeometrySerde.class.getSimpleName() + ".*")
+                .build();
+        new Runner(options).run();
+    }
+}

@@ -1,0 +1,1783 @@
+The source files are:
+../presto/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.facebook.presto.operator;
+
+import com.facebook.presto.common.Page;
+import com.facebook.presto.common.PageBuilder;
+import com.facebook.presto.common.block.SortOrder;
+import com.facebook.presto.common.type.Type;
+import com.facebook.presto.memory.context.LocalMemoryContext;
+import com.facebook.presto.operator.WorkProcessor.ProcessState;
+import com.facebook.presto.operator.WorkProcessor.Transformation;
+import com.facebook.presto.operator.WorkProcessor.TransformationState;
+import com.facebook.presto.operator.window.FrameInfo;
+import com.facebook.presto.operator.window.FramedWindowFunction;
+import com.facebook.presto.operator.window.WindowPartition;
+import com.facebook.presto.spi.plan.PlanNodeId;
+import com.facebook.presto.spiller.Spiller;
+import com.facebook.presto.spiller.SpillerFactory;
+import com.facebook.presto.sql.gen.OrderingCompiler;
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.PeekingIterator;
+import com.google.common.primitives.Ints;
+import com.google.common.util.concurrent.ListenableFuture;
+
+import javax.annotation.Nullable;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.OptionalInt;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiPredicate;
+import java.util.stream.Stream;
+
+import static com.facebook.presto.common.block.SortOrder.ASC_NULLS_LAST;
+import static com.facebook.presto.operator.SpillingUtils.checkSpillSucceeded;
+import static com.facebook.presto.operator.WorkProcessor.TransformationState.needsMoreData;
+import static com.facebook.presto.sql.planner.plan.WindowNode.Frame.BoundType.FOLLOWING;
+import static com.facebook.presto.sql.planner.plan.WindowNode.Frame.BoundType.PRECEDING;
+import static com.facebook.presto.sql.planner.plan.WindowNode.Frame.WindowType.RANGE;
+import static com.facebook.presto.util.MergeSortedPages.mergeSortedPages;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkPositionIndex;
+import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.base.Verify.verify;
+import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.common.collect.Iterables.concat;
+import static com.google.common.collect.Iterators.peekingIterator;
+import static com.google.common.util.concurrent.Futures.immediateFuture;
+import static java.util.Collections.nCopies;
+import static java.util.Objects.requireNonNull;
+
+public class WindowOperator
+        implements Operator
+{
+    public static class WindowOperatorFactory
+            implements OperatorFactory
+    {
+        private final int operatorId;
+        private final PlanNodeId planNodeId;
+        private final List<Type> sourceTypes;
+        private final List<Integer> outputChannels;
+        private final List<WindowFunctionDefinition> windowFunctionDefinitions;
+        private final List<Integer> partitionChannels;
+        private final List<Integer> preGroupedChannels;
+        private final List<Integer> sortChannels;
+        private final List<SortOrder> sortOrder;
+        private final int preSortedChannelPrefix;
+        private final int expectedPositions;
+        private boolean closed;
+        private final PagesIndex.Factory pagesIndexFactory;
+        private final boolean spillEnabled;
+        private final SpillerFactory spillerFactory;
+        private final OrderingCompiler orderingCompiler;
+
+        public WindowOperatorFactory(
+                int operatorId,
+                PlanNodeId planNodeId,
+                List<? extends Type> sourceTypes,
+                List<Integer> outputChannels,
+                List<WindowFunctionDefinition> windowFunctionDefinitions,
+                List<Integer> partitionChannels,
+                List<Integer> preGroupedChannels,
+                List<Integer> sortChannels,
+                List<SortOrder> sortOrder,
+                int preSortedChannelPrefix,
+                int expectedPositions,
+                PagesIndex.Factory pagesIndexFactory,
+                boolean spillEnabled,
+                SpillerFactory spillerFactory,
+                OrderingCompiler orderingCompiler)
+        {
+            requireNonNull(sourceTypes, "sourceTypes is null");
+            requireNonNull(planNodeId, "planNodeId is null");
+            requireNonNull(outputChannels, "outputChannels is null");
+            requireNonNull(windowFunctionDefinitions, "windowFunctionDefinitions is null");
+            requireNonNull(partitionChannels, "partitionChannels is null");
+            requireNonNull(preGroupedChannels, "preGroupedChannels is null");
+            checkArgument(partitionChannels.containsAll(preGroupedChannels), "preGroupedChannels must be a subset of partitionChannels");
+            requireNonNull(sortChannels, "sortChannels is null");
+            requireNonNull(sortOrder, "sortOrder is null");
+            requireNonNull(pagesIndexFactory, "pagesIndexFactory is null");
+            requireNonNull(spillerFactory, "spillerFactory is null");
+            requireNonNull(orderingCompiler, "orderingCompiler is null");
+            checkArgument(sortChannels.size() == sortOrder.size(), "Must have same number of sort channels as sort orders");
+            checkArgument(preSortedChannelPrefix <= sortChannels.size(), "Cannot have more pre-sorted channels than specified sorted channels");
+            checkArgument(preSortedChannelPrefix == 0 || ImmutableSet.copyOf(preGroupedChannels).equals(ImmutableSet.copyOf(partitionChannels)), "preSortedChannelPrefix can only be greater than zero if all partition channels are pre-grouped");
+
+            this.pagesIndexFactory = pagesIndexFactory;
+            this.operatorId = operatorId;
+            this.planNodeId = planNodeId;
+            this.sourceTypes = ImmutableList.copyOf(sourceTypes);
+            this.outputChannels = ImmutableList.copyOf(outputChannels);
+            this.windowFunctionDefinitions = ImmutableList.copyOf(windowFunctionDefinitions);
+            this.partitionChannels = ImmutableList.copyOf(partitionChannels);
+            this.preGroupedChannels = ImmutableList.copyOf(preGroupedChannels);
+            this.sortChannels = ImmutableList.copyOf(sortChannels);
+            this.sortOrder = ImmutableList.copyOf(sortOrder);
+            this.preSortedChannelPrefix = preSortedChannelPrefix;
+            this.expectedPositions = expectedPositions;
+            this.spillEnabled = spillEnabled;
+            this.spillerFactory = spillerFactory;
+            this.orderingCompiler = orderingCompiler;
+        }
+
+        @Override
+        public Operator createOperator(DriverContext driverContext)
+        {
+            checkState(!closed, "Factory is already closed");
+
+            OperatorContext operatorContext = driverContext.addOperatorContext(operatorId, planNodeId, WindowOperator.class.getSimpleName());
+            return new WindowOperator(
+                    operatorContext,
+                    sourceTypes,
+                    outputChannels,
+                    windowFunctionDefinitions,
+                    partitionChannels,
+                    preGroupedChannels,
+                    sortChannels,
+                    sortOrder,
+                    preSortedChannelPrefix,
+                    expectedPositions,
+                    pagesIndexFactory,
+                    spillEnabled,
+                    spillerFactory,
+                    orderingCompiler);
+        }
+
+        @Override
+        public void noMoreOperators()
+        {
+            closed = true;
+        }
+
+        @Override
+        public OperatorFactory duplicate()
+        {
+            return new WindowOperatorFactory(
+                    operatorId,
+                    planNodeId,
+                    sourceTypes,
+                    outputChannels,
+                    windowFunctionDefinitions,
+                    partitionChannels,
+                    preGroupedChannels,
+                    sortChannels,
+                    sortOrder,
+                    preSortedChannelPrefix,
+                    expectedPositions,
+                    pagesIndexFactory,
+                    spillEnabled,
+                    spillerFactory,
+                    orderingCompiler);
+        }
+    }
+
+    private final OperatorContext operatorContext;
+    private final List<Type> outputTypes;
+    private final int[] outputChannels;
+    private final List<FramedWindowFunction> windowFunctions;
+    private final WindowInfo.DriverWindowInfoBuilder windowInfo;
+    private final AtomicReference<WindowInfo> driverWindowInfo = new AtomicReference<>(WindowInfo.emptyInfo());
+
+    private final Optional<SpillablePagesToPagesIndexes> spillablePagesToPagesIndexes;
+
+    private final WorkProcessor<Page> outputPages;
+    @Nullable
+    private Page pendingInput;
+    private boolean operatorFinishing;
+
+    public WindowOperator(
+            OperatorContext operatorContext,
+            List<Type> sourceTypes,
+            List<Integer> outputChannels,
+            List<WindowFunctionDefinition> windowFunctionDefinitions,
+            List<Integer> partitionChannels,
+            List<Integer> preGroupedChannels,
+            List<Integer> sortChannels,
+            List<SortOrder> sortOrder,
+            int preSortedChannelPrefix,
+            int expectedPositions,
+            PagesIndex.Factory pagesIndexFactory,
+            boolean spillEnabled,
+            SpillerFactory spillerFactory,
+            OrderingCompiler orderingCompiler)
+    {
+        requireNonNull(operatorContext, "operatorContext is null");
+        requireNonNull(outputChannels, "outputChannels is null");
+        requireNonNull(windowFunctionDefinitions, "windowFunctionDefinitions is null");
+        requireNonNull(partitionChannels, "partitionChannels is null");
+        requireNonNull(preGroupedChannels, "preGroupedChannels is null");
+        checkArgument(partitionChannels.containsAll(preGroupedChannels), "preGroupedChannels must be a subset of partitionChannels");
+        requireNonNull(sortChannels, "sortChannels is null");
+        requireNonNull(sortOrder, "sortOrder is null");
+        requireNonNull(pagesIndexFactory, "pagesIndexFactory is null");
+        requireNonNull(spillerFactory, "spillerFactory is null");
+        checkArgument(sortChannels.size() == sortOrder.size(), "Must have same number of sort channels as sort orders");
+        checkArgument(preSortedChannelPrefix <= sortChannels.size(), "Cannot have more pre-sorted channels than specified sorted channels");
+        checkArgument(preSortedChannelPrefix == 0 || ImmutableSet.copyOf(preGroupedChannels).equals(ImmutableSet.copyOf(partitionChannels)), "preSortedChannelPrefix can only be greater than zero if all partition channels are pre-grouped");
+
+        this.operatorContext = operatorContext;
+        this.outputChannels = Ints.toArray(outputChannels);
+        this.windowFunctions = windowFunctionDefinitions.stream()
+                .map(functionDefinition -> new FramedWindowFunction(functionDefinition.createWindowFunction(), functionDefinition.getFrameInfo()))
+                .collect(toImmutableList());
+
+        this.outputTypes = Stream.concat(
+                outputChannels.stream()
+                        .map(sourceTypes::get),
+                windowFunctionDefinitions.stream()
+                        .map(WindowFunctionDefinition::getType))
+                .collect(toImmutableList());
+
+        List<Integer> unGroupedPartitionChannels = partitionChannels.stream()
+                .filter(channel -> !preGroupedChannels.contains(channel))
+                .collect(toImmutableList());
+        List<Integer> preSortedChannels = sortChannels.stream()
+                .limit(preSortedChannelPrefix)
+                .collect(toImmutableList());
+
+        List<Integer> unGroupedOrderChannels = ImmutableList.copyOf(concat(unGroupedPartitionChannels, sortChannels));
+        List<SortOrder> unGroupedOrdering = ImmutableList.copyOf(concat(nCopies(unGroupedPartitionChannels.size(), ASC_NULLS_LAST), sortOrder));
+
+        List<Integer> orderChannels;
+        List<SortOrder> ordering;
+        if (preSortedChannelPrefix > 0) {
+            // This already implies that set(preGroupedChannels) == set(partitionChannels) (enforced with checkArgument)
+            orderChannels = ImmutableList.copyOf(Iterables.skip(sortChannels, preSortedChannelPrefix));
+            ordering = ImmutableList.copyOf(Iterables.skip(sortOrder, preSortedChannelPrefix));
+        }
+        else {
+            // Otherwise, we need to sort by the unGroupedPartitionChannels and all original sort channels
+            orderChannels = unGroupedOrderChannels;
+            ordering = unGroupedOrdering;
+        }
+
+        PagesIndexWithHashStrategies inMemoryPagesIndexWithHashStrategies = new PagesIndexWithHashStrategies(
+                pagesIndexFactory,
+                sourceTypes,
+                expectedPositions,
+                preGroupedChannels,
+                unGroupedPartitionChannels,
+                preSortedChannels,
+                sortChannels,
+                sortOrder,
+                windowFunctionDefinitions);
+
+        if (spillEnabled) {
+            PagesIndexWithHashStrategies mergedPagesIndexWithHashStrategies = new PagesIndexWithHashStrategies(
+                    pagesIndexFactory,
+                    sourceTypes,
+                    expectedPositions,
+                    // merged pages are grouped on all partition channels
+                    partitionChannels,
+                    ImmutableList.of(),
+                    // merged pages are pre sorted on all sort channels
+                    sortChannels,
+                    sortChannels,
+                    sortOrder,
+                    windowFunctionDefinitions);
+
+            this.spillablePagesToPagesIndexes = Optional.of(new SpillablePagesToPagesIndexes(
+                    inMemoryPagesIndexWithHashStrategies,
+                    mergedPagesIndexWithHashStrategies,
+                    sourceTypes,
+                    orderChannels,
+                    ordering,
+                    spillerFactory,
+                    orderingCompiler.compilePageWithPositionComparator(sourceTypes, unGroupedOrderChannels, unGroupedOrdering)));
+
+            this.outputPages = WorkProcessor.create(new PagesSource())
+                    .flatTransform(spillablePagesToPagesIndexes.get())
+                    .flatMap(this::pagesIndexToWindowPartitions)
+                    .transform(new WindowPartitionsToOutputPages());
+        }
+        else {
+            this.spillablePagesToPagesIndexes = Optional.empty();
+            this.outputPages = WorkProcessor.create(new PagesSource())
+                    .transform(new PagesToPagesIndexes(inMemoryPagesIndexWithHashStrategies, orderChannels, ordering))
+                    .flatMap(this::pagesIndexToWindowPartitions)
+                    .transform(new WindowPartitionsToOutputPages());
+        }
+
+        windowInfo = new WindowInfo.DriverWindowInfoBuilder();
+        operatorContext.setInfoSupplier(driverWindowInfo::get);
+    }
+
+    @Override
+    public OperatorContext getOperatorContext()
+    {
+        return operatorContext;
+    }
+
+    @Override
+    public void finish()
+    {
+        operatorFinishing = true;
+    }
+
+    @Override
+    public boolean isFinished()
+    {
+        return outputPages.isFinished();
+    }
+
+    @Override
+    public boolean needsInput()
+    {
+        return pendingInput == null && !operatorFinishing;
+    }
+
+    @Override
+    public void addInput(Page page)
+    {
+        requireNonNull(page, "page is null");
+        checkState(pendingInput == null, "Operator already has pending input");
+
+        if (page.getPositionCount() == 0) {
+            return;
+        }
+
+        pendingInput = page;
+    }
+
+    @Override
+    public Page getOutput()
+    {
+        if (!outputPages.process()) {
+            return null;
+        }
+
+        if (outputPages.isFinished()) {
+            return null;
+        }
+
+        return outputPages.getResult();
+    }
+
+    @Override
+    public ListenableFuture<?> startMemoryRevoke()
+    {
+        return spillablePagesToPagesIndexes.get().spill();
+    }
+
+    @Override
+    public void finishMemoryRevoke()
+    {
+        spillablePagesToPagesIndexes.get().finishRevokeMemory();
+    }
+
+    private static class PagesIndexWithHashStrategies
+    {
+        final PagesIndex pagesIndex;
+        final PagesHashStrategy preGroupedPartitionHashStrategy;
+        final PagesHashStrategy unGroupedPartitionHashStrategy;
+        final PagesHashStrategy preSortedPartitionHashStrategy;
+        final PagesHashStrategy peerGroupHashStrategy;
+        final int[] preGroupedPartitionChannels;
+        final Map<FrameBoundKey, PagesIndexComparator> frameBoundComparators;
+
+        PagesIndexWithHashStrategies(
+                PagesIndex.Factory pagesIndexFactory,
+                List<Type> sourceTypes,
+                int expectedPositions,
+                List<Integer> preGroupedPartitionChannels,
+                List<Integer> unGroupedPartitionChannels,
+                List<Integer> preSortedChannels,
+                List<Integer> sortChannels,
+                List<SortOrder> sortOrder,
+                List<WindowFunctionDefinition> windowFunctionDefinitions)
+        {
+            this.pagesIndex = pagesIndexFactory.newPagesIndex(sourceTypes, expectedPositions);
+            this.preGroupedPartitionHashStrategy = pagesIndex.createPagesHashStrategy(preGroupedPartitionChannels, OptionalInt.empty());
+            this.unGroupedPartitionHashStrategy = pagesIndex.createPagesHashStrategy(unGroupedPartitionChannels, OptionalInt.empty());
+            this.preSortedPartitionHashStrategy = pagesIndex.createPagesHashStrategy(preSortedChannels, OptionalInt.empty());
+            this.peerGroupHashStrategy = pagesIndex.createPagesHashStrategy(sortChannels, OptionalInt.empty());
+            this.preGroupedPartitionChannels = Ints.toArray(preGroupedPartitionChannels);
+            this.frameBoundComparators = createFrameBoundComparators(pagesIndex, windowFunctionDefinitions, sortOrder);
+        }
+    }
+
+    /**
+     * Create comparators necessary for seeking frame start or frame end for window functions with frame type RANGE.
+     * Whenever a frame bound is specified as RANGE X PRECEDING or RANGE X FOLLOWING,
+     * a dedicated comparator is created to compare sort key values with expected frame bound values.
+     */
+    private static Map<FrameBoundKey, PagesIndexComparator> createFrameBoundComparators(PagesIndex pagesIndex,
+                                                                                        List<WindowFunctionDefinition> windowFunctionDefinitions,
+                                                                                        List<SortOrder> sortOrders)
+    {
+        ImmutableMap.Builder<FrameBoundKey, PagesIndexComparator> builder = ImmutableMap.builder();
+
+        for (int i = 0; i < windowFunctionDefinitions.size(); i++) {
+            FrameInfo frameInfo = windowFunctionDefinitions.get(i).getFrameInfo();
+            if (frameInfo.getType() == RANGE) {
+                if (frameInfo.getStartType() == PRECEDING || frameInfo.getStartType() == FOLLOWING) {
+                    // Window frame of type RANGE PRECEDING or FOLLOWING requires single sort item in ORDER BY
+                    checkState(sortOrders != null && sortOrders.size() == 1, "Window frame of type RANGE PRECEDING or FOLLOWING requires single sort item in ORDER BY.");
+                    SortOrder sortOrder = sortOrders.get(0);
+                    PagesIndexComparator comparator = pagesIndex.createChannelComparator(frameInfo.getSortKeyChannelForStartComparison(), frameInfo.getStartChannel(), sortOrder);
+                    builder.put(new FrameBoundKey(i, FrameBoundKey.Type.START), comparator);
+                }
+                if (frameInfo.getEndType() == PRECEDING || frameInfo.getEndType() == FOLLOWING) {
+                    // Window frame of type RANGE PRECEDING or FOLLOWING requires single sort item in ORDER BY
+                    checkState(sortOrders != null && sortOrders.size() == 1, "Window frame of type RANGE PRECEDING or FOLLOWING requires single sort item in ORDER BY.");
+                    SortOrder sortOrder = sortOrders.get(0);
+                    PagesIndexComparator comparator = pagesIndex.createChannelComparator(frameInfo.getSortKeyChannelForEndComparison(), frameInfo.getEndChannel(), sortOrder);
+                    builder.put(new FrameBoundKey(i, FrameBoundKey.Type.END), comparator);
+                }
+            }
+        }
+
+        return builder.build();
+    }
+
+    public static class FrameBoundKey
+    {
+        private final int functionIndex;
+        private final Type type;
+
+        public enum Type
+        {
+            START,
+            END;
+        }
+
+        public FrameBoundKey(int functionIndex, Type type)
+        {
+            this.functionIndex = functionIndex;
+            this.type = requireNonNull(type, "type is null");
+        }
+
+        @Override
+        public boolean equals(Object o)
+        {
+            if (this == o) {
+                return true;
+            }
+            if (o == null || getClass() != o.getClass()) {
+                return false;
+            }
+            FrameBoundKey that = (FrameBoundKey) o;
+            return functionIndex == that.functionIndex &&
+                    type == that.type;
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return Objects.hash(functionIndex, type);
+        }
+    }
+
+    private class PagesSource
+            implements WorkProcessor.Process<Page>
+    {
+        @Override
+        public ProcessState<Page> process()
+        {
+            if (operatorFinishing && pendingInput == null) {
+                return ProcessState.finished();
+            }
+
+            if (pendingInput != null) {
+                Page result = pendingInput;
+                pendingInput = null;
+                return ProcessState.ofResult(result);
+            }
+
+            return ProcessState.yield();
+        }
+    }
+
+    private class PagesToPagesIndexes
+            implements Transformation<Page, PagesIndexWithHashStrategies>
+    {
+        final PagesIndexWithHashStrategies pagesIndexWithHashStrategies;
+        final List<Integer> orderChannels;
+        final List<SortOrder> ordering;
+        final LocalMemoryContext memoryContext;
+
+        boolean resetPagesIndex;
+        int pendingInputPosition;
+
+        PagesToPagesIndexes(
+                PagesIndexWithHashStrategies pagesIndexWithHashStrategies,
+                List<Integer> orderChannels,
+                List<SortOrder> ordering)
+        {
+            this.pagesIndexWithHashStrategies = pagesIndexWithHashStrategies;
+            this.orderChannels = orderChannels;
+            this.ordering = ordering;
+            this.memoryContext = operatorContext.aggregateUserMemoryContext().newLocalMemoryContext(PagesToPagesIndexes.class.getSimpleName());
+        }
+
+        @Override
+        public TransformationState<PagesIndexWithHashStrategies> process(Optional<Page> pendingInputOptional)
+        {
+            if (resetPagesIndex) {
+                pagesIndexWithHashStrategies.pagesIndex.clear();
+                updateMemoryUsage();
+                resetPagesIndex = false;
+            }
+
+            boolean finishing = !pendingInputOptional.isPresent();
+            if (finishing && pagesIndexWithHashStrategies.pagesIndex.getPositionCount() == 0) {
+                memoryContext.close();
+                return TransformationState.finished();
+            }
+
+            if (!finishing) {
+                Page pendingInput = pendingInputOptional.get();
+                pendingInputPosition = updatePagesIndex(pagesIndexWithHashStrategies, pendingInput, pendingInputPosition, Optional.empty());
+                updateMemoryUsage();
+            }
+
+            // If we have unused input or are finishing, then we have buffered a full group
+            if (finishing || pendingInputPosition < pendingInputOptional.get().getPositionCount()) {
+                sortPagesIndexIfNecessary(pagesIndexWithHashStrategies, orderChannels, ordering);
+                resetPagesIndex = true;
+                return TransformationState.ofResult(pagesIndexWithHashStrategies, false);
+            }
+
+            pendingInputPosition = 0;
+            return TransformationState.needsMoreData();
+        }
+
+        void updateMemoryUsage()
+        {
+            memoryContext.setBytes(pagesIndexWithHashStrategies.pagesIndex.getEstimatedSize().toBytes());
+        }
+    }
+
+    private WorkProcessor<WindowPartition> pagesIndexToWindowPartitions(PagesIndexWithHashStrategies pagesIndexWithHashStrategies)
+    {
+        PagesIndex pagesIndex = pagesIndexWithHashStrategies.pagesIndex;
+
+        // pagesIndex contains the full grouped & sorted data for one or more partitions
+
+        windowInfo.addIndex(pagesIndex);
+
+        return WorkProcessor.create(new WorkProcessor.Process<WindowPartition>()
+        {
+            int partitionStart;
+
+            @Override
+            public ProcessState<WindowPartition> process()
+            {
+                if (partitionStart == pagesIndex.getPositionCount()) {
+                    return ProcessState.finished();
+                }
+
+                int partitionEnd = findGroupEnd(pagesIndex, pagesIndexWithHashStrategies.unGroupedPartitionHashStrategy, partitionStart);
+
+                WindowPartition partition = new WindowPartition(
+                        pagesIndex,
+                        partitionStart,
+                        partitionEnd,
+                        outputChannels,
+                        windowFunctions,
+                        pagesIndexWithHashStrategies.peerGroupHashStrategy,
+                        pagesIndexWithHashStrategies.frameBoundComparators);
+                windowInfo.addPartition(partition);
+                partitionStart = partitionEnd;
+                return ProcessState.ofResult(partition);
+            }
+        });
+    }
+
+    private class WindowPartitionsToOutputPages
+            implements Transformation<WindowPartition, Page>
+    {
+        final PageBuilder pageBuilder;
+
+        WindowPartitionsToOutputPages()
+        {
+            pageBuilder = new PageBuilder(outputTypes);
+        }
+
+        @Override
+        public TransformationState<Page> process(Optional<WindowPartition> partitionOptional)
+        {
+            boolean finishing = !partitionOptional.isPresent();
+            if (finishing) {
+                if (pageBuilder.isEmpty()) {
+                    return TransformationState.finished();
+                }
+
+                // Output the remaining page if we have anything buffered
+                Page page = pageBuilder.build();
+                pageBuilder.reset();
+                return TransformationState.ofResult(page, false);
+            }
+
+            WindowPartition partition = partitionOptional.get();
+            while (!pageBuilder.isFull() && partition.hasNext()) {
+                partition.processNextRow(pageBuilder);
+            }
+            if (!pageBuilder.isFull()) {
+                return needsMoreData();
+            }
+
+            Page page = pageBuilder.build();
+            pageBuilder.reset();
+            return TransformationState.ofResult(page, !partition.hasNext());
+        }
+    }
+
+    private class SpillablePagesToPagesIndexes
+            implements Transformation<Page, WorkProcessor<PagesIndexWithHashStrategies>>
+    {
+        final PagesIndexWithHashStrategies inMemoryPagesIndexWithHashStrategies;
+        final PagesIndexWithHashStrategies mergedPagesIndexWithHashStrategies;
+        final List<Type> sourceTypes;
+        final List<Integer> orderChannels;
+        final List<SortOrder> ordering;
+        final LocalMemoryContext localRevocableMemoryContext;
+        final LocalMemoryContext localUserMemoryContext;
+        final SpillerFactory spillerFactory;
+        final PageWithPositionComparator pageWithPositionComparator;
+
+        boolean spillingWhenConvertingRevocableMemory;
+        boolean resetPagesIndex;
+        int pendingInputPosition;
+
+        Optional<Page> currentSpillGroupRowPage;
+        Optional<Spiller> spiller;
+        // Spill can be trigger by Driver, by us or both. `spillInProgress` is not empty when spill was triggered but not `finishMemoryRevoke()` yet
+        Optional<ListenableFuture<?>> spillInProgress = Optional.empty();
+
+        SpillablePagesToPagesIndexes(
+                PagesIndexWithHashStrategies inMemoryPagesIndexWithHashStrategies,
+                PagesIndexWithHashStrategies mergedPagesIndexWithHashStrategies,
+                List<Type> sourceTypes,
+                List<Integer> orderChannels,
+                List<SortOrder> ordering,
+                SpillerFactory spillerFactory,
+                PageWithPositionComparator pageWithPositionComparator)
+        {
+            this.inMemoryPagesIndexWithHashStrategies = inMemoryPagesIndexWithHashStrategies;
+            this.mergedPagesIndexWithHashStrategies = mergedPagesIndexWithHashStrategies;
+            this.sourceTypes = sourceTypes;
+            this.orderChannels = orderChannels;
+            this.ordering = ordering;
+            this.localUserMemoryContext = operatorContext.aggregateUserMemoryContext().newLocalMemoryContext(SpillablePagesToPagesIndexes.class.getSimpleName());
+            this.localRevocableMemoryContext = operatorContext.aggregateRevocableMemoryContext().newLocalMemoryContext(SpillablePagesToPagesIndexes.class.getSimpleName());
+            this.spillerFactory = spillerFactory;
+            this.pageWithPositionComparator = pageWithPositionComparator;
+
+            this.currentSpillGroupRowPage = Optional.empty();
+            this.spiller = Optional.empty();
+        }
+
+        @Override
+        public TransformationState<WorkProcessor<PagesIndexWithHashStrategies>> process(Optional<Page> pendingInputOptional)
+        {
+            if (spillingWhenConvertingRevocableMemory) {
+                // Spill could already be finished by Driver (via WindowOperator#finishMemoryRevoke), but finishRevokeMemory will take care of that
+                finishRevokeMemory();
+                spillingWhenConvertingRevocableMemory = false;
+                return fullGroupBuffered();
+            }
+
+            if (resetPagesIndex) {
+                inMemoryPagesIndexWithHashStrategies.pagesIndex.clear();
+                currentSpillGroupRowPage = Optional.empty();
+
+                closeSpiller();
+
+                updateMemoryUsage(false);
+                resetPagesIndex = false;
+            }
+
+            boolean finishing = !pendingInputOptional.isPresent();
+            if (finishing && inMemoryPagesIndexWithHashStrategies.pagesIndex.getPositionCount() == 0 && !spiller.isPresent()) {
+                localRevocableMemoryContext.close();
+                localUserMemoryContext.close();
+                closeSpiller();
+                return TransformationState.finished();
+            }
+
+            if (!finishing) {
+                Page pendingInput = pendingInputOptional.get();
+                pendingInputPosition = updatePagesIndex(inMemoryPagesIndexWithHashStrategies, pendingInput, pendingInputPosition, currentSpillGroupRowPage);
+            }
+
+            // If we have unused input or are finishing, then we have buffered a full group
+            if (finishing || pendingInputPosition < pendingInputOptional.get().getPositionCount()) {
+                return fullGroupBuffered();
+            }
+
+            updateMemoryUsage(true);
+            pendingInputPosition = 0;
+            return needsMoreData();
+        }
+
+        void closeSpiller()
+        {
+            spiller.ifPresent(Spiller::close);
+            spiller = Optional.empty();
+        }
+
+        TransformationState<WorkProcessor<PagesIndexWithHashStrategies>> fullGroupBuffered()
+        {
+            // Convert revocable memory to user memory as inMemoryPagesIndexWithHashStrategies holds on to memory so we no longer can revoke
+            if (localRevocableMemoryContext.getBytes() > 0) {
+                long currentRevocableBytes = localRevocableMemoryContext.getBytes();
+                localRevocableMemoryContext.setBytes(0);
+                if (!localUserMemoryContext.trySetBytes(localUserMemoryContext.getBytes() + currentRevocableBytes)) {
+                    // TODO: this might fail (even though we have just released memory), but we don't
+                    // have a proper way to atomically convert memory reservations
+                    localRevocableMemoryContext.setBytes(currentRevocableBytes);
+                    spillingWhenConvertingRevocableMemory = true;
+                    return TransformationState.blocked(spill());
+                }
+            }
+
+            sortPagesIndexIfNecessary(inMemoryPagesIndexWithHashStrategies, orderChannels, ordering);
+            resetPagesIndex = true;
+            return TransformationState.ofResult(unspill(), false);
+        }
+
+        ListenableFuture<?> spill()
+        {
+            if (spillInProgress.isPresent()) {
+                // Spill can be triggered first in SpillablePagesToPagesIndexes#process(..) and then by Driver (via WindowOperator#startMemoryRevoke)
+                return spillInProgress.get();
+            }
+
+            if (localRevocableMemoryContext.getBytes() == 0) {
+                // This must be stale revoke request
+                spillInProgress = Optional.of(immediateFuture(null));
+                return spillInProgress.get();
+            }
+
+            if (!spiller.isPresent()) {
+                spiller = Optional.of(spillerFactory.create(
+                        sourceTypes,
+                        operatorContext.getSpillContext(),
+                        operatorContext.aggregateSystemMemoryContext()));
+            }
+
+            verify(inMemoryPagesIndexWithHashStrategies.pagesIndex.getPositionCount() > 0);
+            sortPagesIndexIfNecessary(inMemoryPagesIndexWithHashStrategies, orderChannels, ordering);
+            PeekingIterator<Page> sortedPages = peekingIterator(inMemoryPagesIndexWithHashStrategies.pagesIndex.getSortedPages());
+            Page anyPage = sortedPages.peek();
+            verify(anyPage.getPositionCount() != 0, "PagesIndex.getSortedPages returned an empty page");
+            currentSpillGroupRowPage = Optional.of(anyPage.getSingleValuePage(/* any */0));
+            spillInProgress = Optional.of(spiller.get().spill(sortedPages));
+
+            return spillInProgress.get();
+        }
+
+        void finishRevokeMemory()
+        {
+            if (!spillInProgress.isPresent()) {
+                // Same spill iteration can be finished first by Driver (via WindowOperator#finishMemoryRevoke) and then by SpillablePagesToPagesIndexes#process(..)
+                return;
+            }
+
+            checkSpillSucceeded(spillInProgress.get());
+            spillInProgress = Optional.empty();
+
+            // No memory to reclaim
+            if (localRevocableMemoryContext.getBytes() == 0) {
+                return;
+            }
+
+            inMemoryPagesIndexWithHashStrategies.pagesIndex.clear();
+            updateMemoryUsage(false);
+        }
+
+        WorkProcessor<PagesIndexWithHashStrategies> unspill()
+        {
+            if (!spiller.isPresent()) {
+                return WorkProcessor.fromIterable(ImmutableList.of(inMemoryPagesIndexWithHashStrategies));
+            }
+
+            List<WorkProcessor<Page>> sortedStreams = ImmutableList.<WorkProcessor<Page>>builder()
+                    .addAll(spiller.get().getSpills().stream()
+                            .map(WorkProcessor::fromIterator)
+                            .collect(toImmutableList()))
+                    .add(WorkProcessor.fromIterator(inMemoryPagesIndexWithHashStrategies.pagesIndex.getSortedPages()))
+                    .build();
+
+            WorkProcessor<Page> mergedPages = mergeSortedPages(
+                    sortedStreams,
+                    pageWithPositionComparator,
+                    sourceTypes,
+                    operatorContext.aggregateUserMemoryContext(),
+                    operatorContext.getDriverContext().getYieldSignal());
+
+            return mergedPages.transform(new PagesToPagesIndexes(mergedPagesIndexWithHashStrategies, ImmutableList.of(), ImmutableList.of()));
+        }
+
+        void updateMemoryUsage(boolean revocablePagesIndex)
+        {
+            long pagesIndexBytes = inMemoryPagesIndexWithHashStrategies.pagesIndex.getEstimatedSize().toBytes();
+            if (revocablePagesIndex) {
+                verify(inMemoryPagesIndexWithHashStrategies.pagesIndex.getPositionCount() > 0);
+                localUserMemoryContext.setBytes(0);
+                localRevocableMemoryContext.setBytes(pagesIndexBytes);
+            }
+            else {
+                localRevocableMemoryContext.setBytes(0L);
+                localUserMemoryContext.setBytes(pagesIndexBytes);
+            }
+        }
+    }
+
+    private int updatePagesIndex(PagesIndexWithHashStrategies pagesIndexWithHashStrategies, Page page, int startPosition, Optional<Page> currentSpillGroupRowPage)
+    {
+        checkArgument(page.getPositionCount() > startPosition);
+
+        // TODO: Fix pagesHashStrategy to allow specifying channels for comparison, it currently requires us to rearrange the right side blocks in consecutive channel order
+        Page preGroupedPage = page.extractChannels(pagesIndexWithHashStrategies.preGroupedPartitionChannels);
+
+        PagesIndex pagesIndex = pagesIndexWithHashStrategies.pagesIndex;
+        PagesHashStrategy preGroupedPartitionHashStrategy = pagesIndexWithHashStrategies.preGroupedPartitionHashStrategy;
+        if (currentSpillGroupRowPage.isPresent()) {
+            if (!preGroupedPartitionHashStrategy.rowEqualsRow(0, currentSpillGroupRowPage.get().extractChannels(pagesIndexWithHashStrategies.preGroupedPartitionChannels), startPosition, preGroupedPage)) {
+                return startPosition;
+            }
+        }
+
+        if (pagesIndex.getPositionCount() == 0 || pagesIndex.positionEqualsRow(preGroupedPartitionHashStrategy, 0, startPosition, preGroupedPage)) {
+            // Find the position where the pre-grouped columns change
+            int groupEnd = findGroupEnd(preGroupedPage, preGroupedPartitionHashStrategy, startPosition);
+
+            // Add the section of the page that contains values for the current group
+            pagesIndex.addPage(page.getRegion(startPosition, groupEnd - startPosition));
+
+            if (page.getPositionCount() - groupEnd > 0) {
+                // Save the remaining page, which may contain multiple partitions
+                return groupEnd;
+            }
+            else {
+                // Page fully consumed
+                return page.getPositionCount();
+            }
+        }
+        else {
+            // We had previous results buffered, but the remaining page starts with new group values
+            return startPosition;
+        }
+    }
+
+    private void sortPagesIndexIfNecessary(PagesIndexWithHashStrategies pagesIndexWithHashStrategies, List<Integer> orderChannels, List<SortOrder> ordering)
+    {
+        if (pagesIndexWithHashStrategies.pagesIndex.getPositionCount() > 1 && !orderChannels.isEmpty()) {
+            int startPosition = 0;
+            while (startPosition < pagesIndexWithHashStrategies.pagesIndex.getPositionCount()) {
+                int endPosition = findGroupEnd(pagesIndexWithHashStrategies.pagesIndex, pagesIndexWithHashStrategies.preSortedPartitionHashStrategy, startPosition);
+                pagesIndexWithHashStrategies.pagesIndex.sort(orderChannels, ordering, startPosition, endPosition);
+                startPosition = endPosition;
+            }
+        }
+    }
+
+    // Assumes input grouped on relevant pagesHashStrategy columns
+    private static int findGroupEnd(Page page, PagesHashStrategy pagesHashStrategy, int startPosition)
+    {
+        checkArgument(page.getPositionCount() > 0, "Must have at least one position");
+        checkPositionIndex(startPosition, page.getPositionCount(), "startPosition out of bounds");
+
+        return findEndPosition(startPosition, page.getPositionCount(), (firstPosition, secondPosition) -> pagesHashStrategy.rowEqualsRow(firstPosition, page, secondPosition, page));
+    }
+
+    // Assumes input grouped on relevant pagesHashStrategy columns
+    private static int findGroupEnd(PagesIndex pagesIndex, PagesHashStrategy pagesHashStrategy, int startPosition)
+    {
+        checkArgument(pagesIndex.getPositionCount() > 0, "Must have at least one position");
+        checkPositionIndex(startPosition, pagesIndex.getPositionCount(), "startPosition out of bounds");
+
+        return findEndPosition(startPosition, pagesIndex.getPositionCount(), (firstPosition, secondPosition) -> pagesIndex.positionEqualsPosition(pagesHashStrategy, firstPosition, secondPosition));
+    }
+
+    /**
+     * @param startPosition - inclusive
+     * @param endPosition   - exclusive
+     * @param comparator    - returns true if positions given as parameters are equal
+     * @return the end of the group position exclusive (the position the very next group starts)
+     */
+    @VisibleForTesting
+    static int findEndPosition(int startPosition, int endPosition, BiPredicate<Integer, Integer> comparator)
+    {
+        checkArgument(startPosition >= 0, "startPosition must be greater or equal than zero: %s", startPosition);
+        checkArgument(startPosition < endPosition, "startPosition (%s) must be less than endPosition (%s)", startPosition, endPosition);
+
+        int left = startPosition;
+        int right = endPosition;
+
+        while (left + 1 < right) {
+            int middle = (left + right) >>> 1;
+
+            if (comparator.test(startPosition, middle)) {
+                left = middle;
+            }
+            else {
+                right = middle;
+            }
+        }
+
+        return right;
+    }
+
+    @Override
+    public void close()
+    {
+        driverWindowInfo.set(new WindowInfo(ImmutableList.of(windowInfo.build())));
+        spillablePagesToPagesIndexes.ifPresent(SpillablePagesToPagesIndexes::closeSpiller);
+    }
+}
+
+---------
+The unit test is:
+../presto/presto-main/src/test/java/com/facebook/presto/operator/TestWindowOperator.java
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.facebook.presto.operator;
+
+import com.facebook.presto.ExceededMemoryLimitException;
+import com.facebook.presto.common.Page;
+import com.facebook.presto.common.block.SortOrder;
+import com.facebook.presto.common.type.Type;
+import com.facebook.presto.operator.WindowOperator.WindowOperatorFactory;
+import com.facebook.presto.operator.window.FirstValueFunction;
+import com.facebook.presto.operator.window.FrameInfo;
+import com.facebook.presto.operator.window.LagFunction;
+import com.facebook.presto.operator.window.LastValueFunction;
+import com.facebook.presto.operator.window.LeadFunction;
+import com.facebook.presto.operator.window.NthValueFunction;
+import com.facebook.presto.operator.window.ReflectionWindowFunctionSupplier;
+import com.facebook.presto.operator.window.RowNumberFunction;
+import com.facebook.presto.spi.plan.PlanNodeId;
+import com.facebook.presto.spiller.SpillerFactory;
+import com.facebook.presto.sql.gen.OrderingCompiler;
+import com.facebook.presto.testing.MaterializedResult;
+import com.facebook.presto.testing.TestingTaskContext;
+import com.google.common.collect.ImmutableList;
+import com.google.common.primitives.Ints;
+import io.airlift.units.DataSize;
+import io.airlift.units.DataSize.Unit;
+import org.testng.annotations.AfterMethod;
+import org.testng.annotations.BeforeMethod;
+import org.testng.annotations.DataProvider;
+import org.testng.annotations.Test;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledExecutorService;
+
+import static com.facebook.airlift.concurrent.Threads.daemonThreadsNamed;
+import static com.facebook.airlift.testing.Assertions.assertGreaterThan;
+import static com.facebook.presto.RowPagesBuilder.rowPagesBuilder;
+import static com.facebook.presto.SessionTestUtils.TEST_SESSION;
+import static com.facebook.presto.common.type.BigintType.BIGINT;
+import static com.facebook.presto.common.type.BooleanType.BOOLEAN;
+import static com.facebook.presto.common.type.DoubleType.DOUBLE;
+import static com.facebook.presto.common.type.VarcharType.VARCHAR;
+import static com.facebook.presto.operator.OperatorAssertion.assertOperatorEquals;
+import static com.facebook.presto.operator.OperatorAssertion.assertOperatorEqualsIgnoreOrder;
+import static com.facebook.presto.operator.OperatorAssertion.toMaterializedResult;
+import static com.facebook.presto.operator.OperatorAssertion.toPages;
+import static com.facebook.presto.operator.WindowFunctionDefinition.window;
+import static com.facebook.presto.sql.planner.plan.WindowNode.Frame.BoundType.UNBOUNDED_FOLLOWING;
+import static com.facebook.presto.sql.planner.plan.WindowNode.Frame.BoundType.UNBOUNDED_PRECEDING;
+import static com.facebook.presto.sql.planner.plan.WindowNode.Frame.WindowType.RANGE;
+import static com.facebook.presto.testing.MaterializedResult.resultBuilder;
+import static com.facebook.presto.testing.TestingTaskContext.createTaskContext;
+import static io.airlift.units.DataSize.succinctBytes;
+import static java.lang.String.format;
+import static java.util.concurrent.Executors.newCachedThreadPool;
+import static java.util.concurrent.Executors.newScheduledThreadPool;
+import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertTrue;
+
+@Test(singleThreaded = true)
+public class TestWindowOperator
+{
+    private static final FrameInfo UNBOUNDED_FRAME = new FrameInfo(RANGE, UNBOUNDED_PRECEDING, Optional.empty(), Optional.empty(), UNBOUNDED_FOLLOWING, Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
+
+    public static final List<WindowFunctionDefinition> ROW_NUMBER = ImmutableList.of(
+            window(new ReflectionWindowFunctionSupplier<>("row_number", BIGINT, ImmutableList.of(), RowNumberFunction.class), BIGINT, UNBOUNDED_FRAME));
+
+    private static final List<WindowFunctionDefinition> FIRST_VALUE = ImmutableList.of(
+            window(new ReflectionWindowFunctionSupplier<>("first_value", VARCHAR, ImmutableList.<Type>of(VARCHAR), FirstValueFunction.class), VARCHAR, UNBOUNDED_FRAME, 1));
+
+    private static final List<WindowFunctionDefinition> LAST_VALUE = ImmutableList.of(
+            window(new ReflectionWindowFunctionSupplier<>("last_value", VARCHAR, ImmutableList.<Type>of(VARCHAR), LastValueFunction.class), VARCHAR, UNBOUNDED_FRAME, 1));
+
+    private static final List<WindowFunctionDefinition> NTH_VALUE = ImmutableList.of(
+            window(new ReflectionWindowFunctionSupplier<>("nth_value", VARCHAR, ImmutableList.of(VARCHAR, BIGINT), NthValueFunction.class), VARCHAR, UNBOUNDED_FRAME, 1, 3));
+
+    private static final List<WindowFunctionDefinition> LAG = ImmutableList.of(
+            window(new ReflectionWindowFunctionSupplier<>("lag", VARCHAR, ImmutableList.of(VARCHAR, BIGINT, VARCHAR), LagFunction.class), VARCHAR, UNBOUNDED_FRAME, 1, 3, 4));
+
+    private static final List<WindowFunctionDefinition> LEAD = ImmutableList.of(
+            window(new ReflectionWindowFunctionSupplier<>("lead", VARCHAR, ImmutableList.of(VARCHAR, BIGINT, VARCHAR), LeadFunction.class), VARCHAR, UNBOUNDED_FRAME, 1, 3, 4));
+
+    private ExecutorService executor;
+    private ScheduledExecutorService scheduledExecutor;
+    private DummySpillerFactory spillerFactory;
+
+    @BeforeMethod
+    public void setUp()
+    {
+        executor = newCachedThreadPool(daemonThreadsNamed("test-executor-%s"));
+        scheduledExecutor = newScheduledThreadPool(2, daemonThreadsNamed("test-scheduledExecutor-%s"));
+        spillerFactory = new DummySpillerFactory();
+    }
+
+    @AfterMethod
+    public void tearDown()
+    {
+        executor.shutdownNow();
+        scheduledExecutor.shutdownNow();
+        spillerFactory = null;
+    }
+
+    @DataProvider
+    public static Object[][] spillEnabled()
+    {
+        return new Object[][] {
+                {false, false, 0},
+                {true, false, 8},
+                {true, true, 8},
+                {true, false, 0},
+                {true, true, 0}};
+    }
+
+    @Test(dataProvider = "spillEnabled")
+    public void testMultipleOutputPages(boolean spillEnabled, boolean revokeMemoryWhenAddingPages, long memoryLimit)
+    {
+        // make operator produce multiple pages during finish phase
+        int numberOfRows = 80_000;
+        List<Page> input = rowPagesBuilder(BIGINT, DOUBLE)
+                .addSequencePage(numberOfRows, 0, 0)
+                .build();
+
+        WindowOperatorFactory operatorFactory = createFactoryUnbounded(
+                ImmutableList.of(BIGINT, DOUBLE),
+                Ints.asList(1, 0),
+                ROW_NUMBER,
+                Ints.asList(),
+                Ints.asList(0),
+                ImmutableList.copyOf(new SortOrder[] {SortOrder.DESC_NULLS_FIRST}),
+                spillEnabled);
+
+        DriverContext driverContext = createDriverContext(memoryLimit);
+        MaterializedResult.Builder expectedBuilder = resultBuilder(driverContext.getSession(), DOUBLE, BIGINT, BIGINT);
+        for (int i = 0; i < numberOfRows; ++i) {
+            expectedBuilder.row((double) numberOfRows - i - 1, (long) numberOfRows - i - 1, (long) i + 1);
+        }
+        MaterializedResult expected = expectedBuilder.build();
+
+        List<Page> pages = toPages(operatorFactory, driverContext, input, revokeMemoryWhenAddingPages);
+        assertGreaterThan(pages.size(), 1, "Expected more than one output page");
+
+        MaterializedResult actual = toMaterializedResult(driverContext.getSession(), expected.getTypes(), pages);
+        assertEquals(actual.getMaterializedRows(), expected.getMaterializedRows());
+
+        assertTrue(spillEnabled == (spillerFactory.getSpillsCount() > 0), format("Spill state mismatch. Expected spill: %s, spill count: %s", spillEnabled, spillerFactory.getSpillsCount()));
+    }
+
+    @Test(dataProvider = "spillEnabled")
+    public void testRowNumber(boolean spillEnabled, boolean revokeMemoryWhenAddingPages, long memoryLimit)
+    {
+        List<Page> input = rowPagesBuilder(BIGINT, DOUBLE)
+                .row(2L, 0.3)
+                .row(4L, 0.2)
+                .row(6L, 0.1)
+                .pageBreak()
+                .row(-1L, -0.1)
+                .row(5L, 0.4)
+                .build();
+
+        WindowOperatorFactory operatorFactory = createFactoryUnbounded(
+                ImmutableList.of(BIGINT, DOUBLE),
+                Ints.asList(1, 0),
+                ROW_NUMBER,
+                Ints.asList(),
+                Ints.asList(0),
+                ImmutableList.copyOf(new SortOrder[] {SortOrder.ASC_NULLS_LAST}),
+                spillEnabled);
+
+        DriverContext driverContext = createDriverContext(memoryLimit);
+        MaterializedResult expected = resultBuilder(driverContext.getSession(), DOUBLE, BIGINT, BIGINT)
+                .row(-0.1, -1L, 1L)
+                .row(0.3, 2L, 2L)
+                .row(0.2, 4L, 3L)
+                .row(0.4, 5L, 4L)
+                .row(0.1, 6L, 5L)
+                .build();
+
+        assertOperatorEquals(operatorFactory, driverContext, input, expected, revokeMemoryWhenAddingPages);
+    }
+
+    @Test(dataProvider = "spillEnabled")
+    public void testRowNumberPartition(boolean spillEnabled, boolean revokeMemoryWhenAddingPages, long memoryLimit)
+    {
+        List<Page> input = rowPagesBuilder(VARCHAR, BIGINT, DOUBLE, BOOLEAN)
+                .row("b", -1L, -0.1, true)
+                .row("a", 2L, 0.3, false)
+                .row("a", 4L, 0.2, true)
+                .pageBreak()
+                .row("b", 5L, 0.4, false)
+                .row("a", 6L, 0.1, true)
+                .build();
+
+        WindowOperatorFactory operatorFactory = createFactoryUnbounded(
+                ImmutableList.of(VARCHAR, BIGINT, DOUBLE, BOOLEAN),
+                Ints.asList(0, 1, 2, 3),
+                ROW_NUMBER,
+                Ints.asList(0),
+                Ints.asList(1),
+                ImmutableList.copyOf(new SortOrder[] {SortOrder.ASC_NULLS_LAST}),
+                spillEnabled);
+
+        DriverContext driverContext = createDriverContext(memoryLimit);
+        MaterializedResult expected = resultBuilder(driverContext.getSession(), VARCHAR, BIGINT, DOUBLE, BOOLEAN, BIGINT)
+                .row("a", 2L, 0.3, false, 1L)
+                .row("a", 4L, 0.2, true, 2L)
+                .row("a", 6L, 0.1, true, 3L)
+                .row("b", -1L, -0.1, true, 1L)
+                .row("b", 5L, 0.4, false, 2L)
+                .build();
+
+        assertOperatorEquals(operatorFactory, driverContext, input, expected, revokeMemoryWhenAddingPages);
+    }
+
+    @Test
+    public void testRowNumberArbitrary()
+    {
+        List<Page> input = rowPagesBuilder(BIGINT)
+                .row(1L)
+                .row(3L)
+                .row(5L)
+                .row(7L)
+                .pageBreak()
+                .row(2L)
+                .row(4L)
+                .row(6L)
+                .row(8L)
+                .build();
+
+        WindowOperatorFactory operatorFactory = createFactoryUnbounded(
+                ImmutableList.of(BIGINT),
+                Ints.asList(0),
+                ROW_NUMBER,
+                Ints.asList(),
+                Ints.asList(),
+                ImmutableList.copyOf(new SortOrder[] {}),
+                false);
+
+        DriverContext driverContext = createDriverContext();
+        MaterializedResult expected = resultBuilder(driverContext.getSession(), BIGINT, BIGINT)
+                .row(1L, 1L)
+                .row(3L, 2L)
+                .row(5L, 3L)
+                .row(7L, 4L)
+                .row(2L, 5L)
+                .row(4L, 6L)
+                .row(6L, 7L)
+                .row(8L, 8L)
+                .build();
+
+        assertOperatorEquals(operatorFactory, driverContext, input, expected);
+    }
+
+    @Test
+    public void testRowNumberArbitraryWithSpill()
+    {
+        List<Page> input = rowPagesBuilder(BIGINT)
+                .row(1L)
+                .row(3L)
+                .row(5L)
+                .row(7L)
+                .pageBreak()
+                .row(2L)
+                .row(4L)
+                .row(6L)
+                .row(8L)
+                .build();
+
+        WindowOperatorFactory operatorFactory = createFactoryUnbounded(
+                ImmutableList.of(BIGINT),
+                Ints.asList(0),
+                ROW_NUMBER,
+                Ints.asList(),
+                Ints.asList(),
+                ImmutableList.copyOf(new SortOrder[] {}),
+                true);
+
+        DriverContext driverContext = createDriverContext();
+        MaterializedResult expected = resultBuilder(driverContext.getSession(), BIGINT, BIGINT)
+                .row(1L, 1L)
+                .row(2L, 2L)
+                .row(3L, 3L)
+                .row(4L, 4L)
+                .row(5L, 5L)
+                .row(6L, 6L)
+                .row(7L, 7L)
+                .row(8L, 8L)
+                .build();
+
+        assertOperatorEquals(operatorFactory, driverContext, input, expected);
+    }
+
+    @Test(expectedExceptions = ExceededMemoryLimitException.class, expectedExceptionsMessageRegExp = "Query exceeded per-node user memory limit of 10B.*")
+    public void testMemoryLimit()
+    {
+        List<Page> input = rowPagesBuilder(BIGINT, DOUBLE)
+                .row(1L, 0.1)
+                .row(2L, 0.2)
+                .pageBreak()
+                .row(-1L, -0.1)
+                .row(4L, 0.4)
+                .build();
+
+        DriverContext driverContext = createTaskContext(executor, scheduledExecutor, TEST_SESSION, new DataSize(10, Unit.BYTE))
+                .addPipelineContext(0, true, true, false)
+                .addDriverContext();
+
+        WindowOperatorFactory operatorFactory = createFactoryUnbounded(
+                ImmutableList.of(BIGINT, DOUBLE),
+                Ints.asList(1),
+                ROW_NUMBER,
+                Ints.asList(),
+                Ints.asList(0),
+                ImmutableList.copyOf(new SortOrder[] {SortOrder.ASC_NULLS_LAST}),
+                false);
+
+        toPages(operatorFactory, driverContext, input);
+    }
+
+    @Test(dataProvider = "spillEnabled")
+    public void testFirstValuePartition(boolean spillEnabled, boolean revokeMemoryWhenAddingPages, long memoryLimit)
+    {
+        List<Page> input = rowPagesBuilder(VARCHAR, VARCHAR, BIGINT, BOOLEAN, VARCHAR)
+                .row("b", "A1", 1L, true, "")
+                .row("a", "A2", 1L, false, "")
+                .row("a", "B1", 2L, true, "")
+                .pageBreak()
+                .row("b", "C1", 2L, false, "")
+                .row("a", "C2", 3L, true, "")
+                .row("c", "A3", 1L, true, "")
+                .build();
+
+        WindowOperatorFactory operatorFactory = createFactoryUnbounded(
+                ImmutableList.of(VARCHAR, VARCHAR, BIGINT, BOOLEAN, VARCHAR),
+                Ints.asList(0, 1, 2, 3),
+                FIRST_VALUE,
+                Ints.asList(0),
+                Ints.asList(2),
+                ImmutableList.copyOf(new SortOrder[] {SortOrder.ASC_NULLS_LAST}),
+                spillEnabled);
+
+        DriverContext driverContext = createDriverContext(memoryLimit);
+        MaterializedResult expected = resultBuilder(driverContext.getSession(), VARCHAR, VARCHAR, BIGINT, BOOLEAN, VARCHAR)
+                .row("a", "A2", 1L, false, "A2")
+                .row("a", "B1", 2L, true, "A2")
+                .row("a", "C2", 3L, true, "A2")
+                .row("b", "A1", 1L, true, "A1")
+                .row("b", "C1", 2L, false, "A1")
+                .row("c", "A3", 1L, true, "A3")
+                .build();
+
+        assertOperatorEquals(operatorFactory, driverContext, input, expected, revokeMemoryWhenAddingPages);
+    }
+
+    @Test(dataProvider = "spillEnabled")
+    public void testLastValuePartition(boolean spillEnabled, boolean revokeMemoryWhenAddingPages, long memoryLimit)
+    {
+        List<Page> input = rowPagesBuilder(VARCHAR, VARCHAR, BIGINT, BOOLEAN, VARCHAR)
+                .row("b", "A1", 1L, true, "")
+                .row("a", "A2", 1L, false, "")
+                .row("a", "B1", 2L, true, "")
+                .pageBreak()
+                .row("b", "C1", 2L, false, "")
+                .row("a", "C2", 3L, true, "")
+                .row("c", "A3", 1L, true, "")
+                .build();
+
+        DriverContext driverContext = createDriverContext(memoryLimit);
+        WindowOperatorFactory operatorFactory = createFactoryUnbounded(
+                ImmutableList.of(VARCHAR, VARCHAR, BIGINT, BOOLEAN, VARCHAR),
+                Ints.asList(0, 1, 2, 3),
+                LAST_VALUE,
+                Ints.asList(0),
+                Ints.asList(2),
+                ImmutableList.copyOf(new SortOrder[] {SortOrder.ASC_NULLS_LAST}),
+                spillEnabled);
+
+        MaterializedResult expected = resultBuilder(driverContext.getSession(), VARCHAR, VARCHAR, BIGINT, BOOLEAN, VARCHAR)
+                .row("a", "A2", 1L, false, "C2")
+                .row("a", "B1", 2L, true, "C2")
+                .row("a", "C2", 3L, true, "C2")
+                .row("b", "A1", 1L, true, "C1")
+                .row("b", "C1", 2L, false, "C1")
+                .row("c", "A3", 1L, true, "A3")
+                .build();
+        assertOperatorEquals(operatorFactory, driverContext, input, expected, revokeMemoryWhenAddingPages);
+    }
+
+    @Test(dataProvider = "spillEnabled")
+    public void testNthValuePartition(boolean spillEnabled, boolean revokeMemoryWhenAddingPages, long memoryLimit)
+    {
+        List<Page> input = rowPagesBuilder(VARCHAR, VARCHAR, BIGINT, BIGINT, BOOLEAN, VARCHAR)
+                .row("b", "A1", 1L, 2L, true, "")
+                .row("a", "A2", 1L, 3L, false, "")
+                .row("a", "B1", 2L, 2L, true, "")
+                .pageBreak()
+                .row("b", "C1", 2L, 3L, false, "")
+                .row("a", "C2", 3L, 1L, true, "")
+                .row("c", "A3", 1L, null, true, "")
+                .build();
+
+        WindowOperatorFactory operatorFactory = createFactoryUnbounded(
+                ImmutableList.of(VARCHAR, VARCHAR, BIGINT, BIGINT, BOOLEAN, VARCHAR),
+                Ints.asList(0, 1, 2, 4),
+                NTH_VALUE,
+                Ints.asList(0),
+                Ints.asList(2),
+                ImmutableList.copyOf(new SortOrder[] {SortOrder.ASC_NULLS_LAST}),
+                spillEnabled);
+
+        DriverContext driverContext = createDriverContext(memoryLimit);
+        MaterializedResult expected = resultBuilder(driverContext.getSession(), VARCHAR, VARCHAR, BIGINT, BOOLEAN, VARCHAR)
+                .row("a", "A2", 1L, false, "C2")
+                .row("a", "B1", 2L, true, "B1")
+                .row("a", "C2", 3L, true, "A2")
+                .row("b", "A1", 1L, true, "C1")
+                .row("b", "C1", 2L, false, null)
+                .row("c", "A3", 1L, true, null)
+                .build();
+
+        assertOperatorEquals(operatorFactory, driverContext, input, expected, revokeMemoryWhenAddingPages);
+    }
+
+    @Test(dataProvider = "spillEnabled")
+    public void testLagPartition(boolean spillEnabled, boolean revokeMemoryWhenAddingPages, long memoryLimit)
+    {
+        List<Page> input = rowPagesBuilder(VARCHAR, VARCHAR, BIGINT, BIGINT, VARCHAR, BOOLEAN, VARCHAR)
+                .row("b", "A1", 1L, 1L, "D", true, "")
+                .row("a", "A2", 1L, 2L, "D", false, "")
+                .row("a", "B1", 2L, 2L, "D", true, "")
+                .pageBreak()
+                .row("b", "C1", 2L, 1L, "D", false, "")
+                .row("a", "C2", 3L, 2L, "D", true, "")
+                .row("c", "A3", 1L, 1L, "D", true, "")
+                .build();
+
+        WindowOperatorFactory operatorFactory = createFactoryUnbounded(
+                ImmutableList.of(VARCHAR, VARCHAR, BIGINT, BIGINT, VARCHAR, BOOLEAN, VARCHAR),
+                Ints.asList(0, 1, 2, 5),
+                LAG,
+                Ints.asList(0),
+                Ints.asList(2),
+                ImmutableList.copyOf(new SortOrder[] {SortOrder.ASC_NULLS_LAST}),
+                spillEnabled);
+
+        DriverContext driverContext = createDriverContext(memoryLimit);
+        MaterializedResult expected = resultBuilder(driverContext.getSession(), VARCHAR, VARCHAR, BIGINT, BOOLEAN, VARCHAR)
+                .row("a", "A2", 1L, false, "D")
+                .row("a", "B1", 2L, true, "D")
+                .row("a", "C2", 3L, true, "A2")
+                .row("b", "A1", 1L, true, "D")
+                .row("b", "C1", 2L, false, "A1")
+                .row("c", "A3", 1L, true, "D")
+                .build();
+
+        assertOperatorEquals(operatorFactory, driverContext, input, expected, revokeMemoryWhenAddingPages);
+    }
+
+    @Test(dataProvider = "spillEnabled")
+    public void testLeadPartition(boolean spillEnabled, boolean revokeMemoryWhenAddingPages, long memoryLimit)
+    {
+        List<Page> input = rowPagesBuilder(VARCHAR, VARCHAR, BIGINT, BIGINT, VARCHAR, BOOLEAN, VARCHAR)
+                .row("b", "A1", 1L, 1L, "D", true, "")
+                .row("a", "A2", 1L, 2L, "D", false, "")
+                .row("a", "B1", 2L, 2L, "D", true, "")
+                .pageBreak()
+                .row("b", "C1", 2L, 1L, "D", false, "")
+                .row("a", "C2", 3L, 2L, "D", true, "")
+                .row("c", "A3", 1L, 1L, "D", true, "")
+                .build();
+
+        WindowOperatorFactory operatorFactory = createFactoryUnbounded(
+                ImmutableList.of(VARCHAR, VARCHAR, BIGINT, BIGINT, VARCHAR, BOOLEAN, VARCHAR),
+                Ints.asList(0, 1, 2, 5),
+                LEAD,
+                Ints.asList(0),
+                Ints.asList(2),
+                ImmutableList.copyOf(new SortOrder[] {SortOrder.ASC_NULLS_LAST}),
+                spillEnabled);
+
+        DriverContext driverContext = createDriverContext(memoryLimit);
+        MaterializedResult expected = resultBuilder(driverContext.getSession(), VARCHAR, VARCHAR, BIGINT, BOOLEAN, VARCHAR)
+                .row("a", "A2", 1L, false, "C2")
+                .row("a", "B1", 2L, true, "D")
+                .row("a", "C2", 3L, true, "D")
+                .row("b", "A1", 1L, true, "C1")
+                .row("b", "C1", 2L, false, "D")
+                .row("c", "A3", 1L, true, "D")
+                .build();
+
+        assertOperatorEquals(operatorFactory, driverContext, input, expected, revokeMemoryWhenAddingPages);
+    }
+
+    @Test(dataProvider = "spillEnabled")
+    public void testPartiallyPreGroupedPartitionWithEmptyInput(boolean spillEnabled, boolean revokeMemoryWhenAddingPages, long memoryLimit)
+    {
+        List<Page> input = rowPagesBuilder(BIGINT, VARCHAR, BIGINT, VARCHAR)
+                .pageBreak()
+                .pageBreak()
+                .build();
+
+        WindowOperatorFactory operatorFactory = createFactoryUnbounded(
+                ImmutableList.of(BIGINT, VARCHAR, BIGINT, VARCHAR),
+                Ints.asList(0, 1, 2, 3),
+                ROW_NUMBER,
+                Ints.asList(0, 1),
+                Ints.asList(1),
+                Ints.asList(3),
+                ImmutableList.of(SortOrder.ASC_NULLS_LAST),
+                0,
+                spillEnabled);
+
+        DriverContext driverContext = createDriverContext(memoryLimit);
+        MaterializedResult expected = resultBuilder(driverContext.getSession(), BIGINT, VARCHAR, BIGINT, VARCHAR, BIGINT)
+                .build();
+
+        assertOperatorEquals(operatorFactory, driverContext, input, expected, revokeMemoryWhenAddingPages);
+    }
+
+    @Test(dataProvider = "spillEnabled")
+    public void testPartiallyPreGroupedPartition(boolean spillEnabled, boolean revokeMemoryWhenAddingPages, long memoryLimit)
+    {
+        List<Page> input = rowPagesBuilder(BIGINT, VARCHAR, BIGINT, VARCHAR)
+                .pageBreak()
+                .row(1L, "a", 100L, "A")
+                .row(2L, "a", 101L, "B")
+                .pageBreak()
+                .row(3L, "b", 102L, "E")
+                .row(1L, "b", 103L, "D")
+                .pageBreak()
+                .row(3L, "b", 104L, "C")
+                .row(1L, "c", 105L, "F")
+                .pageBreak()
+                .build();
+
+        WindowOperatorFactory operatorFactory = createFactoryUnbounded(
+                ImmutableList.of(BIGINT, VARCHAR, BIGINT, VARCHAR),
+                Ints.asList(0, 1, 2, 3),
+                ROW_NUMBER,
+                Ints.asList(0, 1),
+                Ints.asList(1),
+                Ints.asList(3),
+                ImmutableList.of(SortOrder.ASC_NULLS_LAST),
+                0,
+                spillEnabled);
+
+        DriverContext driverContext = createDriverContext(memoryLimit);
+        MaterializedResult expected = resultBuilder(driverContext.getSession(), BIGINT, VARCHAR, BIGINT, VARCHAR, BIGINT)
+                .row(1L, "a", 100L, "A", 1L)
+                .row(2L, "a", 101L, "B", 1L)
+                .row(3L, "b", 104L, "C", 1L)
+                .row(3L, "b", 102L, "E", 2L)
+                .row(1L, "b", 103L, "D", 1L)
+                .row(1L, "c", 105L, "F", 1L)
+                .build();
+
+        assertOperatorEqualsIgnoreOrder(operatorFactory, driverContext, input, expected, revokeMemoryWhenAddingPages);
+    }
+
+    @Test(dataProvider = "spillEnabled")
+    public void testFullyPreGroupedPartition(boolean spillEnabled, boolean revokeMemoryWhenAddingPages, long memoryLimit)
+    {
+        List<Page> input = rowPagesBuilder(BIGINT, VARCHAR, BIGINT, VARCHAR)
+                .pageBreak()
+                .row(1L, "a", 100L, "A")
+                .pageBreak()
+                .row(2L, "a", 101L, "B")
+                .pageBreak()
+                .row(2L, "b", 102L, "D")
+                .row(2L, "b", 103L, "C")
+                .row(1L, "b", 104L, "E")
+                .pageBreak()
+                .row(1L, "b", 105L, "F")
+                .row(3L, "c", 106L, "G")
+                .build();
+
+        WindowOperatorFactory operatorFactory = createFactoryUnbounded(
+                ImmutableList.of(BIGINT, VARCHAR, BIGINT, VARCHAR),
+                Ints.asList(0, 1, 2, 3),
+                ROW_NUMBER,
+                Ints.asList(1, 0),
+                Ints.asList(0, 1),
+                Ints.asList(3),
+                ImmutableList.of(SortOrder.ASC_NULLS_LAST),
+                0,
+                spillEnabled);
+
+        DriverContext driverContext = createDriverContext(memoryLimit);
+        MaterializedResult expected = resultBuilder(driverContext.getSession(), BIGINT, VARCHAR, BIGINT, VARCHAR, BIGINT)
+                .row(1L, "a", 100L, "A", 1L)
+                .row(2L, "a", 101L, "B", 1L)
+                .row(2L, "b", 103L, "C", 1L)
+                .row(2L, "b", 102L, "D", 2L)
+                .row(1L, "b", 104L, "E", 1L)
+                .row(1L, "b", 105L, "F", 2L)
+                .row(3L, "c", 106L, "G", 1L)
+                .build();
+
+        assertOperatorEqualsIgnoreOrder(operatorFactory, driverContext, input, expected, revokeMemoryWhenAddingPages);
+    }
+
+    @Test(dataProvider = "spillEnabled")
+    public void testFullyPreGroupedAndPartiallySortedPartition(boolean spillEnabled, boolean revokeMemoryWhenAddingPages, long memoryLimit)
+    {
+        List<Page> input = rowPagesBuilder(BIGINT, VARCHAR, BIGINT, VARCHAR)
+                .pageBreak()
+                .row(1L, "a", 100L, "A")
+                .pageBreak()
+                .row(2L, "a", 100L, "A")
+                .pageBreak()
+                .row(2L, "b", 102L, "A")
+                .row(2L, "b", 101L, "A")
+                .row(2L, "b", 100L, "B")
+                .row(1L, "b", 101L, "A")
+                .pageBreak()
+                .row(1L, "b", 100L, "A")
+                .row(3L, "c", 100L, "A")
+                .build();
+
+        WindowOperatorFactory operatorFactory = createFactoryUnbounded(
+                ImmutableList.of(BIGINT, VARCHAR, BIGINT, VARCHAR),
+                Ints.asList(0, 1, 2, 3),
+                ROW_NUMBER,
+                Ints.asList(1, 0),
+                Ints.asList(0, 1),
+                Ints.asList(3, 2),
+                ImmutableList.of(SortOrder.ASC_NULLS_LAST, SortOrder.ASC_NULLS_LAST),
+                1,
+                spillEnabled);
+
+        DriverContext driverContext = createDriverContext(memoryLimit);
+        MaterializedResult expected = resultBuilder(driverContext.getSession(), BIGINT, VARCHAR, BIGINT, VARCHAR, BIGINT)
+                .row(1L, "a", 100L, "A", 1L)
+                .row(2L, "a", 100L, "A", 1L)
+                .row(2L, "b", 101L, "A", 1L)
+                .row(2L, "b", 102L, "A", 2L)
+                .row(2L, "b", 100L, "B", 3L)
+                .row(1L, "b", 100L, "A", 1L)
+                .row(1L, "b", 101L, "A", 2L)
+                .row(3L, "c", 100L, "A", 1L)
+                .build();
+
+        assertOperatorEqualsIgnoreOrder(operatorFactory, driverContext, input, expected, revokeMemoryWhenAddingPages);
+    }
+
+    @Test(dataProvider = "spillEnabled")
+    public void testFullyPreGroupedAndFullySortedPartition(boolean spillEnabled, boolean revokeMemoryWhenAddingPages, long memoryLimit)
+    {
+        List<Page> input = rowPagesBuilder(BIGINT, VARCHAR, BIGINT, VARCHAR)
+                .pageBreak()
+                .row(1L, "a", 100L, "A")
+                .pageBreak()
+                .row(2L, "a", 101L, "A")
+                .pageBreak()
+                .row(2L, "b", 102L, "A")
+                .row(2L, "b", 103L, "A")
+                .row(2L, "b", 104L, "B")
+                .row(1L, "b", 105L, "A")
+                .pageBreak()
+                .row(1L, "b", 106L, "A")
+                .row(3L, "c", 107L, "A")
+                .build();
+
+        WindowOperatorFactory operatorFactory = createFactoryUnbounded(
+                ImmutableList.of(BIGINT, VARCHAR, BIGINT, VARCHAR),
+                Ints.asList(0, 1, 2, 3),
+                ROW_NUMBER,
+                Ints.asList(1, 0),
+                Ints.asList(0, 1),
+                Ints.asList(3),
+                ImmutableList.of(SortOrder.ASC_NULLS_LAST),
+                1,
+                spillEnabled);
+
+        DriverContext driverContext = createDriverContext(memoryLimit);
+        MaterializedResult expected = resultBuilder(driverContext.getSession(), BIGINT, VARCHAR, BIGINT, VARCHAR, BIGINT)
+                .row(1L, "a", 100L, "A", 1L)
+                .row(2L, "a", 101L, "A", 1L)
+                .row(2L, "b", 102L, "A", 1L)
+                .row(2L, "b", 103L, "A", 2L)
+                .row(2L, "b", 104L, "B", 3L)
+                .row(1L, "b", 105L, "A", 1L)
+                .row(1L, "b", 106L, "A", 2L)
+                .row(3L, "c", 107L, "A", 1L)
+                .build();
+
+        // Since fully grouped and sorted already, should respect original input order
+        assertOperatorEquals(operatorFactory, driverContext, input, expected, revokeMemoryWhenAddingPages);
+    }
+
+    @Test
+    public void testFindEndPosition()
+    {
+        assertFindEndPosition("0", 1);
+        assertFindEndPosition("11", 2);
+        assertFindEndPosition("1111111111", 10);
+
+        assertFindEndPosition("01", 1);
+        assertFindEndPosition("011", 1);
+        assertFindEndPosition("0111", 1);
+        assertFindEndPosition("0111111111", 1);
+
+        assertFindEndPosition("012", 1);
+        assertFindEndPosition("01234", 1);
+        assertFindEndPosition("0123456789", 1);
+
+        assertFindEndPosition("001", 2);
+        assertFindEndPosition("0001", 3);
+        assertFindEndPosition("0000000001", 9);
+
+        assertFindEndPosition("000111", 3);
+        assertFindEndPosition("0001111", 3);
+        assertFindEndPosition("0000111", 4);
+        assertFindEndPosition("000000000000001111111111", 14);
+    }
+
+    private static void assertFindEndPosition(String values, int expected)
+    {
+        char[] array = values.toCharArray();
+        assertEquals(WindowOperator.findEndPosition(0, array.length, (first, second) -> array[first] == array[second]), expected);
+    }
+
+    private WindowOperatorFactory createFactoryUnbounded(
+            List<? extends Type> sourceTypes,
+            List<Integer> outputChannels,
+            List<WindowFunctionDefinition> functions,
+            List<Integer> partitionChannels,
+            List<Integer> sortChannels,
+            List<SortOrder> sortOrder,
+            boolean spillEnabled)
+    {
+        return createFactoryUnbounded(
+                sourceTypes,
+                outputChannels,
+                functions,
+                partitionChannels,
+                ImmutableList.of(),
+                sortChannels,
+                sortOrder,
+                0,
+                spillEnabled);
+    }
+
+    public WindowOperatorFactory createFactoryUnbounded(
+            List<? extends Type> sourceTypes,
+            List<Integer> outputChannels,
+            List<WindowFunctionDefinition> functions,
+            List<Integer> partitionChannels,
+            List<Integer> preGroupedChannels,
+            List<Integer> sortChannels,
+            List<SortOrder> sortOrder,
+            int preSortedChannelPrefix,
+            boolean spillEnabled)
+    {
+        return new WindowOperatorFactory(
+                0,
+                new PlanNodeId("test"),
+                sourceTypes,
+                outputChannels,
+                functions,
+                partitionChannels,
+                preGroupedChannels,
+                sortChannels,
+                sortOrder,
+                preSortedChannelPrefix,
+                10,
+                new PagesIndex.TestingFactory(false),
+                spillEnabled,
+                spillerFactory,
+                new OrderingCompiler());
+    }
+
+    public static WindowOperatorFactory createFactoryUnbounded(
+            List<? extends Type> sourceTypes,
+            List<Integer> outputChannels,
+            List<WindowFunctionDefinition> functions,
+            List<Integer> partitionChannels,
+            List<Integer> preGroupedChannels,
+            List<Integer> sortChannels,
+            List<SortOrder> sortOrder,
+            int preSortedChannelPrefix,
+            SpillerFactory spillerFactory,
+            boolean spillEnabled)
+    {
+        return new WindowOperatorFactory(
+                0,
+                new PlanNodeId("test"),
+                sourceTypes,
+                outputChannels,
+                functions,
+                partitionChannels,
+                preGroupedChannels,
+                sortChannels,
+                sortOrder,
+                preSortedChannelPrefix,
+                10,
+                new PagesIndex.TestingFactory(false),
+                spillEnabled,
+                spillerFactory,
+                new OrderingCompiler());
+    }
+
+    private DriverContext createDriverContext()
+    {
+        return createDriverContext(Long.MAX_VALUE);
+    }
+
+    private DriverContext createDriverContext(long memoryLimit)
+    {
+        return TestingTaskContext.builder(executor, scheduledExecutor, TEST_SESSION)
+                .setMemoryPoolSize(succinctBytes(memoryLimit))
+                .build()
+                .addPipelineContext(0, true, true, false)
+                .addDriverContext();
+    }
+}
