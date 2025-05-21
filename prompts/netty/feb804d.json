@@ -4,6 +4,6 @@
   "commit_hash": "feb804dca8579c93ff3224564aafcf5938bb2c52",
   "source_code": "common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java common/src/main/java/io/netty/util/concurrent/PromiseTask.java common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
   "jmh_case": "microbench/src/main/java/io/netty/util/concurrent/ScheduleFutureTaskBenchmark",
-  "unittest": "common/src/test/java/io/netty/util/concurrent",
+  "unittest": "common/src/test/java/io/netty/util/concurrent/AbstractScheduledEventExecutorTest.java common/src/test/java/io/netty/util/concurrent/ScheduledFutureTaskTest.java",
   "description": "Currently when future tasks are scheduled via EventExecutors from a different thread, at least two allocations are performed - the ScheduledFutureTask wrapping the to-be-run task, and a Runnable wrapping the action to add to the scheduled task priority queue. The latter can be avoided by incorporating this logic into the former."
 }

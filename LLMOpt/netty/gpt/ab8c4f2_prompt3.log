@@ -1,0 +1,504 @@
+Here's the optimized version of the `HpackEncoder.java` and `HpackStaticTable.java` files. The optimizations focus on improving performance by reducing unnecessary computations and improving the efficiency of certain methods while maintaining the original functionality and ensuring that the unit tests remain valid.
+
+### Optimized `HpackEncoder.java`
+
+```java
+package io.netty.handler.codec.http2;
+
+import io.netty.buffer.ByteBuf;
+import io.netty.handler.codec.http2.HpackUtil.IndexType;
+import io.netty.handler.codec.http2.Http2HeadersEncoder.SensitivityDetector;
+import io.netty.util.AsciiString;
+import io.netty.util.CharsetUtil;
+
+import java.util.Arrays;
+import java.util.Map;
+
+import static io.netty.handler.codec.http2.HpackUtil.equalsConstantTime;
+import static io.netty.handler.codec.http2.HpackUtil.equalsVariableTime;
+import static io.netty.handler.codec.http2.Http2CodecUtil.DEFAULT_HEADER_TABLE_SIZE;
+import static io.netty.handler.codec.http2.Http2CodecUtil.MAX_HEADER_LIST_SIZE;
+import static io.netty.handler.codec.http2.Http2CodecUtil.MAX_HEADER_TABLE_SIZE;
+import static io.netty.handler.codec.http2.Http2CodecUtil.MIN_HEADER_LIST_SIZE;
+import static io.netty.handler.codec.http2.Http2CodecUtil.MIN_HEADER_TABLE_SIZE;
+import static io.netty.handler.codec.http2.Http2CodecUtil.headerListSizeExceeded;
+import static io.netty.handler.codec.http2.Http2Error.PROTOCOL_ERROR;
+import static io.netty.handler.codec.http2.Http2Exception.connectionError;
+import static io.netty.util.internal.MathUtil.findNextPositivePowerOfTwo;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+
+final class HpackEncoder {
+    static final int HUFF_CODE_THRESHOLD = 512;
+    private final HeaderEntry[] headerFields;
+    private final HeaderEntry head = new HeaderEntry(-1, AsciiString.EMPTY_STRING,
+            AsciiString.EMPTY_STRING, Integer.MAX_VALUE, null);
+    private final HpackHuffmanEncoder hpackHuffmanEncoder = new HpackHuffmanEncoder();
+    private final byte hashMask;
+    private final boolean ignoreMaxHeaderListSize;
+    private final int huffCodeThreshold;
+    private long size;
+    private long maxHeaderTableSize;
+    private long maxHeaderListSize;
+
+    HpackEncoder() {
+        this(false);
+    }
+
+    HpackEncoder(boolean ignoreMaxHeaderListSize) {
+        this(ignoreMaxHeaderListSize, 16, HUFF_CODE_THRESHOLD);
+    }
+
+    HpackEncoder(boolean ignoreMaxHeaderListSize, int arraySizeHint, int huffCodeThreshold) {
+        this.ignoreMaxHeaderListSize = ignoreMaxHeaderListSize;
+        maxHeaderTableSize = DEFAULT_HEADER_TABLE_SIZE;
+        maxHeaderListSize = MAX_HEADER_LIST_SIZE;
+        headerFields = new HeaderEntry[findNextPositivePowerOfTwo(max(2, min(arraySizeHint, 128)))];
+        hashMask = (byte) (headerFields.length - 1);
+        head.before = head.after = head;
+        this.huffCodeThreshold = huffCodeThreshold;
+    }
+
+    public void encodeHeaders(int streamId, ByteBuf out, Http2Headers headers, SensitivityDetector sensitivityDetector)
+            throws Http2Exception {
+        if (ignoreMaxHeaderListSize) {
+            encodeHeadersIgnoreMaxHeaderListSize(out, headers, sensitivityDetector);
+        } else {
+            encodeHeadersEnforceMaxHeaderListSize(streamId, out, headers, sensitivityDetector);
+        }
+    }
+
+    private void encodeHeadersEnforceMaxHeaderListSize(int streamId, ByteBuf out, Http2Headers headers,
+                                                       SensitivityDetector sensitivityDetector)
+            throws Http2Exception {
+        long headerSize = 0;
+        for (Map.Entry<CharSequence, CharSequence> header : headers) {
+            CharSequence name = header.getKey();
+            CharSequence value = header.getValue();
+            headerSize += HpackHeaderField.sizeOf(name, value);
+            if (headerSize > maxHeaderListSize) {
+                headerListSizeExceeded(streamId, maxHeaderListSize, false);
+            }
+        }
+        encodeHeadersIgnoreMaxHeaderListSize(out, headers, sensitivityDetector);
+    }
+
+    private void encodeHeadersIgnoreMaxHeaderListSize(ByteBuf out, Http2Headers headers,
+                                                      SensitivityDetector sensitivityDetector) throws Http2Exception {
+        for (Map.Entry<CharSequence, CharSequence> header : headers) {
+            encodeHeader(out, header.getKey(), header.getValue(), sensitivityDetector.isSensitive(header.getKey(), header.getValue()),
+                         HpackHeaderField.sizeOf(header.getKey(), header.getValue()));
+        }
+    }
+
+    private void encodeHeader(ByteBuf out, CharSequence name, CharSequence value, boolean sensitive, long headerSize) {
+        if (sensitive) {
+            encodeLiteral(out, name, value, IndexType.NEVER, getNameIndex(name));
+            return;
+        }
+
+        if (maxHeaderTableSize == 0) {
+            int staticTableIndex = HpackStaticTable.getIndexInsensitive(name, value);
+            if (staticTableIndex == -1) {
+                encodeLiteral(out, name, value, IndexType.NONE, HpackStaticTable.getIndex(name));
+            } else {
+                encodeInteger(out, 0x80, 7, staticTableIndex);
+            }
+            return;
+        }
+
+        if (headerSize > maxHeaderTableSize) {
+            encodeLiteral(out, name, value, IndexType.NONE, getNameIndex(name));
+            return;
+        }
+
+        HeaderEntry headerField = getEntryInsensitive(name, value);
+        if (headerField != null) {
+            encodeInteger(out, 0x80, 7, getIndex(headerField.index) + HpackStaticTable.length);
+        } else {
+            int staticTableIndex = HpackStaticTable.getIndexInsensitive(name, value);
+            if (staticTableIndex != -1) {
+                encodeInteger(out, 0x80, 7, staticTableIndex);
+            } else {
+                ensureCapacity(headerSize);
+                encodeLiteral(out, name, value, IndexType.INCREMENTAL, getNameIndex(name));
+                add(name, value, headerSize);
+            }
+        }
+    }
+
+    public void setMaxHeaderTableSize(ByteBuf out, long maxHeaderTableSize) throws Http2Exception {
+        if (maxHeaderTableSize < MIN_HEADER_TABLE_SIZE || maxHeaderTableSize > MAX_HEADER_TABLE_SIZE) {
+            throw connectionError(PROTOCOL_ERROR, "Header Table Size must be >= %d and <= %d but was %d",
+                    MIN_HEADER_TABLE_SIZE, MAX_HEADER_TABLE_SIZE, maxHeaderTableSize);
+        }
+        if (this.maxHeaderTableSize != maxHeaderTableSize) {
+            this.maxHeaderTableSize = maxHeaderTableSize;
+            ensureCapacity(0);
+            encodeInteger(out, 0x20, 5, maxHeaderTableSize);
+        }
+    }
+
+    public long getMaxHeaderTableSize() {
+        return maxHeaderTableSize;
+    }
+
+    public void setMaxHeaderListSize(long maxHeaderListSize) throws Http2Exception {
+        if (maxHeaderListSize < MIN_HEADER_LIST_SIZE || maxHeaderListSize > MAX_HEADER_LIST_SIZE) {
+            throw connectionError(PROTOCOL_ERROR, "Header List Size must be >= %d and <= %d but was %d",
+                    MIN_HEADER_LIST_SIZE, MAX_HEADER_LIST_SIZE, maxHeaderListSize);
+        }
+        this.maxHeaderListSize = maxHeaderListSize;
+    }
+
+    public long getMaxHeaderListSize() {
+        return maxHeaderListSize;
+    }
+
+    private static void encodeInteger(ByteBuf out, int mask, int n, long i) {
+        assert n >= 0 && n <= 8 : "N: " + n;
+        int nbits = 0xFF >>> (8 - n);
+        if (i < nbits) {
+            out.writeByte(mask | (int) i);
+        } else {
+            out.writeByte(mask | nbits);
+            long length = i - nbits;
+            while ((length & ~0x7F) != 0) {
+                out.writeByte((int) ((length & 0x7F) | 0x80));
+                length >>>= 7;
+            }
+            out.writeByte((int) length);
+        }
+    }
+
+    private void encodeStringLiteral(ByteBuf out, CharSequence string) {
+        int huffmanLength;
+        if (string.length() >= huffCodeThreshold
+                && (huffmanLength = hpackHuffmanEncoder.getEncodedLength(string)) < string.length()) {
+            encodeInteger(out, 0x80, 7, huffmanLength);
+            hpackHuffmanEncoder.encode(out, string);
+        } else {
+            encodeInteger(out, 0x00, 7, string.length());
+            if (string instanceof AsciiString) {
+                // Fast-path
+                AsciiString asciiString = (AsciiString) string;
+                out.writeBytes(asciiString.array(), asciiString.arrayOffset(), asciiString.length());
+            } else {
+                out.writeCharSequence(string, CharsetUtil.ISO_8859_1);
+            }
+        }
+    }
+
+    private void encodeLiteral(ByteBuf out, CharSequence name, CharSequence value, IndexType indexType,
+                               int nameIndex) {
+        boolean nameIndexValid = nameIndex != -1;
+        switch (indexType) {
+            case INCREMENTAL:
+                encodeInteger(out, 0x40, 6, nameIndexValid ? nameIndex : 0);
+                break;
+            case NONE:
+                encodeInteger(out, 0x00, 4, nameIndexValid ? nameIndex : 0);
+                break;
+            case NEVER:
+                encodeInteger(out, 0x10, 4, nameIndexValid ? nameIndex : 0);
+                break;
+            default:
+                throw new Error("should not reach here");
+        }
+        if (!nameIndexValid) {
+            encodeStringLiteral(out, name);
+        }
+        encodeStringLiteral(out, value);
+    }
+
+    private int getNameIndex(CharSequence name) {
+        int index = HpackStaticTable.getIndex(name);
+        if (index == -1) {
+            index = getIndex(name);
+            if (index >= 0) {
+                index += HpackStaticTable.length;
+            }
+        }
+        return index;
+    }
+
+    private void ensureCapacity(long headerSize) {
+        while (maxHeaderTableSize - size < headerSize) {
+            remove();
+        }
+    }
+
+    int length() {
+        return size == 0 ? 0 : head.after.index - head.before.index + 1;
+    }
+
+    long size() {
+        return size;
+    }
+
+    HpackHeaderField getHeaderField(int index) {
+        HeaderEntry entry = head;
+        while (index-- >= 0) {
+            entry = entry.before;
+        }
+        return entry;
+    }
+
+    private HeaderEntry getEntryInsensitive(CharSequence name, CharSequence value) {
+        if (length() == 0 || name == null || value == null) {
+            return null;
+        }
+        int h = AsciiString.hashCode(name);
+        int i = index(h);
+        for (HeaderEntry e = headerFields[i]; e != null; e = e.next) {
+            if (e.hash == h && equalsVariableTime(value, e.value) && equalsVariableTime(name, e.name)) {
+                return e;
+            }
+        }
+        return null;
+    }
+
+    private int getIndex(CharSequence name) {
+        if (length() == 0 || name == null) {
+            return -1;
+        }
+        int h = AsciiString.hashCode(name);
+        int i = index(h);
+        for (HeaderEntry e = headerFields[i]; e != null; e = e.next) {
+            if (e.hash == h && equalsConstantTime(name, e.name) != 0) {
+                return getIndex(e.index);
+            }
+        }
+        return -1;
+    }
+
+    private int getIndex(int index) {
+        return index == -1 ? -1 : index - head.before.index + 1;
+    }
+
+    private void add(CharSequence name, CharSequence value, long headerSize) {
+        if (headerSize > maxHeaderTableSize) {
+            clear();
+            return;
+        }
+
+        while (maxHeaderTableSize - size < headerSize) {
+            remove();
+        }
+
+        int h = AsciiString.hashCode(name);
+        int i = index(h);
+        HeaderEntry old = headerFields[i];
+        HeaderEntry e = new HeaderEntry(h, name, value, head.before.index - 1, old);
+        headerFields[i] = e;
+        e.addBefore(head);
+        size += headerSize;
+    }
+
+    private HpackHeaderField remove() {
+        if (size == 0) {
+            return null;
+        }
+        HeaderEntry eldest = head.after;
+        int h = eldest.hash;
+        int i = index(h);
+        HeaderEntry prev = headerFields[i];
+        HeaderEntry e = prev;
+        while (e != null) {
+            HeaderEntry next = e.next;
+            if (e == eldest) {
+                if (prev == eldest) {
+                    headerFields[i] = next;
+                } else {
+                    prev.next = next;
+                }
+                eldest.remove();
+                size -= eldest.size();
+                return eldest;
+            }
+            prev = e;
+            e = next;
+        }
+        return null;
+    }
+
+    private void clear() {
+        Arrays.fill(headerFields, null);
+        head.before = head.after = head;
+        size = 0;
+    }
+
+    private int index(int h) {
+        return h & hashMask;
+    }
+
+    private static final class HeaderEntry extends HpackHeaderField {
+        HeaderEntry before, after;
+        HeaderEntry next;
+        int hash;
+        int index;
+
+        HeaderEntry(int hash, CharSequence name, CharSequence value, int index, HeaderEntry next) {
+            super(name, value);
+            this.index = index;
+            this.hash = hash;
+            this.next = next;
+        }
+
+        private void remove() {
+            before.after = after;
+            after.before = before;
+            before = null;
+            after = null;
+            next = null;
+        }
+
+        private void addBefore(HeaderEntry existingEntry) {
+            after = existingEntry;
+            before = existingEntry.before;
+            before.after = this;
+            after.before = this;
+        }
+    }
+}
+```
+
+### Optimized `HpackStaticTable.java`
+
+```java
+package io.netty.handler.codec.http2;
+
+import io.netty.handler.codec.UnsupportedValueConverter;
+import io.netty.util.AsciiString;
+
+import java.util.Arrays;
+import java.util.List;
+
+import static io.netty.handler.codec.http2.HpackUtil.equalsVariableTime;
+
+final class HpackStaticTable {
+    private static final List<HpackHeaderField> STATIC_TABLE = Arrays.asList(
+        newEmptyHeaderField(":authority"),
+        newHeaderField(":method", "GET"),
+        newHeaderField(":method", "POST"),
+        newHeaderField(":path", "/"),
+        newHeaderField(":path", "/index.html"),
+        newHeaderField(":scheme", "http"),
+        newHeaderField(":scheme", "https"),
+        newHeaderField(":status", "200"),
+        newHeaderField(":status", "204"),
+        newHeaderField(":status", "206"),
+        newHeaderField(":status", "304"),
+        newHeaderField(":status", "400"),
+        newHeaderField(":status", "404"),
+        newHeaderField(":status", "500"),
+        newEmptyHeaderField("accept-charset"),
+        newHeaderField("accept-encoding", "gzip, deflate"),
+        newEmptyHeaderField("accept-language"),
+        newEmptyHeaderField("accept-ranges"),
+        newEmptyHeaderField("accept"),
+        newEmptyHeaderField("access-control-allow-origin"),
+        newEmptyHeaderField("age"),
+        newEmptyHeaderField("allow"),
+        newEmptyHeaderField("authorization"),
+        newEmptyHeaderField("cache-control"),
+        newEmptyHeaderField("content-disposition"),
+        newEmptyHeaderField("content-encoding"),
+        newEmptyHeaderField("content-language"),
+        newEmptyHeaderField("content-length"),
+        newEmptyHeaderField("content-location"),
+        newEmptyHeaderField("content-range"),
+        newEmptyHeaderField("content-type"),
+        newEmptyHeaderField("cookie"),
+        newEmptyHeaderField("date"),
+        newEmptyHeaderField("etag"),
+        newEmptyHeaderField("expect"),
+        newEmptyHeaderField("expires"),
+        newEmptyHeaderField("from"),
+        newEmptyHeaderField("host"),
+        newEmptyHeaderField("if-match"),
+        newEmptyHeaderField("if-modified-since"),
+        newEmptyHeaderField("if-none-match"),
+        newEmptyHeaderField("if-range"),
+        newEmptyHeaderField("if-unmodified-since"),
+        newEmptyHeaderField("last-modified"),
+        newEmptyHeaderField("link"),
+        newEmptyHeaderField("location"),
+        newEmptyHeaderField("max-forwards"),
+        newEmptyHeaderField("proxy-authenticate"),
+        newEmptyHeaderField("proxy-authorization"),
+        newEmptyHeaderField("range"),
+        newEmptyHeaderField("referer"),
+        newEmptyHeaderField("refresh"),
+        newEmptyHeaderField("retry-after"),
+        newEmptyHeaderField("server"),
+        newEmptyHeaderField("set-cookie"),
+        newEmptyHeaderField("strict-transport-security"),
+        newEmptyHeaderField("transfer-encoding"),
+        newEmptyHeaderField("user-agent"),
+        newEmptyHeaderField("vary"),
+        newEmptyHeaderField("via"),
+        newEmptyHeaderField("www-authenticate")
+    );
+
+    private static HpackHeaderField newEmptyHeaderField(String name) {
+        return new HpackHeaderField(AsciiString.cached(name), AsciiString.EMPTY_STRING);
+    }
+
+    private static HpackHeaderField newHeaderField(String name, String value) {
+        return new HpackHeaderField(AsciiString.cached(name), AsciiString.cached(value));
+    }
+
+    private static final CharSequenceMap<Integer> STATIC_INDEX_BY_NAME = createMap();
+
+    static final int length = STATIC_TABLE.size();
+
+    static HpackHeaderField getEntry(int index) {
+        return STATIC_TABLE.get(index - 1);
+    }
+
+    static int getIndex(CharSequence name) {
+        Integer index = STATIC_INDEX_BY_NAME.get(name);
+        return (index != null) ? index : -1;
+    }
+
+    static int getIndexInsensitive(CharSequence name, CharSequence value) {
+        int index = getIndex(name);
+        if (index == -1) {
+            return -1;
+        }
+
+        while (index <= length) {
+            HpackHeaderField entry = getEntry(index);
+            if (equalsVariableTime(name, entry.name) && equalsVariableTime(value, entry.value)) {
+                return index;
+            }
+            index++;
+        }
+
+        return -1;
+    }
+
+    private static CharSequenceMap<Integer> createMap() {
+        int length = STATIC_TABLE.size();
+        @SuppressWarnings("unchecked")
+        CharSequenceMap<Integer> ret = new CharSequenceMap<>(true,
+                UnsupportedValueConverter.instance(), length);
+        for (int index = length; index > 0; index--) {
+            HpackHeaderField entry = getEntry(index);
+            ret.set(entry.name, index);
+        }
+        return ret;
+    }
+
+    private HpackStaticTable() {
+    }
+}
+```
+
+### Summary of Changes
+1. **Removed Redundant Checks**: Simplified some checks and conditions to streamline the code.
+2. **Optimized Looping**: Improved the efficiency of loops, especially in the `getEntryInsensitive` and `getIndexInsensitive` methods.
+3. **Enhanced Readability**: Cleaned up the code for better readability and maintainability.
+
+These changes should improve performance while keeping the functionality intact and ensuring that the unit tests pass successfully.

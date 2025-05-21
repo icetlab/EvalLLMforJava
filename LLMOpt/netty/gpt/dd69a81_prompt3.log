@@ -1,0 +1,86 @@
+Here is the optimized version of the `HttpRequestEncoder.java` file. The changes focus on improving performance by reducing unnecessary string manipulations and using more efficient methods for handling byte buffers.
+
+```java
+/*
+ * Copyright 2012 The Netty Project
+ *
+ * The Netty Project licenses this file to you under the Apache License,
+ * version 2.0 (the "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at:
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations
+ * under the License.
+ */
+package io.netty.handler.codec.http;
+
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufUtil;
+import io.netty.util.CharsetUtil;
+
+import static io.netty.handler.codec.http.HttpConstants.SP;
+
+/**
+ * Encodes an {@link HttpRequest} or an {@link HttpContent} into
+ * a {@link ByteBuf}.
+ */
+public class HttpRequestEncoder extends HttpObjectEncoder<HttpRequest> {
+    private static final char SLASH = '/';
+    private static final char QUESTION_MARK = '?';
+
+    @Override
+    public boolean acceptOutboundMessage(Object msg) throws Exception {
+        return super.acceptOutboundMessage(msg) && !(msg instanceof HttpResponse);
+    }
+
+    @Override
+    protected void encodeInitialLine(ByteBuf buf, HttpRequest request) throws Exception {
+        ByteBufUtil.copy(request.method().asciiName(), buf);
+        buf.writeByte(SP);
+
+        // Add / as absolute path if none is present.
+        String uri = request.uri();
+        int uriLength = uri.length();
+
+        if (uriLength == 0) {
+            buf.writeByte(SLASH);
+        } else {
+            int start = uri.indexOf("://");
+            if (start != -1 && uri.charAt(0) != SLASH) {
+                int startIndex = start + 3;
+                int index = uri.indexOf(QUESTION_MARK, startIndex);
+                if (index == -1) {
+                    if (uri.lastIndexOf(SLASH) <= startIndex) {
+                        buf.writeCharSequence(uri + SLASH, CharsetUtil.UTF_8);
+                    } else {
+                        buf.writeCharSequence(uri, CharsetUtil.UTF_8);
+                    }
+                } else {
+                    if (uri.lastIndexOf(SLASH, index) <= startIndex) {
+                        buf.writeCharSequence(uri.substring(0, index) + SLASH + uri.substring(index), CharsetUtil.UTF_8);
+                    } else {
+                        buf.writeCharSequence(uri, CharsetUtil.UTF_8);
+                    }
+                }
+            } else {
+                buf.writeCharSequence(uri, CharsetUtil.UTF_8);
+            }
+        }
+
+        buf.writeByte(SP);
+        request.protocolVersion().encode(buf);
+        buf.writeBytes(CRLF);
+    }
+}
+```
+
+### Key Changes:
+1. **Reduced String Manipulations**: Instead of creating new `StringBuilder` objects for constructing the URI, I used `String` methods and `ByteBuf.writeCharSequence` directly to append the necessary parts.
+2. **Direct ByteBuf Writing**: The optimized code writes directly to the `ByteBuf` using `writeCharSequence`, which is more efficient than converting to bytes and writing them separately.
+3. **Simplified Logic**: The logic for checking and appending the slash has been simplified to reduce complexity and improve readability.
+
+These changes should help improve the performance of the `HttpRequestEncoder` while maintaining the original functionality and ensuring that the unit tests remain valid.

@@ -1,0 +1,451 @@
+Here is the optimized version of the provided source files. The changes involve replacing the static `AtomicLong` used for generating unique IDs in `ScheduledFutureTask` with a non-volatile ID counter that is specific to each `AbstractScheduledEventExecutor`. This reduces contention when scheduling tasks at high frequency.
+
+### Optimized `AbstractScheduledEventExecutor.java`
+
+```java
+/*
+ * Copyright 2015 The Netty Project
+ *
+ * The Netty Project licenses this file to you under the Apache License,
+ * version 2.0 (the "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at:
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations
+ * under the License.
+ */
+package io.netty.util.concurrent;
+
+import io.netty.util.internal.DefaultPriorityQueue;
+import io.netty.util.internal.ObjectUtil;
+import io.netty.util.internal.PriorityQueue;
+
+import java.util.Comparator;
+import java.util.Queue;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Abstract base class for {@link EventExecutor}s that want to support scheduling.
+ */
+public abstract class AbstractScheduledEventExecutor extends AbstractEventExecutor {
+    private static final Comparator<ScheduledFutureTask<?>> SCHEDULED_FUTURE_TASK_COMPARATOR =
+            new Comparator<ScheduledFutureTask<?>>() {
+                @Override
+                public int compare(ScheduledFutureTask<?> o1, ScheduledFutureTask<?> o2) {
+                    return o1.compareTo(o2);
+                }
+            };
+
+    private PriorityQueue<ScheduledFutureTask<?>> scheduledTaskQueue;
+    private long nextTaskId; // Non-volatile ID counter per queue
+
+    protected AbstractScheduledEventExecutor() {
+    }
+
+    protected AbstractScheduledEventExecutor(EventExecutorGroup parent) {
+        super(parent);
+    }
+
+    protected static long nanoTime() {
+        return ScheduledFutureTask.nanoTime();
+    }
+
+    protected static long deadlineToDelayNanos(long deadlineNanos) {
+        return ScheduledFutureTask.deadlineToDelayNanos(deadlineNanos);
+    }
+
+    protected static long initialNanoTime() {
+        return ScheduledFutureTask.initialNanoTime();
+    }
+
+    PriorityQueue<ScheduledFutureTask<?>> scheduledTaskQueue() {
+        if (scheduledTaskQueue == null) {
+            scheduledTaskQueue = new DefaultPriorityQueue<ScheduledFutureTask<?>>(
+                    SCHEDULED_FUTURE_TASK_COMPARATOR,
+                    // Use same initial capacity as java.util.PriorityQueue
+                    11);
+        }
+        return scheduledTaskQueue;
+    }
+
+    private static boolean isNullOrEmpty(Queue<ScheduledFutureTask<?>> queue) {
+        return queue == null || queue.isEmpty();
+    }
+
+    protected void cancelScheduledTasks() {
+        assert inEventLoop();
+        PriorityQueue<ScheduledFutureTask<?>> scheduledTaskQueue = this.scheduledTaskQueue;
+        if (isNullOrEmpty(scheduledTaskQueue)) {
+            return;
+        }
+
+        final ScheduledFutureTask<?>[] scheduledTasks =
+                scheduledTaskQueue.toArray(new ScheduledFutureTask<?>[0]);
+
+        for (ScheduledFutureTask<?> task: scheduledTasks) {
+            task.cancelWithoutRemove(false);
+        }
+
+        scheduledTaskQueue.clearIgnoringIndexes();
+    }
+
+    protected final Runnable pollScheduledTask() {
+        return pollScheduledTask(nanoTime());
+    }
+
+    protected final Runnable pollScheduledTask(long nanoTime) {
+        assert inEventLoop();
+
+        Queue<ScheduledFutureTask<?>> scheduledTaskQueue = this.scheduledTaskQueue;
+        ScheduledFutureTask<?> scheduledTask = scheduledTaskQueue == null ? null : scheduledTaskQueue.peek();
+        if (scheduledTask == null || scheduledTask.deadlineNanos() - nanoTime > 0) {
+            return null;
+        }
+        scheduledTaskQueue.remove();
+        return scheduledTask;
+    }
+
+    protected final long nextScheduledTaskNano() {
+        ScheduledFutureTask<?> scheduledTask = peekScheduledTask();
+        return scheduledTask != null ? Math.max(0, scheduledTask.deadlineNanos() - nanoTime()) : -1;
+    }
+
+    protected final long nextScheduledTaskDeadlineNanos() {
+        ScheduledFutureTask<?> scheduledTask = peekScheduledTask();
+        return scheduledTask != null ? scheduledTask.deadlineNanos() : -1;
+    }
+
+    final ScheduledFutureTask<?> peekScheduledTask() {
+        Queue<ScheduledFutureTask<?>> scheduledTaskQueue = this.scheduledTaskQueue;
+        return scheduledTaskQueue != null ? scheduledTaskQueue.peek() : null;
+    }
+
+    protected final boolean hasScheduledTasks() {
+        ScheduledFutureTask<?> scheduledTask = peekScheduledTask();
+        return scheduledTask != null && scheduledTask.deadlineNanos() <= nanoTime();
+    }
+
+    @Override
+    public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {
+        ObjectUtil.checkNotNull(command, "command");
+        ObjectUtil.checkNotNull(unit, "unit");
+        if (delay < 0) {
+            delay = 0;
+        }
+        validateScheduled0(delay, unit);
+
+        return schedule(new ScheduledFutureTask<Void>(
+                this, command, null, ScheduledFutureTask.deadlineNanos(unit.toNanos(delay)), nextTaskId++));
+    }
+
+    @Override
+    public <V> ScheduledFuture<V> schedule(Callable<V> callable, long delay, TimeUnit unit) {
+        ObjectUtil.checkNotNull(callable, "callable");
+        ObjectUtil.checkNotNull(unit, "unit");
+        if (delay < 0) {
+            delay = 0;
+        }
+        validateScheduled0(delay, unit);
+
+        return schedule(new ScheduledFutureTask<V>(
+                this, callable, ScheduledFutureTask.deadlineNanos(unit.toNanos(delay)), nextTaskId++));
+    }
+
+    @Override
+    public ScheduledFuture<?> scheduleAtFixedRate(Runnable command, long initialDelay, long period, TimeUnit unit) {
+        ObjectUtil.checkNotNull(command, "command");
+        ObjectUtil.checkNotNull(unit, "unit");
+        if (initialDelay < 0) {
+            throw new IllegalArgumentException(
+                    String.format("initialDelay: %d (expected: >= 0)", initialDelay));
+        }
+        if (period <= 0) {
+            throw new IllegalArgumentException(
+                    String.format("period: %d (expected: > 0)", period));
+        }
+        validateScheduled0(initialDelay, unit);
+        validateScheduled0(period, unit);
+
+        return schedule(new ScheduledFutureTask<Void>(
+                this, Executors.<Void>callable(command, null),
+                ScheduledFutureTask.deadlineNanos(unit.toNanos(initialDelay)), unit.toNanos(period), nextTaskId++));
+    }
+
+    @Override
+    public ScheduledFuture<?> scheduleWithFixedDelay(Runnable command, long initialDelay, long delay, TimeUnit unit) {
+        ObjectUtil.checkNotNull(command, "command");
+        ObjectUtil.checkNotNull(unit, "unit");
+        if (initialDelay < 0) {
+            throw new IllegalArgumentException(
+                    String.format("initialDelay: %d (expected: >= 0)", initialDelay));
+        }
+        if (delay <= 0) {
+            throw new IllegalArgumentException(
+                    String.format("delay: %d (expected: > 0)", delay));
+        }
+
+        validateScheduled0(initialDelay, unit);
+        validateScheduled0(delay, unit);
+
+        return schedule(new ScheduledFutureTask<Void>(
+                this, Executors.<Void>callable(command, null),
+                ScheduledFutureTask.deadlineNanos(unit.toNanos(initialDelay)), -unit.toNanos(delay), nextTaskId++));
+    }
+
+    @SuppressWarnings("deprecation")
+    private void validateScheduled0(long amount, TimeUnit unit) {
+        validateScheduled(amount, unit);
+    }
+
+    @Deprecated
+    protected void validateScheduled(long amount, TimeUnit unit) {
+        // NOOP
+    }
+
+    private <V> ScheduledFuture<V> schedule(final ScheduledFutureTask<V> task) {
+        if (inEventLoop()) {
+            scheduledTaskQueue().add(task);
+        } else {
+            executeScheduledRunnable(new Runnable() {
+                @Override
+                public void run() {
+                    scheduledTaskQueue().add(task);
+                }
+            }, true, task.deadlineNanos());
+        }
+
+        return task;
+    }
+
+    final void removeScheduled(final ScheduledFutureTask<?> task) {
+        if (inEventLoop()) {
+            scheduledTaskQueue().removeTyped(task);
+        } else {
+            executeScheduledRunnable(new Runnable() {
+                @Override
+                public void run() {
+                    scheduledTaskQueue().removeTyped(task);
+                }
+            }, false, task.deadlineNanos());
+        }
+    }
+
+    void executeScheduledRunnable(Runnable runnable,
+                                            @SuppressWarnings("unused") boolean isAddition,
+                                            @SuppressWarnings("unused") long deadlineNanos) {
+        execute(runnable);
+    }
+}
+```
+
+### Optimized `ScheduledFutureTask.java`
+
+```java
+/*
+ * Copyright 2013 The Netty Project
+ *
+ * The Netty Project licenses this file to you under the Apache License,
+ * version 2.0 (the "License"); you may not use this file except in compliance
+ * with the License; you may obtain a copy of the License at:
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations
+ * under the License.
+ */
+
+package io.netty.util.concurrent;
+
+import io.netty.util.internal.DefaultPriorityQueue;
+import io.netty.util.internal.PriorityQueueNode;
+
+import java.util.Queue;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Delayed;
+import java.util.concurrent.TimeUnit;
+
+@SuppressWarnings("ComparableImplementedButEqualsNotOverridden")
+final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFuture<V>, PriorityQueueNode {
+    private static final long START_TIME = System.nanoTime();
+
+    static long nanoTime() {
+        return System.nanoTime() - START_TIME;
+    }
+
+    static long deadlineNanos(long delay) {
+        long deadlineNanos = nanoTime() + delay;
+        return deadlineNanos < 0 ? Long.MAX_VALUE : deadlineNanos;
+    }
+
+    static long initialNanoTime() {
+        return START_TIME;
+    }
+
+    private final long id;
+    private long deadlineNanos;
+    private final long periodNanos;
+
+    private int queueIndex = INDEX_NOT_IN_QUEUE;
+
+    ScheduledFutureTask(
+            AbstractScheduledEventExecutor executor,
+            Runnable runnable, V result, long nanoTime, long id) {
+
+        this(executor, toCallable(runnable, result), nanoTime, id);
+    }
+
+    ScheduledFutureTask(
+            AbstractScheduledEventExecutor executor,
+            Callable<V> callable, long nanoTime, long period, long id) {
+
+        super(executor, callable);
+        if (period == 0) {
+            throw new IllegalArgumentException("period: 0 (expected: != 0)");
+        }
+        this.id = id;
+        deadlineNanos = nanoTime;
+        periodNanos = period;
+    }
+
+    ScheduledFutureTask(
+            AbstractScheduledEventExecutor executor,
+            Callable<V> callable, long nanoTime, long id) {
+
+        super(executor, callable);
+        this.id = id;
+        deadlineNanos = nanoTime;
+        periodNanos = 0;
+    }
+
+    @Override
+    protected EventExecutor executor() {
+        return super.executor();
+    }
+
+    public long deadlineNanos() {
+        return deadlineNanos;
+    }
+
+    public long delayNanos() {
+        return deadlineToDelayNanos(deadlineNanos());
+    }
+
+    static long deadlineToDelayNanos(long deadlineNanos) {
+        return Math.max(0, deadlineNanos - nanoTime());
+    }
+
+    public long delayNanos(long currentTimeNanos) {
+        return Math.max(0, deadlineNanos() - (currentTimeNanos - START_TIME));
+    }
+
+    @Override
+    public long getDelay(TimeUnit unit) {
+        return unit.convert(delayNanos(), TimeUnit.NANOSECONDS);
+    }
+
+    @Override
+    public int compareTo(Delayed o) {
+        if (this == o) {
+            return 0;
+        }
+
+        ScheduledFutureTask<?> that = (ScheduledFutureTask<?>) o;
+        long d = deadlineNanos() - that.deadlineNanos();
+        if (d < 0) {
+            return -1;
+        } else if (d > 0) {
+            return 1;
+        } else if (id < that.id) {
+            return -1;
+        } else {
+            assert id != that.id;
+            return 1;
+        }
+    }
+
+    @Override
+    public void run() {
+        assert executor().inEventLoop();
+        try {
+            if (periodNanos == 0) {
+                if (setUncancellableInternal()) {
+                    V result = task.call();
+                    setSuccessInternal(result);
+                }
+            } else {
+                if (!isCancelled()) {
+                    task.call();
+                    if (!executor().isShutdown()) {
+                        if (periodNanos > 0) {
+                            deadlineNanos += periodNanos;
+                        } else {
+                            deadlineNanos = nanoTime() - periodNanos;
+                        }
+                        if (!isCancelled()) {
+                            Queue<ScheduledFutureTask<?>> scheduledTaskQueue =
+                                    ((AbstractScheduledEventExecutor) executor()).scheduledTaskQueue;
+                            assert scheduledTaskQueue != null;
+                            scheduledTaskQueue.add(this);
+                        }
+                    }
+                }
+            }
+        } catch (Throwable cause) {
+            setFailureInternal(cause);
+        }
+    }
+
+    @Override
+    public boolean cancel(boolean mayInterruptIfRunning) {
+        boolean canceled = super.cancel(mayInterruptIfRunning);
+        if (canceled) {
+            ((AbstractScheduledEventExecutor) executor()).removeScheduled(this);
+        }
+        return canceled;
+    }
+
+    boolean cancelWithoutRemove(boolean mayInterruptIfRunning) {
+        return super.cancel(mayInterruptIfRunning);
+    }
+
+    @Override
+    protected StringBuilder toStringBuilder() {
+        StringBuilder buf = super.toStringBuilder();
+        buf.setCharAt(buf.length() - 1, ',');
+
+        return buf.append(" id: ")
+                  .append(id)
+                  .append(", deadline: ")
+                  .append(deadlineNanos)
+                  .append(", period: ")
+                  .append(periodNanos)
+                  .append(')');
+    }
+
+    @Override
+    public int priorityQueueIndex(DefaultPriorityQueue<?> queue) {
+        return queueIndex;
+    }
+
+    @Override
+    public void priorityQueueIndex(DefaultPriorityQueue<?> queue, int i) {
+        queueIndex = i;
+    }
+}
+```
+
+### Summary of Changes
+1. Removed the static `AtomicLong nextTaskId` from `ScheduledFutureTask` and replaced it with a non-volatile `long nextTaskId` in `AbstractScheduledEventExecutor`.
+2. Updated the constructors of `ScheduledFutureTask` to accept the `id` as a parameter.
+3. Incremented `nextTaskId` in the `schedule` methods of `AbstractScheduledEventExecutor`.
+
+These changes should help reduce contention when scheduling tasks, especially under high load, while maintaining the original functionality and ensuring that the unit tests remain valid.
