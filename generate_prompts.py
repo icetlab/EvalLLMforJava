@@ -5,7 +5,7 @@ persona = """You are a Java software performance assistant.
 You will receive source code files and unit tests, along with optional benchmark functions, or a description of known performance issues.
 Your task is to return an optimized version of the code.
 Ensure that your changes preserve the original functionality and that the unit tests remain valid.
-Please return the full modified source file as your response."""
+Please return only the diff (unified .diff format) between the original and optimized source file as your response."""
 
 def read_file(file_path):
     with open(file_path, 'r') as file:
