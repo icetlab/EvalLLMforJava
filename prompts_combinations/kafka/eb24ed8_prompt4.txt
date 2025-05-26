@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 Zstd-jni 1.4.5-6 allocates large internal buffers inside of ZstdInputStream and ZstdOutputStream. This caused a lot of allocation and GC activity when creating and closing the streams. It also does not buffer the reads or writes. This causes inefficiency when DefaultRecord.writeTo() does a series of small single bytes reads using various ByteUtils methods. The JNI is more efficient if the writes of uncompressed data were flushed in large pieces rather than for each byte. This is due to the the expense of context switching between the Java code and the native code. This is also the case when reading as well
 ---------
-The source files are:
-../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java
+>> The source files are:
+>>> file_path: ../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
@@ -237,8 +237,8 @@ public enum CompressionType {
 }
 
 ---------
-The unit test is:
-../kafka/clients/src/test/java/org/apache/kafka/common/record/CompressionTypeTest.java
+>> The unit tests are:
+>>> file_path: ../kafka/clients/src/test/java/org/apache/kafka/common/record/CompressionTypeTest.java
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
@@ -296,6 +296,8 @@ public class CompressionTypeTest {
     }
 }
 
+
+
 ---------
-The target benchmark functions are:
+>> The target benchmark functions are:
 m

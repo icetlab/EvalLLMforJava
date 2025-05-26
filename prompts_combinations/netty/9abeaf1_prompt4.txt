@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 The wakeup logic in EpollEventLoop is overly complex and can be simplified for better performance.
 ---------
-The source files are:
-../netty/transport-native-epoll/src/main/java/io/netty/channel/epoll/EpollEventLoop.java
+>> The source files are:
+>>> file_path: ../netty/transport-native-epoll/src/main/java/io/netty/channel/epoll/EpollEventLoop.java
 /*
  * Copyright 2014 The Netty Project
  *
@@ -504,8 +504,8 @@ class EpollEventLoop extends SingleThreadEventLoop {
 }
 
 ---------
-The unit test is:
-../netty/transport-native-epoll/src/test/java/io/netty/channel/epoll/EpollEventLoopTest.java
+>> The unit tests are:
+>>> file_path: ../netty/transport-native-epoll/src/test/java/io/netty/channel/epoll/EpollEventLoopTest.java
 /*
  * Copyright 2017 The Netty Project
  *
@@ -585,8 +585,10 @@ public class EpollEventLoopTest extends AbstractSingleThreadEventLoopTest {
     }
 }
 
+
+
 ---------
-The target benchmark functions are:
+>> The target benchmark functions are:
 /*
  * Copyright 2018 The Netty Project
  *
@@ -742,3 +744,4 @@ public class EpollSocketChannelBenchmark extends AbstractMicrobenchmark {
         return chan.eventLoop().submit(runnable).get();
     }
 }
+

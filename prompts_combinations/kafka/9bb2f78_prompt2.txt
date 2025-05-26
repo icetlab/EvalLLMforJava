@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 The ReplaceField SMT can be configured with a list of fields that are to be included or excluded during every record transformation. Currently, it uses an ArrayList for these fields which causes the filter operations to be of O(N) complexity resulting in poor performance when configured with a large number of include/exclude fields.
 ---------
-The source files are:
-../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java
+>> The source files are:
+>>> file_path: ../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
@@ -254,8 +254,8 @@ public abstract class ReplaceField<R extends ConnectRecord<R>> implements Transf
 }
 
 ---------
-The unit test is:
-../kafka/connect/transforms/src/test/java/org/apache/kafka/connect/transforms/ReplaceFieldTest.java
+>> The unit tests are:
+>>> file_path: ../kafka/connect/transforms/src/test/java/org/apache/kafka/connect/transforms/ReplaceFieldTest.java
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
@@ -428,3 +428,5 @@ public class ReplaceFieldTest {
         assertEquals("etc", updatedValue.get("etc"));
     }
 }
+
+

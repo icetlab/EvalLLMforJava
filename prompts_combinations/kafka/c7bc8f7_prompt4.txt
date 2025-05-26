@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 redundant volatile write in RecordHeaders constructor is inefficient.
 ---------
-The source files are:
-../kafka/clients/src/main/java/org/apache/kafka/common/header/internals/RecordHeaders.java
+>> The source files are:
+>>> file_path: ../kafka/clients/src/main/java/org/apache/kafka/common/header/internals/RecordHeaders.java
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
@@ -210,8 +210,8 @@ public class RecordHeaders implements Headers {
 }
 
 ---------
-The unit test is:
-../kafka/clients/src/test/java/org/apache/kafka/common/header/internals/RecordHeadersTest.java
+>> The unit tests are:
+>>> file_path: ../kafka/clients/src/test/java/org/apache/kafka/common/header/internals/RecordHeadersTest.java
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
@@ -437,6 +437,8 @@ public class RecordHeadersTest {
 
 }
 
+
+
 ---------
-The target benchmark functions are:
+>> The target benchmark functions are:
 c

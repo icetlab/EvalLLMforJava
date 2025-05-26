@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 At the moment whenever ensureAccessible() is called in our ByteBuf implementations (which is basically on each operation) we will do a volatile read. That per-se is not such a bad thing but the problem here is that it will also reduce the the optimizations that the compiler / jit can do. For example as these are volatile it can not eliminate multiple loads of it when inline the methods of ByteBuf which happens quite frequently because most of them a quite small and very hot. That is especially true for all the methods that act on primitives. It gets even worse as people often call a lot of these after each other in the same method or even use method chaining here. The idea of the change is basically just ue a non-volatile read for the ensureAccessible() check as its a best-effort implementation to detect acting on already released buffers anyway as even with a volatile read it could happen that the user will release it in another thread before we actual access the buffer after the reference check.
 ---------
-The source files are:
-../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java
+>> The source files are:
+>>> file_path: ../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java
 /*
  * Copyright 2012 The Netty Project
  *
@@ -1462,7 +1462,7 @@ public abstract class AbstractByteBuf extends ByteBuf {
     }
 }
 
-../netty/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
+>>> file_path: ../netty/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
 /*
  * Copyright 2013 The Netty Project
  *
@@ -1573,8 +1573,8 @@ public abstract class AbstractReferenceCountedByteBuf extends AbstractByteBuf {
 }
 
 ---------
-The unit test is:
-../netty/buffer/src/test/java/io/netty/buffer/AbstractByteBufTest.java
+>> The unit tests are:
+>>> file_path: ../netty/buffer/src/test/java/io/netty/buffer/AbstractByteBufTest.java
 /*
  * Copyright 2012 The Netty Project
  *
@@ -6443,7 +6443,7 @@ public abstract class AbstractByteBufTest {
     }
 }
 
-../netty/buffer/src/test/java/io/netty/buffer/AbstractReferenceCountedByteBufTest.java
+>>> file_path: ../netty/buffer/src/test/java/io/netty/buffer/AbstractReferenceCountedByteBufTest.java
 /*
  * Copyright 2016 The Netty Project
  *
@@ -6776,8 +6776,10 @@ public class AbstractReferenceCountedByteBufTest {
     }
 }
 
+
+
 ---------
-The target benchmark functions are:
+>> The target benchmark functions are:
 /*
 * Copyright 2018 The Netty Project
 *
@@ -6842,3 +6844,4 @@ public class UnsafeByteBufBenchmark extends AbstractMicrobenchmark {
         return byteBuffer.putLong(0, 1);
     }
 }
+

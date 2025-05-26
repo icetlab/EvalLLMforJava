@@ -26,7 +26,7 @@ def extract_function(file_path, function_name):
         source_code = source_code[start_index:end_index].strip()
     else:
         raise ValueError(f"Function {function_name} not found in {file_path}")
-    
+
     return source_code
 
 def extract_benchmark_function(benchmark_path):
@@ -60,7 +60,7 @@ def generate_prompts(json_data, repo_name):
     # Read the unit test
     unittest_paths = [os.path.join(repo_dir, path.strip()) for path in json_data["unittest"].split()]
     unittest_code = "\n".join(
-        [f"file_path: {path}\n{read_file(path)}" for path in unittest_paths]
+        [f">>> file_path: {path}\n{read_file(path)}" for path in unittest_paths]
     )
 
     # Read the benchmark function
@@ -71,15 +71,15 @@ def generate_prompts(json_data, repo_name):
     os.system(f"cd {repo_dir} && git reset --hard HEAD~1")
     source_code_paths = [os.path.join(repo_dir, path.strip()) for path in json_data["source_code"].split()]
     source_code = "\n".join(
-        [f"file_path: {path}\n{extract_source_code_funtion(path)}" for path in source_code_paths]
+        [f">>> file_path: {path}\n{extract_source_code_funtion(path)}" for path in source_code_paths]
     )
 
     description = json_data["description"]
 
-    prompt1 = f"**The source files are:**\n{source_code}\n---------\n**The unit tests are:**\n{unittest_code}\n"
-    prompt2 = f"**The performance issue is:**\n{description}\n---------\n{prompt1}\n"
-    prompt3 = f"{prompt1}\n---------\n**The target benchmark functions are:**\n{benchmark_code}\n"
-    prompt4 = f"{prompt2}\n---------\n**The target benchmark functions are:**\n{benchmark_code}\n"
+    prompt1 = f">> The source files are:\n{source_code}\n---------\n>> The unit tests are:\n{unittest_code}\n"
+    prompt2 = f">> The performance issue is:\n{description}\n---------\n{prompt1}\n"
+    prompt3 = f"{prompt1}\n---------\n>> The target benchmark functions are:\n{benchmark_code}\n"
+    prompt4 = f"{prompt2}\n---------\n>> The target benchmark functions are:\n{benchmark_code}\n"
 
     return [prompt1, prompt2, prompt3, prompt4]
 

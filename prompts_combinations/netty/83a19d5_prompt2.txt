@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 Highly retained and released objects have contention on their ref count.  Currently, the ref count is updated using compareAndSet with care to make sure the count doesn't overflow, double free, or revive the object. Profiling has shown that a non trivial (~1%) of CPU time on gRPC latency benchmarks is from the ref count updating.
 ---------
-The source files are:
-../netty/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
+>> The source files are:
+>>> file_path: ../netty/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
 /*
  * Copyright 2013 The Netty Project
  *
@@ -122,7 +122,7 @@ public abstract class AbstractReferenceCountedByteBuf extends AbstractByteBuf {
     protected abstract void deallocate();
 }
 
-../netty/common/src/main/java/io/netty/util/AbstractReferenceCounted.java
+>>> file_path: ../netty/common/src/main/java/io/netty/util/AbstractReferenceCounted.java
 /*
  * Copyright 2013 The Netty Project
  *
@@ -231,8 +231,8 @@ public abstract class AbstractReferenceCounted implements ReferenceCounted {
 }
 
 ---------
-The unit test is:
-../netty/buffer/src/test/java/io/netty/buffer/AbstractReferenceCountedByteBufTest.java
+>> The unit tests are:
+>>> file_path: ../netty/buffer/src/test/java/io/netty/buffer/AbstractReferenceCountedByteBufTest.java
 /*
  * Copyright 2016 The Netty Project
  *
@@ -551,3 +551,5 @@ public class AbstractReferenceCountedByteBufTest {
         };
     }
 }
+
+

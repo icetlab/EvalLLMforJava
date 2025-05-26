@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 Reuse compressionBuffer when serializing pages
 ---------
-The source files are:
-../presto/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java
+>> The source files are:
+>>> file_path: ../presto/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java
 /*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -121,7 +121,7 @@ public class PagesSerde
     }
 }
 
-../presto/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java
+>>> file_path: ../presto/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java
 /*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -632,8 +632,8 @@ public class PartitionedOutputOperator
 }
 
 ---------
-The unit test is:
-../presto/presto-main/src/test/java/com/facebook/presto/operator/TestPartitionedOutputOperator.java
+>> The unit tests are:
+>>> file_path: ../presto/presto-main/src/test/java/com/facebook/presto/operator/TestPartitionedOutputOperator.java
 /*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -852,6 +852,8 @@ public class TestPartitionedOutputOperator
     }
 }
 
+
+
 ---------
-The target benchmark functions are:
+>> The target benchmark functions are:
 a

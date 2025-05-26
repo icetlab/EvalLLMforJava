@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 Avoid computing cardinality for run containers when not needed.
 ---------
-The source files are:
-../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java
+>> The source files are:
+>>> file_path: ../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java
 /*
  * (c) the authors Licensed under the Apache License, Version 2.0.
  */
@@ -3243,7 +3243,7 @@ public class RoaringBitmap implements Cloneable, Serializable, Iterable<Integer>
 
 }
 
-../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MutableRoaringBitmap.java
+>>> file_path: ../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MutableRoaringBitmap.java
 /*
  * (c) the authors Licensed under the Apache License, Version 2.0.
  */
@@ -4951,8 +4951,8 @@ public class MutableRoaringBitmap extends ImmutableRoaringBitmap
 }
 
 ---------
-The unit test is:
-../RoaringBitmap/RoaringBitmap/src/test/java/org/roaringbitmap/buffer/MutableRoaringBitmapSubsetTest.java
+>> The unit tests are:
+>>> file_path: ../RoaringBitmap/RoaringBitmap/src/test/java/org/roaringbitmap/buffer/MutableRoaringBitmapSubsetTest.java
 package org.roaringbitmap.buffer;
 
 import com.google.common.collect.*;
@@ -5115,8 +5115,10 @@ public class MutableRoaringBitmapSubsetTest {
 
 }
 
+
+
 ---------
-The target benchmark functions are:
+>> The target benchmark functions are:
 package org.roaringbitmap;
 
 import org.openjdk.jmh.annotations.*;

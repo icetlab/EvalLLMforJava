@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 In OptimizedPartitionedOutputOperator, the PagePartioner has partitionCount number of PartitionBuffer, and each PartitionBuffer has a positions array to record the positions to be appended to this buffer. Previously this positions array was initialized to be the incoming page's positionCount size. This could waste lots of memory since each partition may only get a small portion of rows.
 ---------
-The source files are:
-../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
+>> The source files are:
+>>> file_path: ../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
 /*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -727,8 +727,8 @@ public class OptimizedPartitionedOutputOperator
 }
 
 ---------
-The unit test is:
-../presto/presto-main/src/test/java/com/facebook/presto/operator/repartition/TestOptimizedPartitionedOutputOperator.java
+>> The unit tests are:
+>>> file_path: ../presto/presto-main/src/test/java/com/facebook/presto/operator/repartition/TestOptimizedPartitionedOutputOperator.java
 /*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1593,8 +1593,10 @@ public class TestOptimizedPartitionedOutputOperator
     }
 }
 
+
+
 ---------
-The target benchmark functions are:
+>> The target benchmark functions are:
 /*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1990,3 +1992,4 @@ public class BenchmarkPartitionedOutputOperator
         new Runner(options).run();
     }
 }
+

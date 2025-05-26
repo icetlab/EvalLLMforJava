@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 Java 9 has added a new Checksum method that can makes uses of ByteBuffer(s) (see Java 9's Checksum::update): Kafka already provides specific support for Java 9's Cr32C, hence it makes sense it's going to use the most optimized version of it for direct ByteBuffers as well (read-only or not), instead of performing a byte-per-byte computation. I'm aware that currently the client's Buffer pools aren't using direct ByteBuffer, but having full support for it can open the door to future interesting optimizations on it.
 ---------
-The source files are:
-../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+>> The source files are:
+>>> file_path: ../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
@@ -72,8 +72,8 @@ public final class Checksums {
 }
 
 ---------
-The unit test is:
-../kafka/clients/src/test/java/org/apache/kafka/common/utils/ChecksumsTest.java
+>> The unit tests are:
+>>> file_path: ../kafka/clients/src/test/java/org/apache/kafka/common/utils/ChecksumsTest.java
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
@@ -168,8 +168,10 @@ public class ChecksumsTest {
 
 }
 
+
+
 ---------
-The target benchmark functions are:
+>> The target benchmark functions are:
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
@@ -243,3 +245,4 @@ public class Crc32CBenchmark {
     }
 
 }
+

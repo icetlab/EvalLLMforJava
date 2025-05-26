@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 Optimize T-Digest structure for small distributions
 ---------
-The source files are:
-../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
+>> The source files are:
+>>> file_path: ../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
 /*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -658,8 +658,8 @@ public class TDigest
 }
 
 ---------
-The unit test is:
-../presto/presto-main/src/test/java/com/facebook/presto/tdigest/TestTDigest.java
+>> The unit tests are:
+>>> file_path: ../presto/presto-main/src/test/java/com/facebook/presto/tdigest/TestTDigest.java
 /*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1030,8 +1030,10 @@ public class TestTDigest
     }
 }
 
+
+
 ---------
-The target benchmark functions are:
+>> The target benchmark functions are:
 /*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1235,3 +1237,4 @@ public class BenchmarkTDigest
         new Runner(options).run();
     }
 }
+

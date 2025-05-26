@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 using stream when expiring the producer IDs is inefficient. This can be improved by using a more efficient algorithm.
 ---------
-The source files are:
-../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java
+>> The source files are:
+>>> file_path: ../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
@@ -756,8 +756,8 @@ public class ProducerStateManager {
 }
 
 ---------
-The unit test is:
-../kafka/core/src/test/scala/unit/kafka/log/ProducerStateManagerTest.scala
+>> The unit tests are:
+>>> file_path: ../kafka/core/src/test/scala/unit/kafka/log/ProducerStateManagerTest.scala
 /**
   * Licensed to the Apache Software Foundation (ASF) under one or more
   * contributor license agreements.  See the NOTICE file distributed with
@@ -2013,3 +2013,5 @@ class ProducerStateManagerTest {
     logDir.listFiles.map(UnifiedLog.offsetFromFile).toSet
 
 }
+
+

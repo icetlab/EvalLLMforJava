@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 Currently, Partition.makerFollower() holds a write lock on leaderIsrUpdateLock. Partition.doAppendRecordsToFollowerOrFutureReplica() holds a read lock on leaderIsrUpdateLock. So, if there is an ongoing log append on the follower, the makeFollower() call will be delayed. This path is a bit different when serving the Partition.makeLeader() call. Before we make a call on Partition.makerLeader(), we first remove the follower from the replicaFetcherThread. So, the makerLeader() call won't be delayed because of log append. This means that when we change one follower to become leader and another follower to follow the new leader during a controlled shutdown, the makerLeader() call typically completes faster than the makeFollower() call, which can delay the follower fetching from the new leader and cause ISR to shrink. This only reason that Partition.doAppendRecordsToFollowerOrFutureReplica() needs to hold a read lock on leaderIsrUpdateLock is for Partiiton.maybeReplaceCurrentWithFutureReplica() to pause the log append while checking if the log dir could be replaced. We could potentially add a separate lock (sth like futureLogLock) that's synced between maybeReplaceCurrentWithFutureReplica() and doAppendRecordsToFollowerOrFutureReplica(). Then, doAppendRecordsToFollowerOrFutureReplica() doesn't need to hold the lock on leaderIsrUpdateLock. Add new lock is used to prevent the follower replica from being updated while ReplicaAlterDirThread is executing maybeReplaceCurrentWithFutureReplica() to replace follower replica with the future replica. Now doAppendRecordsToFollowerOrFutureReplica() doesn't need to hold the lock on leaderIsrUpdateLock for local replica updation and ongoing log appends on the follower will not delay the makeFollower() call.
 ---------
-The source files are:
-../kafka/core/src/main/scala/kafka/cluster/Partition.scala
+>> The source files are:
+>>> file_path: ../kafka/core/src/main/scala/kafka/cluster/Partition.scala
 /**
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -1232,8 +1232,8 @@ class Partition(val topicPartition: TopicPartition,
 }
 
 ---------
-The unit test is:
-../kafka/core/src/test/scala/unit/kafka/cluster/PartitionTest.scala
+>> The unit tests are:
+>>> file_path: ../kafka/core/src/test/scala/unit/kafka/cluster/PartitionTest.scala
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -2973,3 +2973,5 @@ class PartitionTest extends AbstractPartitionTest {
     }
   }
 }
+
+

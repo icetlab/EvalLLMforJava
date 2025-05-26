@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 PlatformDependent0.equals has a bytecode size of 476. This is above the default inlining threshold of OpenJDK. Reduce bytecode size and make sure no performance regressions are introduced.
 ---------
-The source files are:
-../netty/common/src/main/java/io/netty/util/internal/PlatformDependent0.java
+>> The source files are:
+>>> file_path: ../netty/common/src/main/java/io/netty/util/internal/PlatformDependent0.java
 /*
  * Copyright 2013 The Netty Project
  *
@@ -641,8 +641,8 @@ final class PlatformDependent0 {
 }
 
 ---------
-The unit test is:
-../netty/common/src/test/java/io/netty/util/internal/PlatformDependentTest.java
+>> The unit tests are:
+>>> file_path: ../netty/common/src/test/java/io/netty/util/internal/PlatformDependentTest.java
 /*
  * Copyright 2015 The Netty Project
  *
@@ -812,3 +812,5 @@ public class PlatformDependentTest {
         assertEquals(9, PlatformDependent.majorVersion("9"));
     }
 }
+
+

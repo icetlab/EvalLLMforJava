@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 In Java, it is almost always at least slower to use `ByteBuffer` than `byte[]` without pooling or I/O. `QueryStringDecoder` can use `byte[]` with arguably simpler code.
 ---------
-The source files are:
-../netty/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java
+>> The source files are:
+>>> file_path: ../netty/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java
 /*
  * Copyright 2012 The Netty Project
  *
@@ -415,8 +415,8 @@ public class QueryStringDecoder {
 }
 
 ---------
-The unit test is:
-../netty/codec-http/src/test/java/io/netty/handler/codec/http/QueryStringDecoderTest.java
+>> The unit tests are:
+>>> file_path: ../netty/codec-http/src/test/java/io/netty/handler/codec/http/QueryStringDecoderTest.java
 /*
  * Copyright 2012 The Netty Project
  *
@@ -794,3 +794,5 @@ public class QueryStringDecoderTest {
         Assert.assertEquals("", empty.rawQuery());
     }
 }
+
+

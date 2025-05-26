@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 For brokers with replica counts > 4000, allocations from logsByDir become substantial. logsByDir is called often by LogManager.checkpointLogRecoveryOffsets and LogManager.checkpointLogStartOffsets. allocations in log start and recovery checkpoints are high. This can be reduced.
 ---------
-The source files are:
-../kafka/core/src/main/scala/kafka/log/LogManager.scala
+>> The source files are:
+>>> file_path: ../kafka/core/src/main/scala/kafka/log/LogManager.scala
 /**
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -1090,7 +1090,7 @@ object LogManager {
   }
 }
 
-../kafka/core/src/main/scala/kafka/utils/Pool.scala
+>>> file_path: ../kafka/core/src/main/scala/kafka/utils/Pool.scala
 /**
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -1186,8 +1186,8 @@ class Pool[K,V](valueFactory: Option[K => V] = None) extends Iterable[(K, V)] {
 }
 
 ---------
-The unit test is:
-../kafka/core/src/test/scala/unit/kafka/log/LogManagerTest.scala
+>> The unit tests are:
+>>> file_path: ../kafka/core/src/test/scala/unit/kafka/log/LogManagerTest.scala
 /**
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -1753,3 +1753,5 @@ class LogManagerTest {
     assertTrue(logManager.partitionsInitializing.isEmpty)
   }
 }
+
+

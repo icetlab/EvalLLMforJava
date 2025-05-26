@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 the ST_Envelope function is ineffective to deserialize the full geometry.
 ---------
-The source files are:
-../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+>> The source files are:
+>>> file_path: ../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
 /*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -723,8 +723,8 @@ public final class GeoFunctions
 }
 
 ---------
-The unit test is:
-../presto/presto-geospatial/src/test/java/com/facebook/presto/plugin/geospatial/TestGeoQueries.java
+>> The unit tests are:
+>>> file_path: ../presto/presto-geospatial/src/test/java/com/facebook/presto/plugin/geospatial/TestGeoQueries.java
 /*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1198,3 +1198,5 @@ public class TestGeoQueries
         assertInvalidFunction("ST_Polygon('POLYGON(-1 1, 1 -1)')", INVALID_FUNCTION_ARGUMENT, "Invalid WKT: POLYGON(-1 1, 1 -1)");
     }
 }
+
+

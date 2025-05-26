@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 The Recycler implementation was changed to rely on an MPSC queue implementation for delivering released objects back to their originating thread local pool. Typically, the release will often happen from the same thread that claimed the object, so the overhead of having a thread-safe release goes to waste.
 ---------
-The source files are:
-../netty/common/src/main/java/io/netty/util/Recycler.java
+>> The source files are:
+>>> file_path: ../netty/common/src/main/java/io/netty/util/Recycler.java
 /*
  * Copyright 2013 The Netty Project
  *
@@ -415,8 +415,8 @@ public abstract class Recycler<T> {
 }
 
 ---------
-The unit test is:
-../netty/common/src/test/java/io/netty/util/RecyclerTest.java
+>> The unit tests are:
+>>> file_path: ../netty/common/src/test/java/io/netty/util/RecyclerTest.java
 /*
 * Copyright 2014 The Netty Project
 *
@@ -895,3 +895,5 @@ public class RecyclerTest {
         }
     }
 }
+
+

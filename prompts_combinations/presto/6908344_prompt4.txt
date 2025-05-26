@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 Avoid serializing ESRI Point type that is needed to figure out the type of a point (2D, 3D, with ID, etc.) during deserialization.
 ---------
-The source files are:
-../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+>> The source files are:
+>>> file_path: ../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
 /*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -290,7 +290,7 @@ public class GeometrySerde
     }
 }
 
-../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java
+>>> file_path: ../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java
 /*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -799,8 +799,8 @@ public class JtsGeometrySerde
 }
 
 ---------
-The unit test is:
-../presto/presto-geospatial-toolkit/src/test/java/com/facebook/presto/geospatial/TestGeometrySerialization.java
+>> The unit tests are:
+>>> file_path: ../presto/presto-geospatial-toolkit/src/test/java/com/facebook/presto/geospatial/TestGeometrySerialization.java
 /*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1011,8 +1011,10 @@ public class TestGeometrySerialization
     }
 }
 
+
+
 ---------
-The target benchmark functions are:
+>> The target benchmark functions are:
 /*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1406,3 +1408,4 @@ public class BenchmarkGeometrySerde
         new Runner(options).run();
     }
 }
+

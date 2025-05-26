@@ -1,8 +1,8 @@
-The performance issue is:
+>> The performance issue is:
 Currently, characters are appended to the encoded string char-by-char even when no encoding is needed. We can instead separate out codepath that appends the entire string in one go for better `StringBuilder` allocation performance.
 ---------
-The source files are:
-../netty/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
+>> The source files are:
+>>> file_path: ../netty/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
 /*
  * Copyright 2012 The Netty Project
  *
@@ -236,8 +236,8 @@ public class QueryStringEncoder {
 }
 
 ---------
-The unit test is:
-../netty/codec-http/src/test/java/io/netty/handler/codec/http/QueryStringEncoderTest.java
+>> The unit tests are:
+>>> file_path: ../netty/codec-http/src/test/java/io/netty/handler/codec/http/QueryStringEncoderTest.java
 /*
  * Copyright 2014 The Netty Project
  *
@@ -314,8 +314,10 @@ public class QueryStringEncoderTest {
     }
 }
 
+
+
 ---------
-The target benchmark functions are:
+>> The target benchmark functions are:
 /*
  * Copyright 2019 The Netty Project
  *
@@ -411,3 +413,4 @@ public class QueryStringEncoderBenchmark extends AbstractMicrobenchmark {
         return sb.toString();
     }
 }
+
