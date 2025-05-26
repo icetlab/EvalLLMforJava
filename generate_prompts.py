@@ -1,12 +1,6 @@
 import os
 import json
 
-persona = """You are a Java software performance assistant.
-You will receive source code files and unit tests, along with optional benchmark functions, or a description of known performance issues.
-Your task is to return an optimized version of the code.
-Ensure that your changes preserve the original functionality and that the unit tests remain valid.
-Please return only the diff (unified .diff format) between the original and optimized source file as your response."""
-
 def read_file(file_path):
     with open(file_path, 'r') as file:
         return file.read()
@@ -66,7 +60,7 @@ def generate_prompts(json_data, repo_name):
     # Read the unit test
     unittest_paths = [os.path.join(repo_dir, path.strip()) for path in json_data["unittest"].split()]
     unittest_code = "\n".join(
-        [f"{path}\n{read_file(path)}" for path in unittest_paths]
+        [f"file_path: {path}\n{read_file(path)}" for path in unittest_paths]
     )
 
     # Read the benchmark function
@@ -77,15 +71,15 @@ def generate_prompts(json_data, repo_name):
     os.system(f"cd {repo_dir} && git reset --hard HEAD~1")
     source_code_paths = [os.path.join(repo_dir, path.strip()) for path in json_data["source_code"].split()]
     source_code = "\n".join(
-        [f"{path}\n{extract_source_code_funtion(path)}" for path in source_code_paths]
+        [f"file_path: {path}\n{extract_source_code_funtion(path)}" for path in source_code_paths]
     )
 
     description = json_data["description"]
 
-    prompt1 = f"The source files are:\n{source_code}\n---------\nThe unit test is:\n{unittest_code}"
-    prompt2 = f"The performance issue is:\n{description}\n---------\n{prompt1}"
-    prompt3 = f"{prompt1}\n---------\nThe target benchmark functions are:\n{benchmark_code}"
-    prompt4 = f"{prompt2}\n---------\nThe target benchmark functions are:\n{benchmark_code}"
+    prompt1 = f"**The source files are:**\n{source_code}\n---------\n**The unit tests are:**\n{unittest_code}\n"
+    prompt2 = f"**The performance issue is:**\n{description}\n---------\n{prompt1}\n"
+    prompt3 = f"{prompt1}\n---------\n**The target benchmark functions are:**\n{benchmark_code}\n"
+    prompt4 = f"{prompt2}\n---------\n**The target benchmark functions are:**\n{benchmark_code}\n"
 
     return [prompt1, prompt2, prompt3, prompt4]
 

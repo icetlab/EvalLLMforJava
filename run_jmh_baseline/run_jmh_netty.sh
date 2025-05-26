@@ -23,9 +23,9 @@ if [ "$MODE" != "-org" ] && [ "$MODE" != "-dev" ]; then
 fi
 
 PERF_REPORT_DIR="target/reports/performance"
-RESULT_DIR="/home/ubuntu"
+RESULT_DIR="../jmh/netty"
 
-cd netty || { echo "Directory 'netty' not found"; exit 1; }
+cd ../netty || { echo "Directory 'netty' not found"; exit 1; }
 git clean -fd
 
 if [ ! -f ./mvnw ]; then

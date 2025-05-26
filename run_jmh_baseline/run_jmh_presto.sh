@@ -22,7 +22,7 @@ if [ "$MODE" != "-org" ] && [ "$MODE" != "-dev" ]; then
     usage
 fi
 
-cd presto || { echo "Directory 'presto' not found"; exit 1; }
+cd ../presto || { echo "Directory 'presto' not found"; exit 1; }
 git clean -fd
 
 if [ ! -f ./mvnw ]; then
@@ -49,9 +49,9 @@ tail -n +2 "$CSV_FILE" | while IFS=',' read -r repository id commit_hash source_
 
     # Define JSON output file
     if [ "$MODE" = "-dev" ]; then
-        JSON_FILE="${jmh_case}_${id}_dev.json"
+        JSON_FILE="../jmh/presto/dev/${jmh_case}_${id}_dev.json"
     else
-        JSON_FILE="${jmh_case}_${id}.json"
+        JSON_FILE="../jmh/presto/org/${jmh_case}_${id}.json"
     fi
 
     # Build benchmark target only

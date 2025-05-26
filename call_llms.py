@@ -1,5 +1,4 @@
 import os
-import json
 import transformers
 import torch
 from openai import OpenAI
@@ -7,15 +6,11 @@ from google import genai
 from google.genai import types
 import anthropic
 
-persona = """You are a Java software performance assistant.
-You will receive source code files and unit tests, along with optional benchmark functions, or a description of known performance issues.
-Your task is to return an optimized version of the code.
-Ensure that your changes preserve the original functionality and that the unit tests remain valid.
-Please return only the diff (unified .diff format) between the original and optimized source file as your response."""
-
 def read_file(file_path):
     with open(file_path, 'r') as file:
         return file.read()
+
+persona = read_file("persona.txt")
 
 def improve_code_with_gpt(prompt):
     # OpenAI-o4-mini
@@ -52,14 +47,10 @@ def improve_code_with_llama(prompt):
         temperature=0.3,
         top_p=0.95,
     )
-    # Assuming outputs[0]["generated_text"] contains the assistant's response string,
-    # as return_full_text=False is typically default for instruct models when generate_kwargs are used.
     assistant_response = outputs[0]["generated_text"]
     if isinstance(assistant_response, str):
         return assistant_response.strip()
     else:
-        # Fallback if the structure is different, though not expected for Llama with this pipeline setup.
-        # This will convert non-string responses (e.g., if it were a list/dict) to string.
         return str(assistant_response).strip()
 
 def improve_code_with_deepseek(prompt):
@@ -100,7 +91,7 @@ def improve_code_with_claude(prompt):
         messages=[
             {"role": "system", "content": persona},
             {"role": "user", "content": prompt},
-        ]
+        ],
         temperature=0.3,
         top_p=0.95,
     )
@@ -119,56 +110,3 @@ def call_llm(model_name, prompt):
         return improve_code_with_claude(prompt)
     else:
         raise ValueError("Unsupported model name. Choose from 'gpt', 'llama', 'deepseek', claude, or 'gemini'.")
-
-def apply_llm_opt_diff(diff_content):
-    pass
-
-def error_guided_opt(prompt):
-    pass
-
-def main():
-    repo_name = input("Enter the repository name (kafka, netty, presto, RoaringBitmap): ")
-    model_name = input("Enter the model name (gpt, deepseek, llama, gemini, claude): ")
-
-    prompts_input_dir = os.path.join("prompts_combinations", repo_name)
-    if not os.path.exists(prompts_input_dir):
-        print(f"Error: Directory {prompts_input_dir} does not exist.")
-        return
-
-    output_dir = os.path.join("LLMOpt", repo_name, model_name)
-    os.makedirs(output_dir, exist_ok=True)
-
-    for prompt_filename in os.listdir(prompts_input_dir):
-        if "_prompt" in prompt_filename and prompt_filename.endswith(".txt"):
-            base_name = prompt_filename[:-4]
-
-            try:
-                commit_id, prompt_num_str = base_name.rsplit('_prompt', 1)
-            except ValueError:
-                print(f"Warning: Skipping file with unexpected name format: {prompt_filename}")
-                continue
-
-            current_prompt_file_path = os.path.join(prompts_input_dir, prompt_filename)
-
-            # Define the output log file path, e.g., "LLMOpt/repo/model/commitid_prompt1.log"
-            output_log_filename = f"{commit_id}_prompt{prompt_num_str}.log"
-            output_log_path = os.path.join(output_dir, output_log_filename)
-
-            print(f"Processing prompt file: {prompt_filename}")
-            if os.path.exists(output_log_path):
-                print(f"Output file {output_log_path} already exists. Skipping LLM call.")
-                continue
-
-            with open(current_prompt_file_path, 'r') as f_prompt:
-                prompt_content = f_prompt.read()
-
-            print(f"Calling {model_name} with prompt from {prompt_filename}...")
-
-            # Call the LLM with the prompt
-            improved_code = call_llm(model_name, prompt_content)
-
-            with open(output_log_path, 'w') as out_file:
-                out_file.write(improved_code)
-
-if __name__ == "__main__":
-    main()

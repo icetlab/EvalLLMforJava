@@ -1,0 +1,116 @@
+Here is the optimized version of the `GeoFunctions.java` file, specifically focusing on the `ST_Intersects` function to enhance its performance:
+
+```java
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.facebook.presto.plugin.geospatial;
+
+import com.esri.core.geometry.Envelope;
+import com.esri.core.geometry.MultiPath;
+import com.esri.core.geometry.MultiVertexGeometry;
+import com.esri.core.geometry.Point;
+import com.esri.core.geometry.Polygon;
+import com.esri.core.geometry.Polyline;
+import com.esri.core.geometry.SpatialReference;
+import com.esri.core.geometry.ogc.OGCGeometry;
+import com.esri.core.geometry.ogc.OGCLineString;
+import com.esri.core.geometry.ogc.OGCMultiPolygon;
+import com.esri.core.geometry.ogc.OGCPoint;
+import com.esri.core.geometry.ogc.OGCPolygon;
+import com.facebook.presto.geospatial.GeometryUtils;
+import com.facebook.presto.geospatial.GeometryUtils.GeometryTypeName;
+import com.facebook.presto.geospatial.JtsGeometryUtils;
+import com.facebook.presto.spi.PrestoException;
+import com.facebook.presto.spi.function.Description;
+import com.facebook.presto.spi.function.ScalarFunction;
+import com.facebook.presto.spi.function.SqlNullable;
+import com.facebook.presto.spi.function.SqlType;
+import com.facebook.presto.spi.type.StandardTypes;
+import com.google.common.base.Joiner;
+import io.airlift.slice.Slice;
+import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.operation.valid.IsValidOp;
+import org.locationtech.jts.operation.valid.TopologyValidationError;
+
+import java.util.EnumSet;
+import java.util.Objects;
+import java.util.Set;
+
+import static com.esri.core.geometry.ogc.OGCGeometry.createFromEsriGeometry;
+import static com.facebook.presto.geospatial.GeometryUtils.GeometryTypeName.LINE_STRING;
+import static com.facebook.presto.geospatial.GeometryUtils.GeometryTypeName.MULTI_LINE_STRING;
+import static com.facebook.presto.geospatial.GeometryUtils.GeometryTypeName.MULTI_POINT;
+import static com.facebook.presto.geospatial.GeometryUtils.GeometryTypeName.MULTI_POLYGON;
+import static com.facebook.presto.geospatial.GeometryUtils.GeometryTypeName.POINT;
+import static com.facebook.presto.geospatial.GeometryUtils.GeometryTypeName.POLYGON;
+import static com.facebook.presto.geospatial.GeometryUtils.deserialize;
+import static com.facebook.presto.geospatial.GeometryUtils.deserializeEnvelope;
+import static com.facebook.presto.geospatial.GeometryUtils.serialize;
+import static com.facebook.presto.plugin.geospatial.GeometryType.GEOMETRY_TYPE_NAME;
+import static com.facebook.presto.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
+import static com.facebook.presto.spi.type.StandardTypes.DOUBLE;
+import static com.google.common.base.Preconditions.checkArgument;
+import static io.airlift.slice.Slices.utf8Slice;
+import static java.lang.String.format;
+
+public final class GeoFunctions
+{
+    private static final Joiner OR_JOINER = Joiner.on(" or ");
+    private static final Slice EMPTY_POLYGON = serialize(createFromEsriGeometry(new Polygon(), null));
+
+    private GeoFunctions() {}
+
+    // Other functions...
+
+    @SqlNullable
+    @Description("Returns TRUE if the Geometries spatially intersect in 2D - (share any portion of space) and FALSE if they don't (they are Disjoint)")
+    @ScalarFunction("ST_Intersects")
+    @SqlType(StandardTypes.BOOLEAN)
+    public static Boolean stIntersects(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+    {
+        OGCGeometry leftGeometry = deserialize(left);
+        OGCGeometry rightGeometry = deserialize(right);
+        verifySameSpatialReference(leftGeometry, rightGeometry);
+
+        // Early exit for empty geometries
+        if (leftGeometry.isEmpty() || rightGeometry.isEmpty()) {
+            return false;
+        }
+
+        // Use bounding box check before detailed intersection check
+        Envelope leftEnvelope = leftGeometry.getEsriGeometry().getEnvelope();
+        Envelope rightEnvelope = rightGeometry.getEsriGeometry().getEnvelope();
+        if (!leftEnvelope.intersects(rightEnvelope)) {
+            return false;
+        }
+
+        return leftGeometry.intersects(rightGeometry);
+    }
+
+    // Other functions...
+
+    private static void verifySameSpatialReference(OGCGeometry leftGeometry, OGCGeometry rightGeometry)
+    {
+        checkArgument(Objects.equals(leftGeometry.getEsriSpatialReference(), rightGeometry.getEsriSpatialReference()), "Input geometries must have the same spatial reference");
+    }
+
+    // Other helper methods...
+}
+```
+
+### Changes Made:
+1. **Early Exit for Empty Geometries**: Added a check at the beginning of the `stIntersects` function to return `false` immediately if either geometry is empty. This avoids unnecessary computation.
+2. **Bounding Box Check**: Before performing the detailed intersection check, the bounding boxes of the two geometries are checked for intersection. If the bounding boxes do not intersect, the function can return `false` immediately, which can significantly reduce the number of complex intersection calculations needed.
+
+These optimizations should improve the performance of the `ST_Intersects` function while preserving its original functionality. The unit tests provided should still pass without any modifications.
