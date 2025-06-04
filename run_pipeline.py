@@ -64,8 +64,10 @@ def main():
                 unit_test_log = run_unit_test(repo_name, commit_id)
 
                 if "[TEST PASSED]" in unit_test_log:
+                    print(f"Unit test passed after {iteration} iterations.")
                     break
 
+                print(f"Unit test failed after {iteration} iterations. Self-repairing...")
                 # Self-repair if the unit test fails
                 feedback_prompt = f"""
                 >>>> The unit test failed. Please fix the code.
@@ -79,6 +81,10 @@ def main():
                 """
                 prompt_content = feedback_prompt  # Use feedback as new prompt for next iteration
                 iteration += 1
+
+            if iteration == max_iterations and "[TEST PASSED]" not in unit_test_log:
+                print(f"Unit test failed after {iteration} iterations. Skipping...")
+                continue
 
             # Write changes to the output_path
             with open(output_path, 'w') as f_out:

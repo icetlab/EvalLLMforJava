@@ -4,6 +4,7 @@ import json
 
 def run_unit_test(repo_name, commit_id):
     # Read unit test info
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
     prompts_file = f"prompts_source/{repo_name}/{commit_id}.json"
     with open(prompts_file, "r") as f:
         data = json.load(f)
