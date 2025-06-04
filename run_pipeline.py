@@ -1,6 +1,17 @@
 import os
 from call_llms import call_llm
 from apply_llm_changes import apply_changes_to_file, extract_changes_to_json
+from run_unit_test import run_unit_test
+
+def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name):
+    # Call the LLM with the prompt
+    llm_log = call_llm(model_name, prompt_content)
+    changes = extract_changes_to_json(llm_log)
+
+    # Apply the changes to the source code
+    diff_patch = apply_changes_to_file(repo_name, commit_id, changes)
+
+    return diff_patch
 
 def main():
     repo_name = input("Enter the repository name (kafka, netty, presto, RoaringBitmap): ")
@@ -36,19 +47,38 @@ def main():
                 continue
 
             with open(current_prompt_file_path, 'r') as f_prompt:
-                prompt_content = f_prompt.read()
+                prompt_content_org = f_prompt.read()
 
+            prompt_content = prompt_content_org
             print(f"Calling {model_name} with prompt from {prompt_filename}...")
 
-            # Call the LLM with the prompt
-            llm_log = call_llm(model_name, prompt_content)
-            changes = extract_changes_to_json(llm_log)
+            unit_test_log = ""
+            iteration = 0
+            max_iterations = 5
+            diff_patch = ""
+            while iteration < max_iterations:
+                # Improve the code with the LLM
+                diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_content, model_name)
 
-            # Apply the changes to the source code
-            diff_patch = apply_changes_to_file(repo_name, commit_id, changes)
+                # Build and run the unit tests
+                unit_test_log = run_unit_test(repo_name, commit_id)
 
-            # Run the unit tests
-            # Self-repair if unit test fails
+                if "[TEST PASSED]" in unit_test_log:
+                    break
+
+                # Self-repair if the unit test fails
+                feedback_prompt = f"""
+                >>>> The unit test failed. Please fix the code.
+                >>>> Unit test log:
+                {unit_test_log}
+                >>>> The prompt you used:
+                {prompt_content_org}
+                >>>> The changes you made:
+                {diff_patch}
+                >>>> Please fix the code.
+                """
+                prompt_content = feedback_prompt  # Use feedback as new prompt for next iteration
+                iteration += 1
 
             # Write changes to the output_path
             with open(output_path, 'w') as f_out:
