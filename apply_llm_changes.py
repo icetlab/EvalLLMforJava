@@ -1,8 +1,6 @@
 import os
-import json
 import re
 import subprocess
-from pathlib import Path
 
 # Counting is hard for LLMs. Instead of having it generate diffs directly, tell it to output the old code block before the edit, then write a program that converts that to a diff by finding the original block in the code file.
 # The trick is really to forget about the ai knowing why lines it’s adding and removing, and focus on the chunks of code it wants to change.
@@ -48,7 +46,7 @@ def apply_diff_blocks(repo_name, commit_id, llm_log):
     # Reset repo to the target commit and clean any changes
     subprocess.run(f"cd {repo_path} && git reset --hard {commit_id} && git clean -fd", shell=True, check=True)
 
-    blocks = extract_diff_blocks_from_llm_log(llm_log)
+    blocks = extract_diff_blocks(llm_log)
     file_to_blocks = {}
     for block in blocks:
         rel_path = block["filepath"]
@@ -87,6 +85,7 @@ def apply_diff_blocks(repo_name, commit_id, llm_log):
     # Get diff patch
     try:
         diff_patch = subprocess.check_output(
+            os.chdir(repo_path)
             ["git", "diff"],
             cwd=repo_path,
             encoding="utf-8",

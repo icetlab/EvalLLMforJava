@@ -8,8 +8,7 @@ def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name):
     llm_log = call_llm(model_name, prompt_content)
 
     # Apply the changes to the source code
-    changes = extract_diff_blocks(llm_log)
-    diff_patch = apply_diff_blocks(repo_name, commit_id, changes)
+    diff_patch = apply_diff_blocks(repo_name, commit_id, llm_log)
 
     return diff_patch
 
