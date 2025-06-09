@@ -1,15 +1,15 @@
 import os
 from call_llms import call_llm
-from apply_llm_changes import apply_changes_to_file, extract_changes_to_json
+from apply_llm_changes import extract_diff_blocks, apply_diff_blocks
 from run_unit_test import run_unit_test
 
 def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name):
     # Call the LLM with the prompt
     llm_log = call_llm(model_name, prompt_content)
-    changes = extract_changes_to_json(llm_log)
 
     # Apply the changes to the source code
-    diff_patch = apply_changes_to_file(repo_name, commit_id, changes)
+    changes = extract_diff_blocks(llm_log)
+    diff_patch = apply_diff_blocks(repo_name, commit_id, changes)
 
     return diff_patch
 
@@ -52,39 +52,42 @@ def main():
             prompt_content = prompt_content_org
             print(f"Calling {model_name} with prompt from {prompt_filename}...")
 
-            unit_test_log = ""
-            iteration = 0
-            max_iterations = 5
-            diff_patch = ""
-            while iteration < max_iterations:
-                # Improve the code with the LLM
-                diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_content, model_name)
+            diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_content, model_name)
 
-                # Build and run the unit tests
-                unit_test_log = run_unit_test(repo_name, commit_id)
+            # unit_test_log = ""
+            # iteration = 0
+            # max_iterations = 5
+            # diff_patch = ""
+            # while iteration < max_iterations:
+            #     # Improve the code with the LLM
+            #     diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_content, model_name)
 
-                if "[TEST PASSED]" in unit_test_log:
-                    print(f"Unit test passed after {iteration} iterations.")
-                    break
+            #     # Build and run the unit tests
+            #     unit_test_log = run_unit_test(repo_name, commit_id)
 
-                print(f"Unit test failed after {iteration} iterations. Self-repairing...")
-                # Self-repair if the unit test fails
-                feedback_prompt = f"""
-                >>>> The unit test failed. Please fix the code.
-                >>>> Unit test log:
-                {unit_test_log}
-                >>>> The prompt you used:
-                {prompt_content_org}
-                >>>> The changes you made:
-                {diff_patch}
-                >>>> Please fix the code.
-                """
-                prompt_content = feedback_prompt  # Use feedback as new prompt for next iteration
-                iteration += 1
+            #     if "[TEST PASSED]" in unit_test_log:
+            #         print(f"Unit test passed after {iteration} iterations.")
+            #         break
 
-            if iteration == max_iterations and "[TEST PASSED]" not in unit_test_log:
-                print(f"Unit test failed after {iteration} iterations. Skipping...")
-                continue
+            #     print(f"Unit test failed after {iteration} iterations. Self-repairing...")
+            #     # Self-repair if the unit test fails
+            #     # todo: compile/build error
+            #     feedback_prompt = f"""
+            #     >>>> The unit test failed. Please fix the code.
+            #     >>>> Unit test log:
+            #     {unit_test_log}
+            #     >>>> The prompt you used:
+            #     {prompt_content_org}
+            #     >>>> The changes you made:
+            #     {diff_patch}
+            #     >>>> Please fix the code.
+            #     """
+            #     prompt_content = feedback_prompt  # Use feedback as new prompt for next iteration
+            #     iteration += 1
+
+            # if iteration == max_iterations and "[TEST PASSED]" not in unit_test_log:
+            #     print(f"Unit test failed after {iteration} iterations. Skipping...")
+            #     continue
 
             # Write changes to the output_path
             with open(output_path, 'w') as f_out:
