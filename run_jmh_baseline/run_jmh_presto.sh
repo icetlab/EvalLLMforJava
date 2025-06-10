@@ -22,7 +22,7 @@ if [ "$MODE" != "-org" ] && [ "$MODE" != "-dev" ]; then
     usage
 fi
 
-cd ../presto || { echo "Directory 'presto' not found"; exit 1; }
+cd presto || { echo "Directory 'presto' not found"; exit 1; }
 git clean -fd
 
 if [ ! -f ./mvnw ]; then
@@ -33,7 +33,7 @@ else
 fi
 
 # Read CSV file line by line, skipping the header
-tail -n +2 "$CSV_FILE" | while IFS=',' read -r repository id commit_hash source_code jmh_case unittest commit_url; do
+tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash source_code jmh_case unittest commit_url; do
     echo -e "\n Processing commit: $commit_hash"
 
     submodule=$(echo "$source_code" | cut -d'/' -f1)
@@ -53,6 +53,9 @@ tail -n +2 "$CSV_FILE" | while IFS=',' read -r repository id commit_hash source_
     else
         JSON_FILE="../jmh/presto/org/${jmh_case}_${id}.json"
     fi
+
+    # Ensure output directory exists
+    mkdir -p "$(dirname "$JSON_FILE")"
 
     # Build benchmark target only
     cd "$submodule" || { echo "Directory '$submodule' not found"; exit 1; }

@@ -22,11 +22,11 @@ if [ "$MODE" != "-org" ] && [ "$MODE" != "-dev" ]; then
     usage
 fi
 
-cd ../RoaringBitmap || { echo "Directory 'RoaringBitmap' not found"; exit 1; }
+cd RoaringBitmap || { echo "Directory 'RoaringBitmap' not found"; exit 1; }
 git clean -fd
 
 # Read CSV file line by line, skipping the header
-tail -n +2 "$CSV_FILE" | while IFS=',' read -r repository id commit_hash source_code jmh_case unittest commit_url; do
+tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash source_code jmh_case unittest commit_url; do
     echo "Processing commit: $commit_hash"
 
     # Reset repository to specific commit
@@ -42,6 +42,9 @@ tail -n +2 "$CSV_FILE" | while IFS=',' read -r repository id commit_hash source_
     else
         JSON_FILE="../jmh/RoaringBitmap/org/${jmh_case}_${id}.json"
     fi
+
+    # Ensure output directory exists
+    mkdir -p "$(dirname "$JSON_FILE")"
 
     # Run JMH benchmark and save results
     echo "Running JMH benchmark: $jmh_case"

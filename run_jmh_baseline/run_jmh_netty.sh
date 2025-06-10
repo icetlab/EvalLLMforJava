@@ -25,7 +25,10 @@ fi
 PERF_REPORT_DIR="target/reports/performance"
 RESULT_DIR="../jmh/netty"
 
-cd ../netty || { echo "Directory 'netty' not found"; exit 1; }
+# Ensure output directory exists
+mkdir -p "$(dirname "$RESULT_DIR")"
+
+cd netty || { echo "Directory 'netty' not found"; exit 1; }
 git clean -fd
 
 if [ ! -f ./mvnw ]; then
