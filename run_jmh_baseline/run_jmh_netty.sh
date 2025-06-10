@@ -23,10 +23,6 @@ if [ "$MODE" != "-org" ] && [ "$MODE" != "-dev" ]; then
 fi
 
 PERF_REPORT_DIR="target/reports/performance"
-RESULT_DIR="../jmh/netty"
-
-# Ensure output directory exists
-mkdir -p "$(dirname "$RESULT_DIR")"
 
 cd netty || { echo "Directory 'netty' not found"; exit 1; }
 git clean -fd
@@ -58,15 +54,19 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
 
     wait
 
+    # Define JSON output file
+    if [ "$MODE" = "-dev" ]; then
+        JSON_FILE="../jmh/netty/dev/${jmh_case}_${id}_dev.json"
+    else
+        JSON_FILE="../jmh/netty/org/${jmh_case}_${id}.json"
+    fi
+
+    # Ensure output directory exists
+    mkdir -p "$(dirname "$JSON_FILE")"
+
     # Rename the JMH result file
     if [ -f "$PERF_REPORT_DIR/${jmh_case}.json" ]; then
-        if [ "$MODE" = "-dev" ]; then
-            mv "$PERF_REPORT_DIR/${jmh_case}.json" "$RESULT_DIR/${jmh_case}_${id}_dev.json"
-            echo "Renamed result file to: ${jmh_case}_${id}_dev.json"
-        else
-            mv "$PERF_REPORT_DIR/${jmh_case}.json" "$RESULT_DIR/${jmh_case}_${id}.json"
-            echo "Renamed result file to: ${jmh_case}_${id}.json"
-        fi
+        mv "$PERF_REPORT_DIR/${jmh_case}.json" "JSON_FILE"
     else
         echo "Warning: Expected result file not found: $PERF_REPORT_DIR/${jmh_case}.json"
     fi
