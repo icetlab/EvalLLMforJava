@@ -43,8 +43,7 @@ def apply_diff_blocks(repo_name, commit_id, llm_log):
     Returns the git diff patch as a string.
     """
     repo_path = os.path.join("../", repo_name)
-    # Reset repo to the target commit and clean any changes
-    subprocess.run(f"cd {repo_path} && git reset --hard {commit_id} && git clean -fd", shell=True, check=True)
+    os.system(f"cd {repo_path} && git reset --hard {commit_id} && git reset --hard HEAD~1")
 
     blocks = extract_diff_blocks(llm_log)
     file_to_blocks = {}

@@ -45,5 +45,5 @@ tail -n +2 "$CSV_FILE" | while IFS=',' read -r repository id commit_hash source_
 
     # Run JMH benchmark and save results
     echo "Running JMH benchmark: $jmh_case"
-    ./jmh/run.sh ".*${jmh_case}.*" -rf json -rff "$JSON_FILE"
+    ./jmh/run.sh ".*${jmh_case}.*" -rf json -rff "$JSON_FILE" < /dev/null
 done

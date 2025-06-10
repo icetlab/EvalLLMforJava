@@ -48,6 +48,6 @@ tail -n +2 "$CSV_FILE" | while IFS=',' read -r repository id commit_hash source_
     mkdir -p "$(dirname "$JSON_FILE")"
 
     echo "Running JMH benchmark: $jmh_case"
-    ./jmh-benchmarks/jmh.sh "$jmh_case" -rf json -rff "$JSON_FILE"
+    ./jmh-benchmarks/jmh.sh "$jmh_case" -rf json -rff "$JSON_FILE" < /dev/null
 
 done
