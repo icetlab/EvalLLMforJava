@@ -23,6 +23,7 @@ if [ "$MODE" != "-org" ] && [ "$MODE" != "-dev" ]; then
 fi
 
 PERF_REPORT_DIR="target/reports/performance"
+SCRIPT_DIR=$(pwd)
 
 cd netty || { echo "Directory 'netty' not found"; exit 1; }
 git clean -fd
@@ -56,13 +57,15 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
 
     # Define JSON output file
     if [ "$MODE" = "-dev" ]; then
-        JSON_FILE="../jmh/netty/dev/${jmh_case}_${id}_dev.json"
+        JSON_DIR="$SCRIPT_DIR/jmh/netty/dev"
+        JSON_FILE="$JSON_DIR/${jmh_case}_${id}_dev.json"
     else
-        JSON_FILE="../jmh/netty/org/${jmh_case}_${id}.json"
+        JSON_DIR="$SCRIPT_DIR/jmh/netty/org"
+        JSON_FILE="$JSON_DIR/${jmh_case}_${id}.json"
     fi
 
-    # Ensure output directory exists
-    mkdir -p "$(dirname "$JSON_FILE")"
+    # Ensure output directory exists using the absolute path
+    mkdir -p "$JSON_DIR"
 
     # Rename the JMH result file
     if [ -f "$PERF_REPORT_DIR/${jmh_case}.json" ]; then
