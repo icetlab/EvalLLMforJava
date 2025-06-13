@@ -9,38 +9,43 @@ import subprocess
 
 def extract_diff_blocks(llm_log):
     """
-    Extracts all SEARCH/REPLACE diff blocks from the LLM log according to the persona format in persona.txt.
-    Returns a list of dicts: [{'filepath': ..., 'search': ..., 'replace': ...}, ...]
+    Extracts diff blocks from LLM-generated logs.
+    Returns a list of dicts with keys: filepath, search, replace.
     """
-    # The persona format is:
-    # ```diff:[full_file_path]
-    # <<<<<<< SEARCH
-    # ...search...
-    # =======
-    # ...replace...
-    # >>>>>>> REPLACE
-    # ```
-    pattern = re.compile(
-        r"```diff:([^\n]+)\n"
-        r"<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE\n"
-        r"```",
-        re.DOTALL
-    )
-    matches = pattern.findall(llm_log)
     blocks = []
-    for filepath, search, replace in matches:
-        blocks.append({
-            "filepath": filepath.strip(),
-            "search": search.rstrip('\n'),
-            "replace": replace.rstrip('\n')
-        })
+    # Regex to find blocks starting with ```diff:filepath and ending with ```
+    # It captures the filepath, and the content between SEARCH, ===, and REPLACE.
+    # The [^`] part ensures it doesn't prematurely close the ```
+    pattern = re.compile(
+        r"```diff:([^\n]+?)\n"  # Start fence and capture filepath
+        r"<<<<<<< SEARCH\n"      # Start SEARCH marker
+        r"(.*?)\n"               # Capture search content (non-greedy)
+        r"=======\n"             # Separator
+        r"(.*?)\n"               # Capture replace content (non-greedy)
+        r">>>>>>> REPLACE\n"     # End REPLACE marker
+        r"```",                  # Closing fence
+        re.DOTALL                # Allow . to match newlines
+    )
+
+    for match in pattern.finditer(llm_log):
+        filepath = match.group(1).strip()
+        search_code = match.group(2).strip()
+        replace_code = match.group(3).strip()
+
+        if filepath and search_code is not None and replace_code is not None:
+            blocks.append({
+                "filepath": filepath,
+                "search": search_code,
+                "replace": replace_code
+            })
+        else:
+            print(f"Warning: Found malformed diff block. Skipping:\n{match.group(0)[:200]}...") # Print first 200 chars
     return blocks
 
 def apply_diff_blocks(repo_name, commit_id, llm_log):
     """
-    Applies SEARCH/REPLACE diff blocks extracted from the LLM log to the source files,
-    following the persona format in persona.txt.
-    Returns the git diff patch as a string.
+    Applies SEARCH/REPLACE diff blocks extracted from the LLM log to the source files.
+    Returns the diff patch as a string.
     """
     repo_path = os.path.join("../", repo_name)
     os.system(f"cd {repo_path} && git reset --hard {commit_id} && git reset --hard HEAD~1")
