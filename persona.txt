@@ -11,7 +11,7 @@
 3. Output Format:
     a. Start with a brief explanation of the overall improvement intent.
     b. Then output a single valid JSON array. Each element should represent one independent, atomic change and contain:
-        - "filepath": relative path to the file.
+        - "filepath": the same as the input.
         - "search": a concise but identifiable multi-line snippet from the original file.
         - "replace": the modified version of the same code block.
     c. Each JSON object must:
@@ -23,12 +23,12 @@
 ```json
 [
   {
-    "filepath": "src/com/example/AuthService.java",
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
     "search": "if (user != null) {\n    if (user.isActive()) {\n        return true;\n    }\n}",
     "replace": "if (user == null || !user.isActive()) return false;\nreturn true;"
   },
   {
-    "filepath": "src/com/example/AuthService.java",
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
     "search": "boolean isAdmin = role.equals(\"admin\") || role.equals(\"superuser\");",
     "replace": "boolean isAdmin = Set.of(\"admin\", \"superuser\").contains(role);"
   }

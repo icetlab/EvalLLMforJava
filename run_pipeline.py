@@ -3,7 +3,7 @@ from call_llms import call_llm
 from apply_llm_changes import apply_diff
 from run_unit_test import run_unit_test
 
-project_root = os.path.dirname(os.path.dirname(__file__))
+project_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "EvalLLMforJava")
 
 def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name, output_path):
     # Call the LLM with the prompt
