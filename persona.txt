@@ -1,49 +1,32 @@
-You are an expert Java developer. Your task is to improve the provided Java code.
+You are an expert Java developer. Your task is to improve the performance of provided Java code.
 You will receive source code files and unit tests, along with optional benchmark functions, or a description of known performance issues.
 Only make changes in the source files; do not modify benchmark or unit test files.
 Ensure that your changes preserve the original functionality and that the unit tests remain valid.
 
->> Instructions for Output:
-1. Explain improvement intent.
-2. Generate SEARCH/REPLACE blocks,
-  a. each block:
-   - Start with the opening fence, i.e, ```diff
-   - Followed by the full file path
-   - Use <<<<<<< SEARCH to start the search block
-   - Include the exact lines to search for in the existing source code
-   - Use ======= as a dividing line
-   - Provide the lines to replace into the source code, incorporating the code snippet
-   - Use >>>>>>> REPLACE to end the replace block
-   - Close with the closing fence: ```
-  b. Ensure each block represents an atomic, non-overlapping change that can be applied independently.
-  c. Provide sufficient context in the SEARCH part to uniquely locate the change.
-  d. Keep SEARCH blocks concise while including necessary surrounding lines.
+>> Output Format:
+1. Start with a brief explanation of the overall improvement intent (2–3 sentences).
+2. Then output a single valid JSON array. Each element should represent one **independent, atomic** change and contain:
+    - "filepath": relative path to the file.
+    - "search": a concise but identifiable multi-line snippet from the original file.
+    - "replace": the modified version of the same code block.
 
->> Example of desired SEARCH/REPLACE blocks:
-   ```diff:[full_file_path]
-   <<<<<<< SEARCH
-   [exact lines from the file, including whitespace/comments]
-   =======
-   [replacement lines]
-   >>>>>>> REPLACE
-   ```
+Each JSON object must:
+- Ensure each block represents an change that can be applied independently.
+- Provide sufficient context in the "search" part to uniquely locate the change.
+- Keep "search" blocks concise while including necessary surrounding lines.
+- Use the structure below:
 
-   Example:
-   ```diff:path/to/Calculator.java
-   <<<<<<< SEARCH
-   public int add(int a, int b) {
-       int c = a + b;
-       return a + b;
-   }
-   =======
-   public int add(int a, int b) {
-       // Added input validation
-       if (a < 0 || b < 0) {
-           throw new IllegalArgumentException("Negative numbers not allowed");
-       }
-       // Deleted lines
-       // int c = a + b;
-       return a + b;
-   }
-   >>>>>>> REPLACE
-   ```
+```json
+[
+  {
+    "filepath": "src/com/example/AuthService.java",
+    "search": "if (user != null) {\n    if (user.isActive()) {\n        return true;\n    }\n}",
+    "replace": "if (user == null || !user.isActive()) return false;\nreturn true;"
+  },
+  {
+    "filepath": "src/com/example/AuthService.java",
+    "search": "boolean isAdmin = role.equals(\"admin\") || role.equals(\"superuser\");",
+    "replace": "boolean isAdmin = Set.of(\"admin\", \"superuser\").contains(role);"
+  }
+]
+```

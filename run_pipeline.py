@@ -1,22 +1,14 @@
 import os
 from call_llms import call_llm
-from apply_llm_changes import apply_diff_blocks
+from apply_llm_changes import apply_diff
 from run_unit_test import run_unit_test
 
 def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name):
     # Call the LLM with the prompt
     llm_log = call_llm(model_name, prompt_content)
 
-    # INSERT_YOUR_CODE
-    # Save llm_log to a file for debugging or record-keeping
-    llm_log_dir = os.path.join("llm_output", repo_name, model_name, "llm_logs")
-    os.makedirs(llm_log_dir, exist_ok=True)
-    llm_log_filename = f"{commit_id}_llm_log.txt"
-    llm_log_path = os.path.join(llm_log_dir, llm_log_filename)
-    with open(llm_log_path, "w", encoding="utf-8") as f_llm_log:
-        f_llm_log.write(llm_log)
     # Apply the changes to the source code
-    diff_patch = apply_diff_blocks(repo_name, commit_id, llm_log)
+    diff_patch = apply_diff(repo_name, commit_id, llm_log)
 
     return diff_patch
 
