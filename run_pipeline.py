@@ -3,12 +3,25 @@ from call_llms import call_llm
 from apply_llm_changes import apply_diff
 from run_unit_test import run_unit_test
 
-def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name):
+project_root = os.path.dirname(os.path.dirname(__file__))
+
+def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name, output_path):
     # Call the LLM with the prompt
     llm_log = call_llm(model_name, prompt_content)
 
+    # Write LLM log to file
+    log_path = f"{output_path}.log"
+    with open(log_path, 'w') as f_log:
+        f_log.write(llm_log)
+
     # Apply the changes to the source code
     diff_patch = apply_diff(repo_name, commit_id, llm_log)
+
+    # todo: also do a Self-repair if diff patch generation error
+
+
+    with open(output_path, 'w') as f_out:
+        f_out.write(diff_patch)
 
     return diff_patch
 
@@ -16,12 +29,12 @@ def main():
     repo_name = input("Enter the repository name (kafka, netty, presto, RoaringBitmap): ")
     model_name = input("Enter the model name (gpt, deepseek, llama, gemini, claude): ")
 
-    prompts_input_dir = os.path.join("prompts_combinations", repo_name)
+    prompts_input_dir = os.path.join(project_root, "prompts_combinations", repo_name)
     if not os.path.exists(prompts_input_dir):
         print(f"Error: Directory {prompts_input_dir} does not exist.")
         return
 
-    output_dir = os.path.join("llm_output", repo_name, model_name)
+    output_dir = os.path.join(project_root, "llm_output", repo_name, model_name)
     os.makedirs(output_dir, exist_ok=True)
 
     for prompt_filename in os.listdir(prompts_input_dir):
@@ -51,45 +64,45 @@ def main():
             prompt_content = prompt_content_org
             print(f"Calling {model_name} with prompt from {prompt_filename}...")
 
-            unit_test_log = ""
+            build_test_log = ""
             failed_prompt = ""
             iteration = 0
             max_iterations = 5
             diff_patch = ""
             while iteration < max_iterations:
                 # Improve the code with the LLM
-                diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_content, model_name)
+                diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_content, model_name, output_path)
 
                 # Build and run the unit tests
-                unit_test_log = run_unit_test(repo_name, commit_id)
+                build_test_log = run_unit_test(repo_name, commit_id)
 
-                if "[TEST PASSED]" in unit_test_log:
+                if "[TEST PASSED]" in build_test_log:
                     print(f"Unit test passed after {iteration} iterations.")
                     break
 
                 # Self-repair if the unit test fails
-                if "[BUILD FAILED]" in unit_test_log:
+                if "[BUILD FAILED]" in build_test_log:
                     failed_prompt = "Build failed"
-                elif "[TEST PASSED]" in unit_test_log:
+                elif "[TEST PASSED]" in build_test_log:
                     failed_prompt = "The unit test failed"
 
                 print(f"{failed_prompt} after {iteration} iterations. Self-repairing...")
 
                 feedback_prompt = f"""
-                >>>> {failed_prompt} Please fix the code.
-                >>>> Error log:
-                {unit_test_log}
-                >>>> The prompt you used:
+                The previous code changes you generated did not pass. Please fix the code.
+                >>>> {failed_prompt}. Error log:
+                {build_test_log}
+                >>>> Original instruction prompt:
                 {prompt_content_org}
-                >>>> The changes you made:
+                >>>> Code changes applied (diff patch):
                 {diff_patch}
                 >>>> Please fix the code.
                 """
                 prompt_content = feedback_prompt  # Use feedback as new prompt for next iteration
                 iteration += 1
 
-            if iteration == max_iterations and "[TEST PASSED]" not in unit_test_log:
-                print(f"Unit test failed after {iteration} iterations. Skipping...")
+            if iteration == max_iterations and "[TEST PASSED]" not in build_test_log:
+                print(f"Build/test failed after {iteration} iterations. Skipping...")
                 continue
 
             # Write changes to the output_path

@@ -32,7 +32,7 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
     # Reset repository to specific commit
     git reset --hard "$commit_hash"
 
-    # workround for grgit issue
+    # workaround for grgit issue
     sed -i 's/\(grgit: "\)[0-9.]*"/\14.1.1"/' gradle/dependencies.gradle
 
     if [ "$MODE" = "-org" ]; then
