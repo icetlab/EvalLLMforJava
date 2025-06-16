@@ -51,42 +51,46 @@ def main():
             prompt_content = prompt_content_org
             print(f"Calling {model_name} with prompt from {prompt_filename}...")
 
-            diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_content, model_name)
+            unit_test_log = ""
+            failed_prompt = ""
+            iteration = 0
+            max_iterations = 5
+            diff_patch = ""
+            while iteration < max_iterations:
+                # Improve the code with the LLM
+                diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_content, model_name)
 
-            # unit_test_log = ""
-            # iteration = 0
-            # max_iterations = 5
-            # diff_patch = ""
-            # while iteration < max_iterations:
-            #     # Improve the code with the LLM
-            #     diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_content, model_name)
+                # Build and run the unit tests
+                unit_test_log = run_unit_test(repo_name, commit_id)
 
-            #     # Build and run the unit tests
-            #     unit_test_log = run_unit_test(repo_name, commit_id)
+                if "[TEST PASSED]" in unit_test_log:
+                    print(f"Unit test passed after {iteration} iterations.")
+                    break
 
-            #     if "[TEST PASSED]" in unit_test_log:
-            #         print(f"Unit test passed after {iteration} iterations.")
-            #         break
+                # Self-repair if the unit test fails
+                if "[BUILD FAILED]" in unit_test_log:
+                    failed_prompt = "Build failed"
+                elif "[TEST PASSED]" in unit_test_log:
+                    failed_prompt = "The unit test failed"
 
-            #     print(f"Unit test failed after {iteration} iterations. Self-repairing...")
-            #     # Self-repair if the unit test fails
-            #     # todo: compile/build error
-            #     feedback_prompt = f"""
-            #     >>>> The unit test failed. Please fix the code.
-            #     >>>> Unit test log:
-            #     {unit_test_log}
-            #     >>>> The prompt you used:
-            #     {prompt_content_org}
-            #     >>>> The changes you made:
-            #     {diff_patch}
-            #     >>>> Please fix the code.
-            #     """
-            #     prompt_content = feedback_prompt  # Use feedback as new prompt for next iteration
-            #     iteration += 1
+                print(f"{failed_prompt} after {iteration} iterations. Self-repairing...")
 
-            # if iteration == max_iterations and "[TEST PASSED]" not in unit_test_log:
-            #     print(f"Unit test failed after {iteration} iterations. Skipping...")
-            #     continue
+                feedback_prompt = f"""
+                >>>> {failed_prompt} Please fix the code.
+                >>>> Error log:
+                {unit_test_log}
+                >>>> The prompt you used:
+                {prompt_content_org}
+                >>>> The changes you made:
+                {diff_patch}
+                >>>> Please fix the code.
+                """
+                prompt_content = feedback_prompt  # Use feedback as new prompt for next iteration
+                iteration += 1
+
+            if iteration == max_iterations and "[TEST PASSED]" not in unit_test_log:
+                print(f"Unit test failed after {iteration} iterations. Skipping...")
+                continue
 
             # Write changes to the output_path
             with open(output_path, 'w') as f_out:
