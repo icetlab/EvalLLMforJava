@@ -5,12 +5,12 @@ from run_unit_test import run_unit_test
 
 project_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "EvalLLMforJava")
 
-def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name, output_path):
+def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name, output_path, iteration):
     # Call the LLM with the prompt
     llm_log = call_llm(model_name, prompt_content)
 
-    # Write LLM log to file
-    log_path = f"{output_path}.log"
+    # (debug) Write LLM log to file
+    log_path = f"{output_path}.log.it{iteration}"
     with open(log_path, 'w') as f_log:
         f_log.write(llm_log)
 
@@ -18,10 +18,13 @@ def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name, outp
     diff_patch = apply_diff(repo_name, commit_id, llm_log)
 
     # todo: also do a Self-repair if diff patch generation error
+    # like search block not found
 
-
-    with open(output_path, 'w') as f_out:
-        f_out.write(diff_patch)
+    # (debug)
+    if diff_patch is not None:
+        diff_path = f"{output_path}.it{iteration}"
+        with open(diff_path, 'w') as f_out:
+            f_out.write(diff_patch)
 
     return diff_patch
 
@@ -71,7 +74,7 @@ def main():
             diff_patch = ""
             while iteration < max_iterations:
                 # Improve the code with the LLM
-                diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_content, model_name, output_path)
+                diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_content, model_name, output_path, iteration)
 
                 # Build and run the unit tests
                 build_test_log = run_unit_test(repo_name, commit_id)
