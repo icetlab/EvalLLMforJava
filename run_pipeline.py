@@ -80,10 +80,10 @@ def main():
                     print(f"Unit test passed after {iteration} iterations.")
                     break
 
-                # Self-repair if the unit test fails
+                # Self-repair if build/test fails
                 if "[BUILD FAILED]" in build_test_log:
                     failed_prompt = "Build failed"
-                elif "[TEST PASSED]" in build_test_log:
+                elif "[TEST FAILED]" in build_test_log:
                     failed_prompt = "The unit test failed"
 
                 print(f"{failed_prompt} after {iteration} iterations. Self-repairing...")
