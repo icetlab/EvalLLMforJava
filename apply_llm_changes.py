@@ -23,7 +23,7 @@ def extract_diff_json(llm_log: str):
 
     if not match:
         print("No valid JSON array found in LLM log")
-        return []
+        return f"[Format Error] No valid JSON array found."
 
     try:
         import json
@@ -36,6 +36,7 @@ def extract_diff_json(llm_log: str):
                 valid_blocks.append(block)
             else:
                 print(f"Skipping invalid block: {block}")
+                return f"[Format Error] Following block is invalid: \n {block}"
 
         # print("Extracted blocks:")
         # for block in valid_blocks:
@@ -50,7 +51,7 @@ def extract_diff_json(llm_log: str):
 
     except json.JSONDecodeError as e:
         print(f"Error parsing JSON: {e}")
-        return []
+        return f"[Format Error] Invalid JSON format."
 
 def normalize_code(code: str) -> str:
     """
@@ -69,9 +70,9 @@ def apply_diff(repo_name, commit_id, llm_log):
     os.system(f"cd {repo_path} && git reset --hard {commit_id} && git reset --hard HEAD~1")
 
     blocks = extract_diff_json(llm_log)
-    if not blocks:
+    if "[Format Error]" in blocks:
         print("No valid diff blocks to apply")
-        return
+        return blocks
 
     for block in blocks:
         filepath = block['filepath']
@@ -93,6 +94,7 @@ def apply_diff(repo_name, commit_id, llm_log):
                 print(f"Applied changes to {filepath}")
             else:
                 print(f"Search block not found in {filepath}")
+                return f"[Format Error] Following search block not found in {filepath}\n : {search}"
 
         except Exception as e:
             print(f"Error applying changes to {filepath}: {e}")
@@ -111,39 +113,3 @@ def apply_diff(repo_name, commit_id, llm_log):
     except subprocess.CalledProcessError as e:
         print(f"Error getting diff patch: {e}")
         return None
-
-# def test():
-#     # Test case 1: Valid JSON with multiple blocks
-#     test_log_1 = r'''
-#     here is an improvement from LLMs.
-#     ```json
-#     [
-#     {
-#         "filepath": "src/com/example/AuthService.java",
-#         "search": "if (user != null) {\n    if (user.isActive()) {\n        return true;\n    }\n}",
-#         "replace": "if (user == null || !user.isActive()) return false;\nreturn true;"
-#     },
-#     {
-#         "filepath": "src/com/example/AuthService.java",
-#         "search": "boolean isAdmin = role.equals(\"admin\") || role.equals(\"superuser\");",
-#         "replace": "boolean isAdmin = Set.of(\"admin\", \"superuser\").contains(role);"
-#     }
-#     ]
-#     ```
-#     '''
-
-#     # Test case 2: Invalid JSON
-#     test_log_2 = "Invalid JSON content"
-
-#     # Test extract_diff_json
-#     print("Testing extract_diff_json:")
-#     print("\nTest case 1 - Valid JSON:")
-#     blocks = extract_diff_json(test_log_1)
-#     print(f"Extracted {len(blocks)} blocks")
-
-#     print("\nTest case 2 - Invalid JSON:")
-#     blocks = extract_diff_json(test_log_2)
-#     print(f"Extracted {len(blocks)} blocks")
-
-# if __name__ == "__main__":
-#     test()

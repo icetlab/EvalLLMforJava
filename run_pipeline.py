@@ -5,28 +5,45 @@ from run_unit_test import run_unit_test
 
 project_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "EvalLLMforJava")
 
-def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name, output_path, iteration):
-    # Call the LLM with the prompt
-    llm_log = call_llm(model_name, prompt_content)
+def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name):
+    iteration = 0
+    max_iterations = 8
+    llm_log = ""
+    diff_patch = ""
+    prompt_feedback = prompt_content
+    while iteration < max_iterations:
+        # Call the LLM with the prompt
+        llm_log = call_llm(model_name, prompt_feedback)
 
-    # (debug) Write LLM log to file
-    log_path = f"{output_path}.log.it{iteration}"
-    with open(log_path, 'w') as f_log:
-        f_log.write(llm_log)
+        # Apply the changes to the source code
+        diff_patch = apply_diff(repo_name, commit_id, llm_log)
 
-    # Apply the changes to the source code
-    diff_patch = apply_diff(repo_name, commit_id, llm_log)
+        if "[Format Error]" not in diff_patch:
+            print(f"All generated code changes successfully applied.")
+            return "good", llm_log, diff_patch
 
-    # todo: also do a Self-repair if diff patch generation error
-    # like search block not found
+        # Self-repair if the format of generated code changes is invalid
+        if "[Format Error]" in diff_patch:
+            print(f"Format of output is invalid. Self-repair...")
+            # Create a self-repair prompt
+            prompt_feedback = f"""
+            >>>> The format of your generated code changes does not meet my requirements, with the following error:
+            {diff_patch}
+            >>>> Your previous output is:
+            {llm_log}
+            >>>> Analyze the error and provide a corrected version. If the search block was not found,
+            try to provide a more flexible search pattern or break down the changes into smaller chunks.
+            Make sure to maintain the same JSON format with filepath, search, and replace fields.
+            >>>> Original prompt was:
+            {prompt_content}
+            """
+            iteration += 1
 
-    # (debug)
-    if diff_patch is not None:
-        diff_path = f"{output_path}.it{iteration}"
-        with open(diff_path, 'w') as f_out:
-            f_out.write(diff_patch)
-
-    return diff_patch
+    if iteration == max_iterations and "[Format Error]" in diff_patch:
+        print(f"Warning: not all generated code changes successfully applied!")
+        return "bad"
+    
+    return "good", llm_log, diff_patch
 
 def main():
     repo_name = input("Enter the repository name (kafka, netty, presto, RoaringBitmap): ")
@@ -40,10 +57,13 @@ def main():
     output_dir = os.path.join(project_root, "llm_output", repo_name, model_name)
     os.makedirs(output_dir, exist_ok=True)
 
+    total_try = 0
+    good_try = 0
     for prompt_filename in os.listdir(prompts_input_dir):
         if "_prompt" in prompt_filename and prompt_filename.endswith(".txt"):
             base_name = prompt_filename[:-4]
-            print(f">>>> Processing prompt file: {prompt_filename}")
+            total_try += 1
+            print(f">>>> {total_try}: Processing prompt file: {prompt_filename}")
 
             try:
                 commit_id, prompt_num_str = base_name.rsplit('_prompt', 1)
@@ -62,25 +82,24 @@ def main():
                 continue
 
             with open(current_prompt_file_path, 'r') as f_prompt:
-                prompt_content_org = f_prompt.read()
+                prompt_content = f_prompt.read()
 
-            prompt_content = prompt_content_org
+            prompt_feedback = prompt_content
             print(f"Calling {model_name} with prompt from {prompt_filename}...")
 
-            build_test_log = ""
-            failed_prompt = ""
             iteration = 0
             max_iterations = 5
             diff_patch = ""
+            llm_log = ""
             while iteration < max_iterations:
-                # Improve the code with the LLM
-                diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_content, model_name, output_path, iteration)
+                result, llm_log, diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_feedback, model_name)
+                if result == "bad":
+                    break
 
-                # Build and run the unit tests
                 build_test_log = run_unit_test(repo_name, commit_id)
 
                 if "[TEST PASSED]" in build_test_log:
-                    print(f"Unit test passed after {iteration} iterations.")
+                    print(f"Unit test passed after iteration-{iteration}.")
                     break
 
                 # Self-repair if build/test fails
@@ -89,28 +108,33 @@ def main():
                 elif "[TEST FAILED]" in build_test_log:
                     failed_prompt = "The unit test failed"
 
-                print(f"{failed_prompt} after {iteration} iterations. Self-repairing...")
+                print(f"{failed_prompt} after iteration-{iteration}. Self-repairing...")
 
-                feedback_prompt = f"""
+                prompt_feedback = f"""
                 The previous code changes you generated did not pass. Please fix the code.
                 >>>> {failed_prompt}. Error log:
                 {build_test_log}
-                >>>> Original instruction prompt:
-                {prompt_content_org}
-                >>>> Code changes applied (diff patch):
-                {diff_patch}
+                >>>> Original prompt was:
+                {prompt_content}
+                >>>> Your previous output is:
+                {llm_log}
                 >>>> Please fix the code.
                 """
-                prompt_content = feedback_prompt  # Use feedback as new prompt for next iteration
                 iteration += 1
 
-            if iteration == max_iterations and "[TEST PASSED]" not in build_test_log:
-                print(f"Build/test failed after {iteration} iterations. Skipping...")
+            if "[TEST PASSED]" not in build_test_log:
+                print(f"Build/test failed after {max_iterations} iterations. Skipping...")
                 continue
 
-            # Write changes to the output_path
+            good_try += 1
+            print(f"Build/test rate is {good_try}/{total_try}")
+            # Save good code changes
             with open(output_path, 'w') as f_out:
                 f_out.write(diff_patch)
+            # Also original log
+            log_path = output_path + ".log"
+            with open(log_path, 'w') as f_out:
+                f_out.write(llm_log)
 
 if __name__ == "__main__":
     main()
