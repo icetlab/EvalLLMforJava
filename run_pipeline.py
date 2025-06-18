@@ -20,7 +20,7 @@ def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name):
 
         if "[Format Error]" not in diff_patch:
             print(f"All generated code changes successfully applied.")
-            return "good", llm_log, diff_patch
+            return llm_log, diff_patch
 
         # Self-repair if the format of generated code changes is invalid
         if "[Format Error]" in diff_patch:
@@ -41,9 +41,8 @@ def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name):
 
     if iteration == max_iterations and "[Format Error]" in diff_patch:
         print(f"Warning: not all generated code changes successfully applied!")
-        return "bad"
     
-    return "good", llm_log, diff_patch
+    return llm_log, diff_patch
 
 def main():
     repo_name = input("Enter the repository name (kafka, netty, presto, RoaringBitmap): ")
@@ -92,10 +91,7 @@ def main():
             diff_patch = ""
             llm_log = ""
             while iteration < max_iterations:
-                result, llm_log, diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_feedback, model_name)
-                if result == "bad":
-                    break
-
+                llm_log, diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_feedback, model_name)
                 build_test_log = run_unit_test(repo_name, commit_id)
 
                 if "[TEST PASSED]" in build_test_log:
@@ -127,7 +123,7 @@ def main():
                 continue
 
             good_try += 1
-            print(f"Build/test rate is {good_try}/{total_try}")
+            print(f"Build/test pass rate is {good_try}/{total_try}")
             # Save good code changes
             with open(output_path, 'w') as f_out:
                 f_out.write(diff_patch)
