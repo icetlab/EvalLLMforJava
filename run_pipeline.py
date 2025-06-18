@@ -7,7 +7,7 @@ project_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "EvalLLM
 
 def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name):
     iteration = 0
-    max_iterations = 8
+    max_iterations = 3
     llm_log = ""
     diff_patch = ""
     prompt_feedback = prompt_content
@@ -31,8 +31,7 @@ def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name):
             {diff_patch}
             >>>> Your previous output is:
             {llm_log}
-            >>>> Analyze the error and provide a corrected version. If the search block was not found,
-            try to provide a more flexible search pattern or break down the changes into smaller chunks.
+            >>>> Analyze the error. If the search block was not found, try to provide a more flexible search pattern or break down the changes into smaller chunks.
             Make sure to maintain the same JSON format with filepath, search, and replace fields.
             >>>> Original prompt was:
             {prompt_content}
@@ -78,6 +77,7 @@ def main():
 
             if os.path.exists(output_path):
                 print(f"Output file {output_path} already exists. Skipping LLM call.")
+                good_try += 1
                 continue
 
             with open(current_prompt_file_path, 'r') as f_prompt:
