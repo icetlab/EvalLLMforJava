@@ -4,6 +4,7 @@ import torch
 from openai import OpenAI
 from google import genai
 import anthropic
+from google.genai import types
 
 def read_file(file_path):
     with open(file_path, 'r') as file:
@@ -73,14 +74,14 @@ def improve_code_with_gemini(prompt):
 
     response = client.models.generate_content(
         model="gemini-2.5-pro",
-        messages=[
-            {"role": "system", "content": persona},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.3,
-        top_p=0.95,
+        config=types.GenerateContentConfig(
+            system_instruction=persona,
+            temperature=0.3,
+            top_p=0.95,
+        ),
+        contents=prompt
     )
-    return response.choices[0].message.content
+    return response.text
 
 def improve_code_with_claude(prompt):
     # Anthropic-Claude-4-Sonnet
@@ -109,3 +110,26 @@ def call_llm(model_name, prompt):
         return improve_code_with_claude(prompt)
     else:
         raise ValueError("Unsupported model name. Choose from 'gpt', 'llama', 'deepseek', claude, or 'gemini'.")
+
+def main():
+    # Test calling Gemini
+    test_prompt = """
+    Please help me improve this Java code by adding proper error handling:
+    
+    public class Calculator {
+        public int divide(int a, int b) {
+            return a / b;
+        }
+    }
+    """
+    
+    try:
+        print("Testing Gemini model...")
+        response = call_llm("gemini", test_prompt)
+        print("Gemini Response:")
+        print(response)
+    except Exception as e:
+        print(f"Error calling Gemini: {e}")
+
+if __name__ == "__main__":
+    main()
