@@ -91,6 +91,7 @@ def main():
             diff_patch = ""
             llm_log = ""
             while iteration < max_iterations:
+                iteration += 1
                 status, llm_log, diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_feedback, model_name)
                 if status == "Failed":
                     print(f"Not all generated code changes successfully applied!")
@@ -120,7 +121,6 @@ def main():
                 {llm_log}
                 >>>> Please fix the code.
                 """
-                iteration += 1
 
             if "[TEST PASSED]" not in build_test_log:
                 print(f"Build/test failed after {max_iterations} iterations. Skipping...")
