@@ -24,7 +24,7 @@ def improve_code_with_gpt(prompt):
             {"role": "system", "content": persona},
             {"role": "user", "content": prompt},
         ],
-        temperature=0.3,
+        # temperature=0.3,
         # top_p=0.95,
     )
     return response.output_text
