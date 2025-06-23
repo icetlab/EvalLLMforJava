@@ -7,7 +7,7 @@ project_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "EvalLLM
 
 def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name):
     iteration = 0
-    max_iterations = 3
+    max_iterations = 2
     llm_log = ""
     diff_patch = ""
     prompt_feedback = prompt_content
@@ -20,7 +20,7 @@ def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name):
 
         if "[Format Error]" not in diff_patch:
             print(f"All generated code changes successfully applied.")
-            return llm_log, diff_patch
+            return "Success", llm_log, diff_patch
 
         # Self-repair if the format of generated code changes is invalid
         if "[Format Error]" in diff_patch:
@@ -39,9 +39,9 @@ def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name):
             iteration += 1
 
     if iteration == max_iterations and "[Format Error]" in diff_patch:
-        print(f"Warning: not all generated code changes successfully applied!")
+        return "Failed"
     
-    return llm_log, diff_patch
+    return "Success", llm_log, diff_patch
 
 def main():
     repo_name = input("Enter the repository name (kafka, netty, presto, RoaringBitmap): ")
@@ -87,11 +87,15 @@ def main():
             print(f"Calling {model_name} with prompt from {prompt_filename}...")
 
             iteration = 0
-            max_iterations = 5
+            max_iterations = 3
             diff_patch = ""
             llm_log = ""
             while iteration < max_iterations:
-                llm_log, diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_feedback, model_name)
+                status, llm_log, diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_feedback, model_name)
+                if status == "Failed":
+                    print(f"Not all generated code changes successfully applied!")
+                    continue
+
                 build_test_log = run_unit_test(repo_name, commit_id)
 
                 if "[TEST PASSED]" in build_test_log:
