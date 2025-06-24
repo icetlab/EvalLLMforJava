@@ -106,9 +106,13 @@ def main():
             commit_id = json_data['id'] 
             prompts = generate_prompts(json_data, repo_name)
 
+            # Create a subdirectory for this commit_id
+            commit_output_dir = os.path.join(output_repo_dir, commit_id)
+            os.makedirs(commit_output_dir, exist_ok=True)
+
             for i, prompt_content in enumerate(prompts, start=1):
-                output_prompt_filename = f"{commit_id}_prompt{i}.txt"
-                output_prompt_filepath = os.path.join(output_repo_dir, output_prompt_filename)
+                output_prompt_filename = f"prompt{i}.txt"
+                output_prompt_filepath = os.path.join(commit_output_dir, output_prompt_filename)
 
                 if os.path.exists(output_prompt_filepath):
                     print(f"Prompt file {output_prompt_filepath} already exists. Skipping...")

@@ -38,8 +38,6 @@ fi
 tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash source_code jmh_case unittest commit_url; do
     echo -e "\n Processing commit: $commit_hash"
 
-    submodule=$(echo "$source_code" | cut -d'/' -f1)
-
     # Reset repository to specific commit
     git reset --hard "$commit_hash"
 
@@ -47,7 +45,18 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
         git reset HEAD~1 && git restore --staged "$source_code" && git restore "$source_code"
     fi
 
-    ./mvnw -pl "$submodule" -am clean install -DskipTests
+    # Compile
+    submodule=$(echo "$source_code" | cut -d'/' -f1)
+    ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true
+
+    # Run unit test before benchmarking
+    # For each test file, extract the submodule and test class, and run them individually
+    for test_path in $unittest; do
+        test_submodule=$(echo "$test_path" | awk -F'/' '{print $1}')
+        test_file=$(basename "$test_path")
+        test_name="${test_file%.*}"  # Remove .java or .scala
+        ./mvnw -pl "$test_submodule" test -Dtest="$test_name"
+    done
 
     # Define JSON output file
     if [ "$MODE" = "-dev" ]; then

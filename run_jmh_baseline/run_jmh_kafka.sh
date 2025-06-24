@@ -32,12 +32,25 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
     # Reset repository to specific commit
     git reset --hard "$commit_hash"
 
-    # workaround for grgit issue
-    sed -i 's/\(grgit: "\)[0-9.]*"/\14.1.1"/' gradle/dependencies.gradle
-
     if [ "$MODE" = "-org" ]; then
         git reset HEAD~1 && git restore --staged "$source_code" && git restore "$source_code"
     fi
+
+    # workaround for grgit issue
+    sed -i 's/\(grgit: "\)[0-9.]*"/\14.1.1"/' gradle/dependencies.gradle
+
+    # Compile and run unit test before benchmarking
+    submodule=$(echo "$source_code" | cut -d'/' -f1)
+    ./gradlew ${submodule}:build -x test < /dev/null
+
+    # Run unit test(s) before benchmarking
+    # For each test file, extract the submodule and test class, and run them individually
+    for test_path in $unittest; do
+        test_submodule=$(echo "$test_path" | awk -F'/' '{print $1}')
+        test_file=$(basename "$test_path")
+        test_name="${test_file%.*}"  # Remove .java or .scala
+        ./gradlew ${test_submodule}:test --tests "$test_name" < /dev/null
+    done
 
     # Define JSON output file
     if [ "$MODE" = "-dev" ]; then

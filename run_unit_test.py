@@ -15,11 +15,11 @@ def run_unit_test(repo_name, commit_id):
     source_code_paths = source_code_paths.strip().split()
     build_submodule = source_code_paths[0].split('/')[0]
     test_submodule = unit_test_paths[0].split('/')[0]
-    unit_test_names = [os.path.splitext(os.path.basename(path))[0] for path in unit_test_paths]
-    unit_test_name = " ".join(unit_test_names)
+    unit_test_name = os.path.splitext(os.path.basename(unit_test_paths[0]))[0]
 
     repo_path = os.path.join("../", repo_name)
-    os.chdir(repo_path)
+    # os.chdir(repo_path)
+    os.system(f"cd {repo_path} && git reset --hard {commit_id} && git reset --hard HEAD~1")
 
     # Helper to run a shell command and capture output
     def run_cmd(cmd):
@@ -31,7 +31,7 @@ def run_unit_test(repo_name, commit_id):
         # Workaround for version issue
         run_cmd("find . -name \"*.xml\" -exec sed -i 's/Final-SNAPSHOT/Final/g' {} \\;")
         build_cmd = f"mvn -pl {build_submodule} -am clean install -DskipTests -Dcheckstyle.skip=true"
-        test_cmd = f"mvn test -Dtest={unit_test_name}"
+        test_cmd = f"mvn test -Dtest=\"{unit_test_name}\""
     if repo_name == "presto":
         build_cmd = f"./mvnw -pl {build_submodule} -am clean install -DskipTests"
         test_cmd = f"./mvnw test -Dtest={unit_test_name}"

@@ -22,7 +22,6 @@ def extract_diff_json(llm_log: str):
     if not isinstance(llm_log, (str, bytes)):
         print("LLM log is not a string or bytes-like object")
         return f"[Format Error] LLM log is not a string or bytes-like object."
-
     match = json_pattern.search(llm_log)
 
     if not match:

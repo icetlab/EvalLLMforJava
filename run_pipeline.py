@@ -52,89 +52,91 @@ def main():
         print(f"Error: Directory {prompts_input_dir} does not exist.")
         return
 
-    output_dir = os.path.join(project_root, "llm_output", repo_name, model_name)
-    os.makedirs(output_dir, exist_ok=True)
-
     total_try = 0
     good_try = 0
-    for prompt_filename in os.listdir(prompts_input_dir):
-        if "_prompt" in prompt_filename and prompt_filename.endswith(".txt"):
-            base_name = prompt_filename[:-4]
-            total_try += 1
-            print(f">>>> {total_try}: Processing prompt file: {prompt_filename}")
 
-            try:
-                commit_id, prompt_num_str = base_name.rsplit('_prompt', 1)
-            except ValueError:
-                print(f"Warning: Skipping file with unexpected name format: {prompt_filename}")
-                continue
+    # Traverse each commit_id subdirectory
+    for commit_id in os.listdir(prompts_input_dir):
+        commit_dir = os.path.join(prompts_input_dir, commit_id)
+        if not os.path.isdir(commit_dir):
+            continue
 
-            current_prompt_file_path = os.path.join(prompts_input_dir, prompt_filename)
+        # Output directory for this commit_id
+        output_commit_dir = os.path.join(project_root, "llm_output", repo_name, model_name, commit_id)
+        os.makedirs(output_commit_dir, exist_ok=True)
 
-            # Define the output diff file path, e.g., "llm_output/repo/model/commitid_prompt1.diff"
-            output_filename = f"{commit_id}_prompt{prompt_num_str}.diff"
-            output_path = os.path.join(output_dir, output_filename)
+        for prompt_filename in os.listdir(commit_dir):
+            if prompt_filename.startswith("prompt") and prompt_filename.endswith(".txt"):
+                # prompt_filename: prompt1.txt, prompt2.txt, etc.
+                prompt_num_str = prompt_filename[len("prompt"):-len(".txt")]
+                total_try += 1
+                print(f">>>> {total_try}: Processing prompt file: {commit_id}/{prompt_filename}")
 
-            if os.path.exists(output_path):
-                print(f"Output file {output_path} already exists. Skipping LLM call.")
-                good_try += 1
-                continue
+                current_prompt_file_path = os.path.join(commit_dir, prompt_filename)
 
-            with open(current_prompt_file_path, 'r') as f_prompt:
-                prompt_content = f_prompt.read()
+                # Output: llm_output/repo/model/commit_id/prompt1.diff
+                output_filename = f"prompt{prompt_num_str}.diff"
+                output_path = os.path.join(output_commit_dir, output_filename)
 
-            prompt_feedback = prompt_content
-            print(f"Calling {model_name} with prompt from {prompt_filename}...")
-
-            iteration = 0
-            max_iterations = 3
-            diff_patch = ""
-            llm_log = ""
-            while iteration < max_iterations:
-                iteration += 1
-                status, llm_log, diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_feedback, model_name)
-                if status == "Failed":
-                    print(f"Not all generated code changes successfully applied!")
+                if os.path.exists(output_path):
+                    print(f"Output file {output_path} already exists. Skipping LLM call.")
+                    good_try += 1
                     continue
 
-                build_test_log = run_unit_test(repo_name, commit_id)
+                with open(current_prompt_file_path, 'r') as f_prompt:
+                    prompt_content = f_prompt.read()
 
-                if "[TEST PASSED]" in build_test_log:
-                    print(f"Unit test passed after iteration-{iteration}.")
-                    break
+                prompt_feedback = prompt_content
+                print(f"Calling {model_name} with prompt from {commit_id}/{prompt_filename}...")
 
-                # Self-repair if build/test fails
-                if "[BUILD FAILED]" in build_test_log:
-                    failed_prompt = "Build failed"
-                elif "[TEST FAILED]" in build_test_log:
-                    failed_prompt = "The unit test failed"
+                iteration = 0
+                max_iterations = 3
+                diff_patch = ""
+                llm_log = ""
+                while iteration < max_iterations:
+                    iteration += 1
+                    status, llm_log, diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_feedback, model_name)
+                    if status == "Failed":
+                        print(f"Not all generated code changes successfully applied!")
+                        continue
 
-                print(f"{failed_prompt} after iteration-{iteration}. Self-repairing...")
+                    build_test_log = run_unit_test(repo_name, commit_id)
 
-                prompt_feedback = f"""
-                The previous code changes you generated did not pass. Please fix the code.
-                >>>> {failed_prompt}. Error log:
-                {build_test_log}
-                >>>> Original prompt was:
-                {prompt_content}
-                >>>> Your previous output is:
-                {llm_log}
-                >>>> Please fix the code.
-                """
+                    if "[TEST PASSED]" in build_test_log:
+                        print(f"Unit test passed after iteration-{iteration}.")
+                        break
 
-            if "[TEST PASSED]" not in build_test_log:
-                print(f"Build/test failed after {max_iterations} iterations. Skipping...")
-                continue
+                    # Self-repair if build/test fails
+                    if "[BUILD FAILED]" in build_test_log:
+                        failed_prompt = "Build failed"
+                    elif "[TEST FAILED]" in build_test_log:
+                        failed_prompt = "The unit test failed"
 
-            good_try += 1
-            print(f"Build/test pass rate is {good_try}/{total_try}")
-            # Save good code changes
-            with open(output_path, 'w') as f_out:
-                f_out.write(diff_patch)
-            # Also original log
-            log_path = output_path + ".log"
-            with open(log_path, 'w') as f_out:
-                f_out.write(llm_log)
+                    print(f"{failed_prompt} after iteration-{iteration}. Self-repairing...")
 
+                    prompt_feedback = f"""
+                    The previous code changes you generated did not pass. Please fix the code.
+                    >>>> {failed_prompt}. Error log:
+                    {build_test_log}
+                    >>>> Original prompt was:
+                    {prompt_content}
+                    >>>> Your previous output is:
+                    {llm_log}
+                    >>>> Please fix the code.
+                    """
+
+                if "[TEST PASSED]" not in build_test_log:
+                    print(f"Build/test failed after {max_iterations} iterations. Skipping...")
+                    continue
+
+                good_try += 1
+                print(f"Build/test pass rate is {good_try}/{total_try}")
+                # Save good code changes
+                with open(output_path, 'w') as f_out:
+                    f_out.write(diff_patch)
+                # Also original log
+                log_path = output_path + ".log"
+                with open(log_path, 'w') as f_out:
+                    f_out.write(llm_log)
 if __name__ == "__main__":
     main()
