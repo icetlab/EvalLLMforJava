@@ -18,8 +18,7 @@ def run_unit_test(repo_name, commit_id):
     unit_test_name = os.path.splitext(os.path.basename(unit_test_paths[0]))[0]
 
     repo_path = os.path.join("../", repo_name)
-    # os.chdir(repo_path)
-    os.system(f"cd {repo_path} && git reset --hard {commit_id} && git reset --hard HEAD~1")
+    os.chdir(repo_path)
 
     # Helper to run a shell command and capture output
     def run_cmd(cmd):

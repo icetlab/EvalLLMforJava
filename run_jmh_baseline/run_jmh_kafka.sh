@@ -39,6 +39,12 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
     # workaround for grgit issue
     sed -i 's/\(grgit: "\)[0-9.]*"/\14.1.1"/' gradle/dependencies.gradle
 
+    if [ ! -f ./gradlew ]; then
+        sed -i 's/spotbugsPlugin: *"[0-9.]*"/spotbugsPlugin: "2.0.0"/' gradle/dependencies.gradle
+        sed -i -E 's/^( *)(additionalSourceDirs|sourceDirectories|classDirectories|executionData) = files\((.*)\)/\1\2.setFrom(files(\3))/' build.gradle
+        gradle
+    fi
+
     # Compile and run unit test before benchmarking
     submodule=$(echo "$source_code" | cut -d'/' -f1)
     ./gradlew ${submodule}:build -x test < /dev/null

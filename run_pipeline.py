@@ -39,7 +39,7 @@ def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name):
             iteration += 1
 
     if iteration == max_iterations and "[Format Error]" in diff_patch:
-        return "Failed"
+        return "Failed", " ", " "
     
     return "Success", llm_log, diff_patch
 
@@ -64,6 +64,12 @@ def main():
         # Output directory for this commit_id
         output_commit_dir = os.path.join(project_root, "llm_output", repo_name, model_name, commit_id)
         os.makedirs(output_commit_dir, exist_ok=True)
+
+        # Test before calling LLM
+        repo_path = os.path.join("../", repo_name)
+        os.system(f"cd {repo_path} && git reset --hard {commit_id} && git reset --hard HEAD~1")
+        build_test_log = run_unit_test(repo_name, commit_id)
+        print(build_test_log)
 
         for prompt_filename in os.listdir(commit_dir):
             if prompt_filename.startswith("prompt") and prompt_filename.endswith(".txt"):
