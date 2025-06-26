@@ -39,9 +39,9 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
     # workaround for grgit issue
     sed -i 's/\(grgit: "\)[0-9.]*"/\14.1.1"/' gradle/dependencies.gradle
 
-    if [ ! -f ./gradlew ]; then
+    if [ "$id" = "59a75f4" ]; then
         sed -i 's/spotbugsPlugin: *"[0-9.]*"/spotbugsPlugin: "2.0.0"/' gradle/dependencies.gradle
-        sed -i -E 's/^( *)(additionalSourceDirs|sourceDirectories|classDirectories|executionData) = files\((.*)\)/\1\2.setFrom(files(\3))/' build.gradle
+        sed -i -E 's/^\s*(additionalSourceDirs|sourceDirectories|classDirectories|executionData)\s*=\s*files\((.*)\)/\1.setFrom(files(\2))/' build.gradle
         gradle
     fi
 
