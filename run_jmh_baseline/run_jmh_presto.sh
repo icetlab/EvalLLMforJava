@@ -45,6 +45,9 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
         git reset HEAD~1 && git restore --staged "$source_code" && git restore "$source_code"
     fi
 
+    # Workaround
+    sed -i '/^sphinx\([<=>!~]*[0-9.]*\)*$/s/.*/sphinx>=5.0/' presto-docs/requirements.txt
+
     # Compile
     submodule=$(echo "$source_code" | cut -d'/' -f1)
     ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true

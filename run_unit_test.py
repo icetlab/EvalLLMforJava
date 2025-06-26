@@ -22,7 +22,7 @@ def run_unit_test(repo_name, commit_id):
 
     # Helper to run a shell command and capture output
     def run_cmd(cmd):
-        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        result = subprocess.run(cmd, shell=True, cwd=repo_path, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         return result.returncode, result.stdout
 
     # Build and test, then capture output
