@@ -65,11 +65,11 @@ def main():
         output_commit_dir = os.path.join(project_root, "llm_output", repo_name, model_name, commit_id)
         os.makedirs(output_commit_dir, exist_ok=True)
 
-        # Test before calling LLM
-        repo_path = os.path.join("../", repo_name)
-        os.system(f"cd {repo_path} && git reset --hard {commit_id} && git reset --hard HEAD~1")
-        build_test_log = run_unit_test(repo_name, commit_id)
-        print(build_test_log)
+        # # Test before calling LLM
+        # repo_path = os.path.join("../", repo_name)
+        # os.system(f"cd {repo_path} && git reset --hard {commit_id} && git reset --hard HEAD~1")
+        # build_test_log = run_unit_test(repo_name, commit_id)
+        # print(build_test_log)
 
         for prompt_filename in os.listdir(commit_dir):
             if prompt_filename.startswith("prompt") and prompt_filename.endswith(".txt"):
@@ -103,6 +103,7 @@ def main():
                     iteration += 1
                     status, llm_log, diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_feedback, model_name)
                     if status == "Failed":
+                        build_test_log = f"[APPLIED FAILED] Not all generated code changes successfully applied!"
                         print(f"Not all generated code changes successfully applied!")
                         continue
 
@@ -144,5 +145,6 @@ def main():
                 log_path = output_path + ".log"
                 with open(log_path, 'w') as f_out:
                     f_out.write(llm_log)
+
 if __name__ == "__main__":
     main()

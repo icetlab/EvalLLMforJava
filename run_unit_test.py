@@ -38,6 +38,11 @@ def run_unit_test(repo_name, commit_id):
         if repo_name == "kafka":
             # workaround for grgit issue
             run_cmd('sed -i \'s/\\(grgit: "\\)[0-9.]*"/\\14.1.1"/\' gradle/dependencies.gradle')
+            # workaround for gradlew wrapper
+            if not os.path.exists("./gradlew"):
+                run_cmd('sed -i \'s/spotbugsPlugin: *"[0-9.]*"/spotbugsPlugin: "2.0.0"/\' gradle/dependencies.gradle')
+                run_cmd('sed -i -E \'s/^( *)(additionalSourceDirs|sourceDirectories|classDirectories|executionData) = files\\((.*)\\)/\\1\\2.setFrom(files(\\3))/\' build.gradle')
+                run_cmd('gradle')
         build_cmd = f"./gradlew {build_submodule}:build -x test"
         test_cmd = f"./gradlew {test_submodule}:test --tests {unit_test_name}"
     else:
