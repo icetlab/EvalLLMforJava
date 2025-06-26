@@ -29,10 +29,13 @@ def run_unit_test(repo_name, commit_id):
     if repo_name == "netty":
         # Workaround for version issue
         run_cmd("find . -name \"*.xml\" -exec sed -i 's/Final-SNAPSHOT/Final/g' {} \\;")
-        build_cmd = f"mvn -pl {build_submodule} -am clean install -DskipTests -Dcheckstyle.skip=true"
-        test_cmd = f"mvn test -Dtest=\"{unit_test_name}\""
-    if repo_name == "presto":
-        build_cmd = f"./mvnw -pl {build_submodule} -am clean install -DskipTests"
+        # Ensure Maven wrapper exists for netty
+        if not os.path.exists("./mvnw"):
+            run_cmd("mvn -N io.takari:maven:wrapper")
+        build_cmd = f"./mvnw -pl {build_submodule} -am install -DskipTests -Dcheckstyle.skip=true"
+        test_cmd = f"./mvnw test -Dtest=\"{unit_test_name}\""
+    elif repo_name == "presto":
+        build_cmd = f"./mvnw -pl {build_submodule} -am install -DskipTests"
         test_cmd = f"./mvnw test -Dtest={unit_test_name}"
     elif repo_name in ["kafka", "RoaringBitmap"]:
         if repo_name == "kafka":
