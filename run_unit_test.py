@@ -27,27 +27,36 @@ def run_unit_test(repo_name, commit_id):
 
     # Build and test, then capture output
     if repo_name == "netty":
-        # Workaround for version issue
-        run_cmd("find . -name \"*.xml\" -exec sed -i 's/Final-SNAPSHOT/Final/g' {} \\;")
-        # Ensure Maven wrapper exists for netty
+        # Ensure Maven wrapper exists
         if not os.path.exists("./mvnw"):
             run_cmd("mvn -N io.takari:maven:wrapper")
+        # Workaround for version issue
+        run_cmd("find . -name \"*.xml\" -exec sed -i 's/Final-SNAPSHOT/Final/g' {} \\;")
+        # Workaround: skip check-format goal in pom.xml
+        run_cmd("""sed -i '/<goal>check-format<\/goal>/,/<\/goals>/ {
+    /<\/goals>/ a\\
+    <configuration>\\
+        <skip>true</skip>\\
+    </configuration>
+    }' pom.xml""")
         build_cmd = f"./mvnw -pl {build_submodule} -am install -DskipTests -Dcheckstyle.skip=true"
-        test_cmd = f"./mvnw test -Dtest=\"{unit_test_name}\""
+        test_cmd = f"./mvnw test -Dtest={unit_test_name}"
     elif repo_name == "presto":
         build_cmd = f"./mvnw -pl {build_submodule} -am install -DskipTests"
         test_cmd = f"./mvnw test -Dtest={unit_test_name}"
-    elif repo_name in ["kafka", "RoaringBitmap"]:
-        if repo_name == "kafka":
-            # workaround for grgit issue
-            run_cmd('sed -i \'s/\\(grgit: "\\)[0-9.]*"/\\14.1.1"/\' gradle/dependencies.gradle')
-            # workaround for gradlew wrapper
-            if not os.path.exists("./gradlew"):
-                run_cmd('sed -i \'s/spotbugsPlugin: *"[0-9.]*"/spotbugsPlugin: "2.0.0"/\' gradle/dependencies.gradle')
-                run_cmd('sed -i -E \'s/^\\s*(additionalSourceDirs|sourceDirectories|classDirectories|executionData)\\s*=\\s*files\\((.*)\\)/\\1.setFrom(files(\\2))/\' build.gradle')
-                run_cmd('gradle')
+    elif repo_name == "kafka":
+        # workaround for grgit issue
+        run_cmd('sed -i \'s/\\(grgit: "\\)[0-9.]*"/\\14.1.1"/\' gradle/dependencies.gradle')
+        # workaround for gradlew wrapper
+        if not os.path.exists("./gradlew"):
+            run_cmd('sed -i \'s/spotbugsPlugin: *"[0-9.]*"/spotbugsPlugin: "2.0.0"/\' gradle/dependencies.gradle')
+            run_cmd('sed -i -E \'s/^\\s*(additionalSourceDirs|sourceDirectories|classDirectories|executionData)\\s*=\\s*files\\((.*)\\)/\\1.setFrom(files(\\2))/\' build.gradle')
+            run_cmd('gradle')
         build_cmd = f"./gradlew {build_submodule}:build -x test"
         test_cmd = f"./gradlew {test_submodule}:test --tests {unit_test_name}"
+    elif repo_name == "RoaringBitmap":
+        build_cmd = f"./gradlew build -x test"
+        test_cmd = f"./gradlew test --tests {unit_test_name}"
     else:
         raise ValueError(f"Unsupported repository name: {repo_name}")
 

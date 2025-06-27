@@ -48,6 +48,12 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
 
     # Workaround for version issue
     find . -name "*.xml" -exec sed -i 's/Final-SNAPSHOT/Final/g' {} \;
+    sed -i '/<goal>check-format<\/goal>/,/<\/goals>/ {
+    /<\/goals>/ a\
+    <configuration>\
+        <skip>true</skip>\
+    </configuration>
+    }' pom.xml
 
     # Compile
     submodule=$(echo "$source_code" | cut -d'/' -f1)
@@ -55,8 +61,9 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
 
     # Run unit test before benchmarking
     # For each test file, extract the submodule and test class, and run them individually
+    # Run unit tests for each test file in the $unittest variable (space-separated list)
     for test_path in $unittest; do
-        test_submodule=$(echo "$test_path" | awk -F'/' '{print $1}')
+        test_submodule=$(echo "$test_path" | cut -d'/' -f1)
         test_file=$(basename "$test_path")
         test_name="${test_file%.*}"  # Remove .java or .scala
         ./mvnw -pl "$test_submodule" test -Dtest="$test_name"
