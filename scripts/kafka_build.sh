@@ -1,4 +1,9 @@
-    # workaround for grgit issue
+#!/bin/bash
+
+REPO_PATH=$1
+cd "$REPO_PATH" || exit 1 # Change to the repository directory
+
+# workaround for grgit issue
 sed -i 's/\(grgit: "\)[0-9.]*"/\14.1.1"/' gradle/dependencies.gradle
 
 # workaround for gradlew wrapper
@@ -8,5 +13,5 @@ if [ ! -f "./gradlew" ]; then
     gradle
 fi
 
-BUILD_SUBMODULE=$1
+BUILD_SUBMODULE=$2
 ./gradlew "${BUILD_SUBMODULE}":build -x test

@@ -1,6 +1,7 @@
 #!/bin/bash
 
-BUILD_SUBMODULE=$1
+REPO_PATH=$1
+cd "$REPO_PATH" || exit 1 # Change to the repository directory
 
 if [ ! -f ./mvnw ]; then
     mvn -N io.takari:maven:wrapper
@@ -17,4 +18,5 @@ sed -i '/<goal>check-format<\/goal>/,/<\/goals>/ {
 </configuration>
 }' pom.xml
 
+BUILD_SUBMODULE=$2
 ./mvnw -pl "${BUILD_SUBMODULE}" -am install -DskipTests -Dcheckstyle.skip=true
