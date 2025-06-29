@@ -66,7 +66,7 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
         test_submodule=$(echo "$test_path" | cut -d'/' -f1)
         test_file=$(basename "$test_path")
         test_name="${test_file%.*}"  # Remove .java or .scala
-        ./mvnw -pl "$test_submodule" test -Dtest="$test_name"
+        ./mvnw -pl "$test_submodule" test -Dtest="$test_name" -DfailIfNoTests=false
     done
 
     echo "Running JMH benchmark: $jmh_case"
