@@ -108,7 +108,7 @@ def apply_diff(repo_name, commit_id, llm_log):
     try:
         # Get the diff patch using git diff
         diff_patch = subprocess.check_output(
-            ["git", "diff"],
+            ["git", "diff", "-w"],
             cwd=repo_path,
             universal_newlines=True
         )
