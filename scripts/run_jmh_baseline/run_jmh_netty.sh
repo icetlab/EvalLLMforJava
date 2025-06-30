@@ -71,17 +71,6 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
             git clean -fd
             git reset HEAD~1 && git restore --staged "$source_code" && git restore "$source_code"
 
-            # Workaround for version issue
-            find . -name "*.xml" -exec sed -i 's/Final-SNAPSHOT/Final/g' {} \;
-            sed -i '/<goal>check-format<\/goal>/,/<\/goals>/ {
-            /<\/goals>/ a\
-            <configuration>\
-                <skip>true</skip>\
-            </configuration>
-            }' pom.xml
-
-            sed -i 's#<maven.compiler.source>1\.6</maven.compiler.source>#<maven.compiler.source>1.7</maven.compiler.source>#g' pom.xml
-
             patch_name=$(basename "$patch_file")
             patch_rel_path="EvalLLMforJava/llm_output/netty/${LLM_TYPE}/${id}/${patch_name}"
 
@@ -89,6 +78,23 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
 
             if git apply --ignore-whitespace "$patch_file"; then
                 echo "Patch applied successfully: $patch_rel_path"
+
+                # Workaround for version issue
+                find . -name "*.xml" -exec sed -i 's/Final-SNAPSHOT/Final/g' {} \;
+                sed -i '/<goal>check-format<\/goal>/,/<\/goals>/ {
+                /<\/goals>/ a\
+                <configuration>\
+                    <skip>true</skip>\
+                </configuration>
+                }' pom.xml
+
+                sed -i 's#<maven.compiler.source>1\.6</maven.compiler.source>#<maven.compiler.source>1.7</maven.compiler.source>#g' pom.xml
+                sed -i 's#<maven.compiler.target>1\.6</maven.compiler.target>#<maven.compiler.target>1.7</maven.compiler.target>#g' pom.xml
+
+                if [ ! -f ./mvnw ]; then
+                    echo "mvnw not found, generating Maven wrapper..."
+                    mvn -N io.takari:maven:wrapper
+                fi
 
                 # Build
                 submodule=$(echo "$source_code" | cut -d'/' -f1)
