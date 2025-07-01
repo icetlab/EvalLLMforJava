@@ -43,8 +43,6 @@ git clean -fd
 if [ ! -f ./mvnw ]; then
     echo "mvnw not found, generating Maven wrapper..."
     mvn -N io.takari:maven:wrapper
-else
-    echo "mvnw already exists."
 fi
 
 # Prepare result CSV header if not exists (for LLM mode only)
@@ -69,7 +67,7 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
         for patch_file in "$PATCH_DIR"/*.diff; do
             git reset --hard "$commit_hash"
             git clean -fd
-            git reset HEAD~1 && git restore --staged "$source_code" && git restore "$source_code"
+            git reset HEAD~1 && git restore --staged $source_code && git restore $source_code
 
             patch_name=$(basename "$patch_file")
             patch_rel_path="EvalLLMforJava/llm_output/netty/${LLM_TYPE}/${id}/${patch_name}"
@@ -88,8 +86,8 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
                 </configuration>
                 }' pom.xml
 
-                sed -i 's#<maven.compiler.source>1\.6</maven.compiler.source>#<maven.compiler.source>1.7</maven.compiler.source>#g' pom.xml
-                sed -i 's#<maven.compiler.target>1\.6</maven.compiler.target>#<maven.compiler.target>1.7</maven.compiler.target>#g' pom.xml
+                sed -i 's#<maven.compiler.source>1\.6</maven.compiler.source>#<maven.compiler.source>1.8</maven.compiler.source>#g' pom.xml
+                sed -i 's#<maven.compiler.target>1\.6</maven.compiler.target>#<maven.compiler.target>1.8</maven.compiler.target>#g' pom.xml
 
                 if [ ! -f ./mvnw ]; then
                     echo "mvnw not found, generating Maven wrapper..."
@@ -130,7 +128,7 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
 
         # Restore only the necessary source files in org mode
         if [ "$MODE" = "-org" ]; then
-            git reset HEAD~1 && git restore --staged "$source_code" && git restore "$source_code"
+            git reset HEAD~1 && git restore --staged $source_code && git restore $source_code
         fi
 
         # Workaround for version issue

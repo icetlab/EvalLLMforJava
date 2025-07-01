@@ -67,7 +67,7 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
         for patch_file in "$PATCH_DIR"/*.diff; do
             git reset --hard "$commit_hash"
             git clean -fd
-            git reset HEAD~1 && git restore --staged "$source_code" && git restore "$source_code"
+            git reset HEAD~1 && git restore --staged $source_code && git restore $source_code
 
             # Workaround
             sed -i '/^sphinx\([<=>!~]*[0-9.]*\)*$/s/.*/sphinx>=5.0/' presto-docs/requirements.txt
@@ -116,7 +116,7 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
         git reset --hard "$commit_hash"
 
         if [ "$MODE" = "-org" ]; then
-            git reset HEAD~1 && git restore --staged "$source_code" && git restore "$source_code"
+            git reset HEAD~1 && git restore --staged $source_code && git restore $source_code
         fi
 
         # Workaround

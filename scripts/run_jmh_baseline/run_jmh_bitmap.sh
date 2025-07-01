@@ -35,7 +35,7 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
     git reset --hard "$commit_hash"
 
     if [ "$MODE" = "-org" ]; then
-        git reset HEAD~1 && git restore --staged "$source_code" && git restore "$source_code"
+        git reset HEAD~1 && git restore --staged $source_code && git restore $source_code
     fi
 
     # Compile and run unit test before benchmarking
