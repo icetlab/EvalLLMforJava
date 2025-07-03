@@ -65,7 +65,7 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
             git reset HEAD~1 && git restore --staged $source_code && git restore $source_code
 
             patch_name=$(basename "$patch_file")
-            patch_rel_path="$SCRIPT_DIR/EvalLLMforJava/llm_output/RoaringBitmap/${LLM_TYPE}/${id}/${patch_name}"
+            patch_rel_path="$PATCH_DIR/${patch_name}"
 
             echo "Applying patch: $patch_rel_path"
 
@@ -96,9 +96,13 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
 
                 # Run JMH
                 # Define JSON output file
-                JSON_DIR="$SCRIPT_DIR/EvalLLMforJava/llm_output/RoaringBitmap/${LLM_TYPE}/${id}"
                 patch_base_name="${patch_name%.diff}"
-                JSON_FILE="$JSON_DIR/${patch_base_name}_${jmh_case}.json"
+                JSON_FILE="$PATCH_DIR/${patch_base_name}_${jmh_case}.json"
+                # Skip if JSON file already exists
+                if [ -f "$JSON_FILE" ]; then
+                    echo "JSON file already exists: $JSON_FILE, skipping."
+                    continue
+                fi
                 # Run JMH benchmark and save results
                 echo "Running JMH benchmark: $jmh_case"
                 ./jmh/run.sh ".*${jmh_case}.*" -rf json -rff "$JSON_FILE" < /dev/null

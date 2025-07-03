@@ -57,12 +57,20 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
             git reset HEAD~1 && git restore --staged $source_code && git restore $source_code
 
             patch_name=$(basename "$patch_file")
-            patch_rel_path="$SCRIPT_DIR/EvalLLMforJava/llm_output/kafka/${LLM_TYPE}/${id}/${patch_name}"
+            patch_rel_path="$PATCH_DIR/${patch_name}"
 
             echo "Applying patch: $patch_rel_path"
             if git apply --ignore-space-change --ignore-whitespace "$patch_file"; then
                 echo "Patch applied successfully: $patch_rel_path"
+                # Define JSON output file
+                patch_base_name="${patch_name%.diff}"
+                JSON_FILE="$PATCH_DIR/${patch_base_name}_${jmh_case}.json"
 
+                # Skip if JSON file already exists
+                if [ -f "$JSON_FILE" ]; then
+                    echo "JSON file already exists: $JSON_FILE, skipping."
+                    continue
+                fi
                 # workarounds
                 sed -i 's/\(grgit: "\)[0-9.]*"/\14.1.1"/' gradle/dependencies.gradle
                 if [ "$id" = "59a75f4" ]; then
@@ -71,10 +79,6 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
                     gradle
                 fi
 
-                # Define JSON output file
-                JSON_DIR="$SCRIPT_DIR/EvalLLMforJava/llm_output/kafka/${LLM_TYPE}/${id}"
-                patch_base_name="${patch_name%.diff}"
-                JSON_FILE="$JSON_DIR/${patch_base_name}_${jmh_case}.json"
                 echo "Running JMH benchmark: $jmh_case"
                 ./jmh-benchmarks/jmh.sh "$jmh_case" -rf json -rff "$JSON_FILE" < /dev/null
             else
