@@ -47,17 +47,17 @@ fi
 
 # Prepare result CSV header if not exists (for LLM mode only)
 if [[ "$MODE" == -llm* ]]; then
-    RESULT_CSV="../results_${LLM_TYPE}.csv"
+    RESULT_CSV="$SCRIPT_DIR/results_${LLM_TYPE}.csv"
     if ! grep -q '^patch,build,test' "$RESULT_CSV" 2>/dev/null; then
         echo "patch,build,test" > "$RESULT_CSV"
     fi
 fi
 
-tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash source_code jmh_case unittest commit_url; do
+tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_hash source_code jmh_case unittest commit_url; do
     echo "Processing commit: $commit_hash"
 
     if [[ "$MODE" == -llm* ]]; then
-        PATCH_DIR="../EvalLLMforJava/llm_output/netty/${LLM_TYPE}/${id}"
+        PATCH_DIR="$SCRIPT_DIR/EvalLLMforJava/llm_output/netty/${LLM_TYPE}/${id}"
 
         if [ ! -d "$PATCH_DIR" ]; then
             echo "No patches found for commit $id under $PATCH_DIR"

@@ -112,6 +112,8 @@ def apply_diff(repo_name, commit_id, llm_log):
             cwd=repo_path,
             universal_newlines=True
         )
+        if not diff_patch.strip():
+            return "[Format Error] No code changes detected."
         return diff_patch
     except subprocess.CalledProcessError as e:
         print(f"Error getting diff patch: {e}")
