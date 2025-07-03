@@ -80,7 +80,7 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
                 fi
 
                 echo "Running JMH benchmark: $jmh_case"
-                ./jmh-benchmarks/jmh.sh "$jmh_case" -rf json -rff "$JSON_FILE" < /dev/null
+                ./jmh-benchmarks/jmh.sh -wi 10 -i 50 -f 1 -r 1s -w 1s "$jmh_case" -rf json -rff "$JSON_FILE" < /dev/null
             else
                 echo "Patch failed to apply: $patch_rel_path"
             fi
@@ -128,6 +128,6 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
         mkdir -p "$JSON_DIR"
 
         echo "Running JMH benchmark: $jmh_case"
-        ./jmh-benchmarks/jmh.sh "$jmh_case" -rf json -rff "$JSON_FILE" < /dev/null
+        ./jmh-benchmarks/jmh.sh -wi 10 -i 50 -f 1 -r 1s -w 1s "$jmh_case" -rf json -rff "$JSON_FILE" < /dev/null
     fi
 done

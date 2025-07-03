@@ -105,6 +105,7 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
                 fi
                 # Run JMH benchmark and save results
                 echo "Running JMH benchmark: $jmh_case"
+                sed -i 's/java -jar.*$/java -jar $BASEDIR\/build\/libs\/benchmarks.jar true  -wi 10 -i 50 -f 1 -r 1s -w 1s $@/' jmh/run.sh
                 ./jmh/run.sh ".*${jmh_case}.*" -rf json -rff "$JSON_FILE" < /dev/null
             else
                 echo "Patch failed to apply: $patch_rel_path"
@@ -147,6 +148,7 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
 
         # Run JMH benchmark and save results
         echo "Running JMH benchmark: $jmh_case"
+        sed -i 's/java -jar.*$/java -jar $BASEDIR\/build\/libs\/benchmarks.jar true  -wi 10 -i 50 -f 1 -r 1s -w 1s $@/' jmh/run.sh
         ./jmh/run.sh ".*${jmh_case}.*" -rf json -rff "$JSON_FILE" < /dev/null
     fi
 done
