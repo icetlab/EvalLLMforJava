@@ -42,7 +42,7 @@ git clean -fd
 tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_hash source_code jmh_case unittest commit_url; do
     echo "Processing commit: $commit_hash"
 
-    if [["$MODE" == -llm*]]; then
+    if [[ "$MODE" == -llm* ]]; then
         PATCH_DIR="$SCRIPT_DIR/EvalLLMforJava/llm_output/kafka/${LLM_TYPE}/${id}"
 
         if [ ! -d "$PATCH_DIR" ]; then

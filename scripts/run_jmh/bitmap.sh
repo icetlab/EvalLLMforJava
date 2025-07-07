@@ -122,25 +122,25 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
         fi
 
         # Compile and run unit test before benchmarking
-        submodule=$(echo "$source_code" | cut -d'/' -f1)
-        ./gradlew ${submodule}:build -x test < /dev/null
+        # submodule=$(echo "$source_code" | cut -d'/' -f1)
+        # ./gradlew ${submodule}:build -x test < /dev/null
 
-        # Run unit test(s) before benchmarking
-        for test_path in $unittest; do
-            test_submodule=$(echo "$test_path" | awk -F'/' '{print $1}')
-            test_file=$(basename "$test_path")
-            test_name="${test_file%.*}"  # Remove .java or .scala
-            ./gradlew ${test_submodule}:test --tests "$test_name" < /dev/null
-        done
+        # # Run unit test(s) before benchmarking
+        # for test_path in $unittest; do
+        #     test_submodule=$(echo "$test_path" | awk -F'/' '{print $1}')
+        #     test_file=$(basename "$test_path")
+        #     test_name="${test_file%.*}"  # Remove .java or .scala
+        #     ./gradlew ${test_submodule}:test --tests "$test_name" < /dev/null
+        # done
 
         # Run JMH
         # Define JSON output file
         if [ "$MODE" = "-dev" ]; then
-            JSON_DIR="$SCRIPT_DIR/jmh/RoaringBitmap/dev"
-            JSON_FILE="$JSON_DIR/${jmh_case}_${id}_dev.json"
+            JSON_DIR="$SCRIPT_DIR/jmh/dev"
+            JSON_FILE="$JSON_DIR/${id}_${jmh_case}.json"
         else
-            JSON_DIR="$SCRIPT_DIR/jmh/RoaringBitmap/org"
-            JSON_FILE="$JSON_DIR/${jmh_case}_${id}.json"
+            JSON_DIR="$SCRIPT_DIR/jmh/org"
+            JSON_FILE="$JSON_DIR/${id}_${jmh_case}.json"
         fi
 
         # Ensure output directory exists using the absolute path
