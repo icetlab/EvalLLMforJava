@@ -45,13 +45,13 @@ if [ ! -f ./mvnw ]; then
     mvn -N io.takari:maven:wrapper
 fi
 
-# Prepare result CSV header if not exists (for LLM mode only)
-if [[ "$MODE" == -llm* ]]; then
-    RESULT_CSV="$SCRIPT_DIR/results_${LLM_TYPE}.csv"
-    if ! grep -q '^patch,build,test' "$RESULT_CSV" 2>/dev/null; then
-        echo "patch,build,test" > "$RESULT_CSV"
-    fi
-fi
+# # Prepare result CSV header if not exists (for LLM mode only)
+# if [[ "$MODE" == -llm* ]]; then
+#     RESULT_CSV="$SCRIPT_DIR/results_${LLM_TYPE}.csv"
+#     if ! grep -q '^patch,build,test' "$RESULT_CSV" 2>/dev/null; then
+#         echo "patch,build,test" > "$RESULT_CSV"
+#     fi
+# fi
 
 tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_hash source_code jmh_case unittest commit_url; do
     echo "Processing commit: $commit_hash"
@@ -70,7 +70,7 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
             git reset HEAD~1 && git restore --staged $source_code && git restore $source_code
 
             patch_name=$(basename "$patch_file")
-            patch_rel_path="EvalLLMforJava/llm_output/netty/${LLM_TYPE}/${id}/${patch_name}"
+            patch_rel_path="$PATCH_DIR/${patch_name}"
 
             echo "Applying patch: $patch_rel_path"
 
@@ -94,31 +94,55 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
                     mvn -N io.takari:maven:wrapper
                 fi
 
-                # Build
-                submodule=$(echo "$source_code" | cut -d'/' -f1)
-                if ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true; then
-                    echo "Build succeeded for patch: $patch_rel_path"
+                # # Build
+                # submodule=$(echo "$source_code" | cut -d'/' -f1)
+                # if ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true; then
+                #     echo "Build succeeded for patch: $patch_rel_path"
 
-                    TEST_RESULT="success"
-                    # Run unit tests only if build succeeded
-                    for test_path in $unittest; do
-                        test_submodule=$(echo "$test_path" | cut -d'/' -f1)
-                        test_file=$(basename "$test_path")
-                        test_name="${test_file%.*}"  # Remove .java or .scala
-                        if ! ./mvnw -pl "$test_submodule" test -Dtest="$test_name" -DfailIfNoTests=false -Dcheckstyle.skip=true; then
-                            echo "Unit test failed: $test_name"
-                            TEST_RESULT="failed"
-                        fi
-                    done
+                #     TEST_RESULT="success"
+                #     # Run unit tests only if build succeeded
+                #     for test_path in $unittest; do
+                #         test_submodule=$(echo "$test_path" | cut -d'/' -f1)
+                #         test_file=$(basename "$test_path")
+                #         test_name="${test_file%.*}"  # Remove .java or .scala
+                #         if ! ./mvnw -pl "$test_submodule" test -Dtest="$test_name" -DfailIfNoTests=false -Dcheckstyle.skip=true; then
+                #             echo "Unit test failed: $test_name"
+                #             TEST_RESULT="failed"
+                #         fi
+                #     done
 
-                    echo "${patch_rel_path},success,${TEST_RESULT}" >> "$RESULT_CSV"
-                else
-                    echo "Build failed for patch: $patch_rel_path"
-                    echo "${patch_rel_path},failed," >> "$RESULT_CSV"
+                #     echo "${patch_rel_path},success,${TEST_RESULT}" >> "$RESULT_CSV"
+                # else
+                #     echo "Build failed for patch: $patch_rel_path"
+                #     echo "${patch_rel_path},failed," >> "$RESULT_CSV"
+                # fi
+
+                # benchmark
+                # Define JSON output file
+                patch_base_name="${patch_name%.diff}"
+                JSON_FILE="$PATCH_DIR/${patch_base_name}_${jmh_case}.json"
+                # Skip if JSON file already exists
+                if [ -f "$JSON_FILE" ]; then
+                    echo "JSON file already exists: $JSON_FILE, skipping."
+                    continue
                 fi
+                echo "Running JMH benchmark: $jmh_case"
+                cd microbench || { echo "microbench directory not found"; exit 1; }
+                ../mvnw -DskipTests=false -Dtest="$jmh_case" -DwarmupIterations=3 -DmeasureIterations=10 -Dforks=1 test
+
+                wait
+
+                # Rename the JMH result file
+                if [ -f "$PERF_REPORT_DIR/${jmh_case}.json" ]; then
+                    mv "$PERF_REPORT_DIR/${jmh_case}.json" "JSON_FILE"
+                else
+                    echo "Warning: Expected result file not found: $PERF_REPORT_DIR/${jmh_case}.json"
+                fi
+
+                cd ..
             else
                 echo "Patch failed to apply: $patch_rel_path"
-                echo "${patch_rel_path},failed," >> "$RESULT_CSV"
+                # echo "${patch_rel_path},failed," >> "$RESULT_CSV"
             fi
         done
 
@@ -141,41 +165,47 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
         }' pom.xml
 
         # Non-LLM normal flow
-        submodule=$(echo "$source_code" | cut -d'/' -f1)
-        ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true
+        # # Compile and run unit test before benchmarking
+        # submodule=$(echo "$source_code" | cut -d'/' -f1)
+        # ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true
 
-        for test_path in $unittest; do
-            test_submodule=$(echo "$test_path" | cut -d'/' -f1)
-            test_file=$(basename "$test_path")
-            test_name="${test_file%.*}"  # Remove .java or .scala
-            ./mvnw -pl "$test_submodule" test -Dtest="$test_name" -DfailIfNoTests=false
-        done
+        # for test_path in $unittest; do
+        #     test_submodule=$(echo "$test_path" | cut -d'/' -f1)
+        #     test_file=$(basename "$test_path")
+        #     test_name="${test_file%.*}"  # Remove .java or .scala
+        #     ./mvnw -pl "$test_submodule" test -Dtest="$test_name" -DfailIfNoTests=false
+        # done
+
+        # benchmark
+        # Define JSON output file
+        if [ "$MODE" = "-dev" ]; then
+            JSON_DIR="$SCRIPT_DIR/jmh/dev"
+        else
+            JSON_DIR="$SCRIPT_DIR/jmh/org"
+        fi
+        JSON_FILE="$JSON_DIR/${id}_${jmh_case}.json"
+        # Skip if JSON file already exists
+        if [ -f "$JSON_FILE" ]; then
+            echo "JSON file already exists: $JSON_FILE, skipping."
+            continue
+        fi
+
+        # Ensure output directory exists using the absolute path
+        mkdir -p "$JSON_DIR"
+
+        echo "Running JMH benchmark: $jmh_case"
+        cd microbench || { echo "microbench directory not found"; exit 1; }
+        # -wi 10 -i 50 -f 1 -r 1s -w 1s
+        ../mvnw -DskipTests=false -Dtest="$jmh_case" -DwarmupIterations=3 -DmeasureIterations=10 -Dforks=1 test
+        wait
+
+        # Rename the JMH result file
+        if [ -f "$PERF_REPORT_DIR/${jmh_case}.json" ]; then
+            mv "$PERF_REPORT_DIR/${jmh_case}.json" "JSON_FILE"
+        else
+            echo "Warning: Expected result file not found: $PERF_REPORT_DIR/${jmh_case}.json"
+        fi
+
+        cd ..
     fi
-
-    # echo "Running JMH benchmark: $jmh_case"
-    # cd microbench || { echo "microbench directory not found"; exit 1; }
-    # ../mvnw -DskipTests=false -Dtest="$jmh_case" test -Djmh.resultFormat=JSON
-
-    # wait
-
-    # # Define JSON output file
-    # if [ "$MODE" = "-dev" ]; then
-    #     JSON_DIR="$SCRIPT_DIR/jmh/netty/dev"
-    #     JSON_FILE="$JSON_DIR/${jmh_case}_${id}_dev.json"
-    # else
-    #     JSON_DIR="$SCRIPT_DIR/jmh/netty/org"
-    #     JSON_FILE="$JSON_DIR/${jmh_case}_${id}.json"
-    # fi
-
-    # # Ensure output directory exists using the absolute path
-    # mkdir -p "$JSON_DIR"
-
-    # # Rename the JMH result file
-    # if [ -f "$PERF_REPORT_DIR/${jmh_case}.json" ]; then
-    #     mv "$PERF_REPORT_DIR/${jmh_case}.json" "JSON_FILE"
-    # else
-    #     echo "Warning: Expected result file not found: $PERF_REPORT_DIR/${jmh_case}.json"
-    # fi
-
-    # cd ..
 done

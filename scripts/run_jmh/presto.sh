@@ -44,20 +44,20 @@ if [ ! -f ./mvnw ]; then
     mvn -N io.takari:maven:wrapper
 fi
 
-# Prepare result CSV header if not exists (for LLM mode only)
-if [[ "$MODE" == -llm* ]]; then
-    RESULT_CSV="../results_${LLM_TYPE}.csv"
-    if ! grep -q '^patch,build,test' "$RESULT_CSV" 2>/dev/null; then
-        echo "patch,build,test" > "$RESULT_CSV"
-    fi
-fi
+# # Prepare result CSV header if not exists (for LLM mode only)
+# if [[ "$MODE" == -llm* ]]; then
+#     RESULT_CSV="../results_${LLM_TYPE}.csv"
+#     if ! grep -q '^patch,build,test' "$RESULT_CSV" 2>/dev/null; then
+#         echo "patch,build,test" > "$RESULT_CSV"
+#     fi
+# fi
 
 # Read CSV file line by line, skipping the header
-tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash source_code jmh_case unittest commit_url; do
+tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_hash source_code jmh_case unittest commit_url; do
     echo -e "\n Processing commit: $commit_hash"
 
     if [[ "$MODE" == -llm* ]]; then
-        PATCH_DIR="../EvalLLMforJava/llm_output/presto/${LLM_TYPE}/${id}"
+        PATCH_DIR="$SCRIPT_DIR/EvalLLMforJava/llm_output/presto/${LLM_TYPE}/${id}"
 
         if [ ! -d "$PATCH_DIR" ]; then
             echo "No patches found for commit $id under $PATCH_DIR"
@@ -73,7 +73,7 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
             sed -i '/^sphinx\([<=>!~]*[0-9.]*\)*$/s/.*/sphinx>=5.0/' presto-docs/requirements.txt
 
             patch_name=$(basename "$patch_file")
-            patch_rel_path="EvalLLMforJava/llm_output/presto/${LLM_TYPE}/${id}/${patch_name}"
+            patch_rel_path="$PATCH_DIR/${patch_name}"
 
             echo "Applying patch: $patch_rel_path"
 
@@ -84,31 +84,47 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
                     echo "mvnw not found, generating Maven wrapper..."
                     mvn -N io.takari:maven:wrapper
                 fi
+                # Define JSON output file
+                patch_base_name="${patch_name%.diff}"
+                JSON_FILE="$PATCH_DIR/${patch_base_name}_${jmh_case}.json"
+                # Skip if JSON file already exists
+                if [ -f "$JSON_FILE" ]; then
+                    echo "JSON file already exists: $JSON_FILE, skipping."
+                    continue
+                fi
+
                 # Build
                 submodule=$(echo "$source_code" | cut -d'/' -f1)
-                if ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true; then
+                cd "$submodule" || { echo "Directory '$submodule' not found"; exit 1; }
+                if ../mvnw clean install -DskipTests -Dcheckstyle.skip=true; then
                     echo "Build succeeded for patch: $patch_rel_path"
 
-                    TEST_RESULT="success"
-                    # Run unit tests only if build succeeded
-                    for test_path in $unittest; do
-                        test_submodule=$(echo "$test_path" | cut -d'/' -f1)
-                        test_file=$(basename "$test_path")
-                        test_name="${test_file%.*}"  # Remove .java or .scala
-                        if ! ./mvnw -pl "$test_submodule" test -Dtest="$test_name" -DfailIfNoTests=false -Dcheckstyle.skip=true; then
-                            echo "Unit test failed: $test_name"
-                            TEST_RESULT="failed"
-                        fi
-                    done
+                    # TEST_RESULT="success"
+                    # # Run unit tests only if build succeeded
+                    # for test_path in $unittest; do
+                    #     test_submodule=$(echo "$test_path" | cut -d'/' -f1)
+                    #     test_file=$(basename "$test_path")
+                    #     test_name="${test_file%.*}"  # Remove .java or .scala
+                    #     if ! ./mvnw -pl "$test_submodule" test -Dtest="$test_name" -DfailIfNoTests=false -Dcheckstyle.skip=true; then
+                    #         echo "Unit test failed: $test_name"
+                    #         TEST_RESULT="failed"
+                    #     fi
+                    # done
+                    # echo "${patch_rel_path},success,${TEST_RESULT}" >> "$RESULT_CSV"
 
-                    echo "${patch_rel_path},success,${TEST_RESULT}" >> "$RESULT_CSV"
+                    # Run JMH benchmark and save results
+                    echo "Running JMH benchmark: $jmh_case"
+                    java -cp "target/jmh-benchmarks.jar:target/classes:target/test-classes:$(../mvnw dependency:build-classpath -Dmdep.scope=test -q -DincludeScope=test -Dsilent=true -Dmdep.outputFile=/dev/stdout | tail -n1)" \
+                        org.openjdk.jmh.Main ".*$jmh_case.*" -wi 10 -i 50 -f 1 -r 1s -w 1s -rff "$JSON_FILE" -rf json
+
                 else
                     echo "Build failed for patch: $patch_rel_path"
-                    echo "${patch_rel_path},failed," >> "$RESULT_CSV"
+                    # echo "${patch_rel_path},failed," >> "$RESULT_CSV"
                 fi
+                cd ..
             else
                 echo "Patch failed to apply: $patch_rel_path"
-                echo "${patch_rel_path},failed," >> "$RESULT_CSV"
+                # echo "${patch_rel_path},failed," >> "$RESULT_CSV"
             fi
         done
     else
@@ -122,41 +138,35 @@ tail -n +2 "../$CSV_FILE" | while IFS=',' read -r repository id commit_hash sour
         # Workaround
         sed -i '/^sphinx\([<=>!~]*[0-9.]*\)*$/s/.*/sphinx>=5.0/' presto-docs/requirements.txt
 
-        # Compile
-        submodule=$(echo "$source_code" | cut -d'/' -f1)
-        ./mvnw checkstyle:checkstyle
-        ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true
+        # # Run unit test before benchmarking
+        # # For each test file, extract the submodule and test class, and run them individually
+        # for test_path in $unittest; do
+        #     test_submodule=$(echo "$test_path" | awk -F'/' '{print $1}')
+        #     test_file=$(basename "$test_path")
+        #     test_name="${test_file%.*}"  # Remove .java or .scala
+        #     ./mvnw -pl "$test_submodule" test -Dtest="$test_name" -DfailIfNoTests=false
+        # done
 
-        # Run unit test before benchmarking
-        # For each test file, extract the submodule and test class, and run them individually
-        for test_path in $unittest; do
-            test_submodule=$(echo "$test_path" | awk -F'/' '{print $1}')
-            test_file=$(basename "$test_path")
-            test_name="${test_file%.*}"  # Remove .java or .scala
-            ./mvnw -pl "$test_submodule" test -Dtest="$test_name" -DfailIfNoTests=false
-        done
+        # Define JSON output file
+        if [ "$MODE" = "-dev" ]; then
+            JSON_DIR="$SCRIPT_DIR/jmh/dev"
+        else
+            JSON_DIR="$SCRIPT_DIR/jmh/org"
+        fi
+        JSON_FILE="$JSON_DIR/${jmh_case}_${id}.json"
+
+        # Ensure output directory exists using the absolute path
+        mkdir -p "$JSON_DIR"
+
+        # Build benchmark target only
+        cd "$submodule" || { echo "Directory '$submodule' not found"; exit 1; }
+
+        ../mvnw clean install -DskipTests
+
+        # Run JMH benchmark and save results
+        java -cp "target/jmh-benchmarks.jar:target/classes:target/test-classes:$(../mvnw dependency:build-classpath -Dmdep.scope=test -q -DincludeScope=test -Dsilent=true -Dmdep.outputFile=/dev/stdout | tail -n1)" \
+            org.openjdk.jmh.Main ".*$jmh_case.*" -wi 10 -i 50 -f 1 -r 1s -w 1s -rff "$JSON_FILE" -rf json
+
+        cd ..
     fi
-
-    # # Define JSON output file
-    # if [ "$MODE" = "-dev" ]; then
-    #     JSON_DIR="$SCRIPT_DIR/jmh/presto/dev"
-    #     JSON_FILE="$JSON_DIR/${jmh_case}_${id}_dev.json"
-    # else
-    #     JSON_DIR="$SCRIPT_DIR/jmh/presto/org"
-    #     JSON_FILE="$JSON_DIR/${jmh_case}_${id}.json"
-    # fi
-
-    # # Ensure output directory exists using the absolute path
-    # mkdir -p "$JSON_DIR"
-
-    # # Build benchmark target only
-    # cd "$submodule" || { echo "Directory '$submodule' not found"; exit 1; }
-
-    # ../mvnw clean install -DskipTests
-
-    # # Run JMH benchmark and save results
-    # java -cp "target/jmh-benchmarks.jar:target/classes:target/test-classes:$(../mvnw dependency:build-classpath -Dmdep.scope=test -q -DincludeScope=test -Dsilent=true -Dmdep.outputFile=/dev/stdout | tail -n1)" \
-    #     org.openjdk.jmh.Main ".*$jmh_case.*" -rff "$JSON_FILE" -rf json
-
-    # cd ..
 done
