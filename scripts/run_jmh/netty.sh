@@ -34,7 +34,6 @@ if [[ "$MODE" == -llm* ]]; then
     echo "LLM_TYPE: $LLM_TYPE"
 fi
 
-PERF_REPORT_DIR="target/reports/performance"
 SCRIPT_DIR=$(pwd)
 
 cd netty || { echo "Directory 'netty' not found"; exit 1; }
@@ -128,16 +127,12 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
                 fi
                 echo "Running JMH benchmark: $jmh_case"
                 cd microbench || { echo "microbench directory not found"; exit 1; }
-                ../mvnw -DskipTests=false -Dtest="$jmh_case" -DwarmupIterations=3 -DmeasureIterations=10 -Dforks=1 test
+                ../mvnw -DskipTests=false -Dtest="$jmh_case" -DwarmupIterations=5 -DmeasureIterations=15 -Dforks=1 -DperfReportDir=$PATCH_DIR test
 
                 wait
 
                 # Rename the JMH result file
-                if [ -f "$PERF_REPORT_DIR/${jmh_case}.json" ]; then
-                    mv "$PERF_REPORT_DIR/${jmh_case}.json" "JSON_FILE"
-                else
-                    echo "Warning: Expected result file not found: $PERF_REPORT_DIR/${jmh_case}.json"
-                fi
+                mv "$PATCH_DIR/${jmh_case}.json" "$JSON_FILE"
 
                 cd ..
             else
@@ -196,15 +191,11 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
         echo "Running JMH benchmark: $jmh_case"
         cd microbench || { echo "microbench directory not found"; exit 1; }
         # -wi 10 -i 50 -f 1 -r 1s -w 1s
-        ../mvnw -DskipTests=false -Dtest="$jmh_case" -DwarmupIterations=3 -DmeasureIterations=10 -Dforks=1 test
+        ../mvnw -DskipTests=false -Dtest="$jmh_case" -DwarmupIterations=5 -DmeasureIterations=15 -Dforks=1 -DperfReportDir=$PATCH_DIR test
         wait
 
         # Rename the JMH result file
-        if [ -f "$PERF_REPORT_DIR/${jmh_case}.json" ]; then
-            mv "$PERF_REPORT_DIR/${jmh_case}.json" "JSON_FILE"
-        else
-            echo "Warning: Expected result file not found: $PERF_REPORT_DIR/${jmh_case}.json"
-        fi
+        mv "$PATCH_DIR/${jmh_case}.json" "$JSON_FILE"
 
         cd ..
     fi
