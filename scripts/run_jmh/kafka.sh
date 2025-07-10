@@ -82,7 +82,7 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
                 echo "Running JMH benchmark: $jmh_case"
                 # Use different JMH parameters for specific ids
                 if [ "$id" = "b36e3c2" ] || [ "$id" = "eb24ed8" ]; then
-                    JMH_OPTS="-wi 5 -i 20 -f 1 -r 1s -w 1s -p compressionType=ZSTD"
+                    JMH_OPTS="-wi 3 -i 10 -f 1 -r 1s -w 1s -p compressionType=ZSTD"
                 else
                     JMH_OPTS="-wi 10 -i 50 -f 1 -r 1s -w 1s"
                 fi
@@ -124,12 +124,11 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
 
         # Define JSON output file
         if [ "$MODE" = "-dev" ]; then
-            JSON_DIR="$SCRIPT_DIR/jmh/kafka/dev"
-            JSON_FILE="$JSON_DIR/${jmh_case}_${id}_dev.json"
+            JSON_DIR="$SCRIPT_DIR/jmh/dev"
         else
-            JSON_DIR="$SCRIPT_DIR/jmh/kafka/org"
-            JSON_FILE="$JSON_DIR/${jmh_case}_${id}.json"
+            JSON_DIR="$SCRIPT_DIR/jmh/org"
         fi
+        JSON_FILE="$JSON_DIR/${id}_${jmh_case}.json"
 
         # Ensure output directory exists using the absolute path
         mkdir -p "$JSON_DIR"
@@ -137,7 +136,7 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
         echo "Running JMH benchmark: $jmh_case"
         # Use different JMH parameters for specific ids
         if [ "$id" = "b36e3c2" ] || [ "$id" = "eb24ed8" ]; then
-            JMH_OPTS="-wi 5 -i 20 -f 1 -r 1s -w 1s -p compressionType=ZSTD"
+            JMH_OPTS="-wi 2 -i 10 -f 1 -r 1s -w 1s -p compressionType=ZSTD"
         else
             JMH_OPTS="-wi 10 -i 50 -f 1 -r 1s -w 1s"
         fi

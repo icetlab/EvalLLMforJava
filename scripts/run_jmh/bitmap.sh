@@ -137,11 +137,10 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
         # Define JSON output file
         if [ "$MODE" = "-dev" ]; then
             JSON_DIR="$SCRIPT_DIR/jmh/dev"
-            JSON_FILE="$JSON_DIR/${id}_${jmh_case}.json"
         else
             JSON_DIR="$SCRIPT_DIR/jmh/org"
-            JSON_FILE="$JSON_DIR/${id}_${jmh_case}.json"
         fi
+        JSON_FILE="$JSON_DIR/${id}_${jmh_case}.json"
 
         # Ensure output directory exists using the absolute path
         mkdir -p "$JSON_DIR"
