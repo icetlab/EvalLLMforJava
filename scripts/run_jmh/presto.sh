@@ -114,9 +114,13 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
 
                     # Run JMH benchmark and save results
                     echo "Running JMH benchmark: $jmh_case"
+                    if [ "$id" = "297b089" ]; then
+                        JMH_OPTS="-p withNulls=NONE -wi 5 -i 20 -f 1 -r 1s -w 1s"
+                    else
+                        JMH_OPTS="-wi 10 -i 50 -f 1 -r 1s -w 1s"
+                    fi
                     java -cp "target/jmh-benchmarks.jar:target/classes:target/test-classes:$(../mvnw dependency:build-classpath -Dmdep.scope=test -q -DincludeScope=test -Dsilent=true -Dmdep.outputFile=/dev/stdout | tail -n1)" \
-                        org.openjdk.jmh.Main ".*$jmh_case.*" -wi 10 -i 50 -f 1 -r 1s -w 1s -rff "$JSON_FILE" -rf json
-
+                        org.openjdk.jmh.Main ".*$jmh_case.*" $JMH_OPTS -rff "$JSON_FILE" -rf json
                 else
                     echo "Build failed for patch: $patch_rel_path"
                     # echo "${patch_rel_path},failed," >> "$RESULT_CSV"
@@ -164,8 +168,13 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
         ../mvnw clean install -DskipTests
 
         # Run JMH benchmark and save results
+        if [ "$id" = "297b089" ]; then
+            JMH_OPTS="-p withNulls=NONE -wi 5 -i 20 -f 1 -r 1s -w 1s"
+        else
+            JMH_OPTS="-wi 10 -i 50 -f 1 -r 1s -w 1s"
+        fi
         java -cp "target/jmh-benchmarks.jar:target/classes:target/test-classes:$(../mvnw dependency:build-classpath -Dmdep.scope=test -q -DincludeScope=test -Dsilent=true -Dmdep.outputFile=/dev/stdout | tail -n1)" \
-            org.openjdk.jmh.Main ".*$jmh_case.*" -wi 10 -i 50 -f 1 -r 1s -w 1s -rff "$JSON_FILE" -rf json
+            org.openjdk.jmh.Main ".*$jmh_case.*" $JMH_OPTS -rff "$JSON_FILE" -rf json
 
         cd ..
     fi
