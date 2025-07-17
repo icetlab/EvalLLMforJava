@@ -1,0 +1,13 @@
+My improvement focuses on the `shiftLeftFromSpecifiedPosition` method. The original implementation is inefficient because it converts an integer to a `byte[]` array, performs a copy operation, and then converts it back to an integer. This involves heap allocation and several method calls.
+
+My proposed change replaces this entire process with a pure bitwise-operation-based solution. It calculates masks to isolate the portions of the integer that need to be moved, shifts them to their new positions, and combines them back into the final integer. This approach avoids creating any intermediate objects, which significantly reduces overhead and improves performance, especially in tight loops or performance-critical code paths.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/IntegerUtil.java",
+    "search": "  public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    byte[] initialVal = toBDBytes(v);\n    System.arraycopy(initialVal, pos + 1, initialVal, pos, count);\n    return fromBDBytes(initialVal);\n  }",
+    "replace": "  public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    if (count == 0) {\n      return v;\n    }\n    int maskLen = count << 3;\n    int startBitOverwrite = (4 - (pos + count)) << 3;\n    int overwriteMask = ((1 << maskLen) - 1) << startBitOverwrite;\n    int startBitSrc = (4 - (pos + count + 1)) << 3;\n    int srcMask = ((1 << maskLen) - 1) << startBitSrc;\n    int clearedV = v & ~overwriteMask;\n    int srcBits = v & srcMask;\n    int shiftedSrcBits = srcBits << 8;\n    return clearedV | shiftedSrcBits;\n  }"
+  }
+]
+```

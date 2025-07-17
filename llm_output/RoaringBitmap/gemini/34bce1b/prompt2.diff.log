@@ -1,0 +1,13 @@
+The current implementation of `shiftLeftFromSpecifiedPosition` is suboptimal as it involves converting an integer to a byte array, performing an array copy, and then converting it back to an integer. This process includes unnecessary object allocations and method calls.
+
+My improvement replaces this logic with a pure bitwise manipulation approach. This new implementation achieves the same byte-shifting behavior by using bit masks and bit shifts directly on the integer value. This avoids the overhead of object creation and array manipulation, leading to a significant performance boost for this operation. The logic correctly preserves the unaffected bytes and shifts the target bytes as required, passing all existing unit tests.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/IntegerUtil.java",
+    "search": "  public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    byte[] initialVal = toBDBytes(v);\n    System.arraycopy(initialVal, pos + 1, initialVal, pos, count);\n    return fromBDBytes(initialVal);\n  }",
+    "replace": "  public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    if (count == 0) {\n      return v;\n    }\n    // This implementation uses bitwise operations to avoid object allocation\n    // and is based on the invariant that pos + count <= 3 from the original code.\n\n    // Mask for bytes 0 to pos-1.\n    int highMask = (pos == 0) ? 0 : (-1 << (32 - pos * 8));\n\n    int p = pos + count;\n    // Mask for bytes p to 3.\n    int lowMask = (1 << (32 - p * 8)) - 1;\n\n    // Mask for destination bytes pos to p-1.\n    int highMaskPosCount = -1 << (32 - p * 8);\n    int destMask = highMask ^ highMaskPosCount;\n\n    int vHigh = v & highMask;\n    int vLow = v & lowMask;\n    // Shift v left by one byte and apply destination mask.\n    int vMid = (v << 8) & destMask;\n\n    return vHigh | vLow | vMid;\n  }"
+  }
+]
+```

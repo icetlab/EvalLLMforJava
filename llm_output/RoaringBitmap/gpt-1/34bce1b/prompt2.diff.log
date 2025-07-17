@@ -1,0 +1,11 @@
+I’ve replaced the array-based shift implementation with an in-place bitwise loop to eliminate byte‐array allocation and System.arraycopy overhead while preserving exact behavior.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/IntegerUtil.java",
+    "search": "public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    byte[] initialVal = toBDBytes(v);\n    System.arraycopy(initialVal, pos + 1, initialVal, pos, count);\n    return fromBDBytes(initialVal);\n  }",
+    "replace": "public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    if (count <= 0) {\n      return v;\n    }\n    int res = v;\n    for (int i = 0; i < count; i++) {\n      int srcIndex = pos + i + 1;\n      int shiftSrc = (3 - srcIndex) << 3;\n      byte bv = (byte) (v >> shiftSrc);\n      int dstShift = (3 - (pos + i)) << 3;\n      res = (res & ~(0xFF << dstShift)) | ((bv & 0xFF) << dstShift);\n    }\n    return res;\n  }"
+  }
+]
+```

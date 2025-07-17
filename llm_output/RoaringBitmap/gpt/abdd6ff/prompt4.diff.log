@@ -1,0 +1,11 @@
+The change replaces the manual iteration-based removal of the top extra values in `topK` with a call to `MutableRoaringBitmap.limit(...)`, which leverages the bitmap’s internal batching for faster extraction and removal.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "long n = F.getLongCardinality() - k;\n    if (n > 0) {\n      // TODO: make faster\n      IntIterator i = F.getIntIterator();\n      MutableRoaringBitmap turnoff = new MutableRoaringBitmap();\n      while (i.hasNext() && n > 0) {\n        turnoff.add(i.next());\n        --n;\n      }\n      F.andNot(turnoff);\n    }",
+    "replace": "long n = F.getLongCardinality() - k;\n    if (n > 0) {\n      // faster removal of top values\n      int extra = Math.toIntExact(n);\n      MutableRoaringBitmap turnoff = F.limit(extra);\n      F.andNot(turnoff);\n    }"
+  }
+]
+```

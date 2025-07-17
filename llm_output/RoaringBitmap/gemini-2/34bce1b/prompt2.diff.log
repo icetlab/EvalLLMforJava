@@ -1,0 +1,13 @@
+The original `shiftLeftFromSpecifiedPosition` method converts an integer to a byte array, performs a `System.arraycopy` on it, and then converts the array back to an integer. This approach is suboptimal due to the overhead of creating a temporary byte array on the heap and the multiple method calls involved.
+
+My improvement replaces this process with a pure bitwise manipulation approach. The new implementation calculates a mask to identify the byte range that needs to be modified. It then clears this range in the original integer and uses bitwise OR to insert the correctly shifted byte values. This avoids all heap allocations and extra method calls, resulting in a much more performant function while preserving the original logic for all valid inputs.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/IntegerUtil.java",
+    "search": "  public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    byte[] initialVal = toBDBytes(v);\n    System.arraycopy(initialVal, pos + 1, initialVal, pos, count);\n    return fromBDBytes(initialVal);\n  }",
+    "replace": "  public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    if (count == 0) {\n      return v;\n    }\n    int end = pos + count;\n    int high_mask = (pos == 0) ? 0 : (-1 << (32 - pos * 8));\n    int low_mask = (end >= 4) ? 0 : (-1 >>> (end * 8));\n    int dest_mask = ~(high_mask | low_mask);\n    return (v & ~dest_mask) | ((v << 8) & dest_mask);\n  }"
+  }
+]
+```

@@ -1,0 +1,11 @@
+I have optimized the topK method to drop the first n smallest entries via a single range‐remove operation instead of building and subtracting an auxiliary bitmap, which should greatly reduce overhead when k is much smaller than the total cardinality.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "    if (n > 0) {\n      // TODO: make faster\n      IntIterator i = F.getIntIterator();\n      MutableRoaringBitmap turnoff = new MutableRoaringBitmap();\n      while (i.hasNext() && n > 0) {\n        turnoff.add(i.next());\n        --n;\n      }\n      F.andNot(turnoff);\n    }",
+    "replace": "    if (n > 0) {\n      IntIterator i = F.getIntIterator();\n      int cutoff = -1;\n      while (n > 0 && i.hasNext()) {\n        cutoff = i.next();\n        --n;\n      }\n      if (cutoff >= 0) {\n        // remove all values <= cutoff in one range operation\n        F.remove(0, cutoff + 1);\n      }\n    }"
+  }
+]
+```

@@ -1,0 +1,19 @@
+My previous attempt failed because I tried to cast an `ImmutableRoaringBitmap` to a `MappeableRoaringBitmap` to perform a `remove` operation, which caused a compilation error as the class could not be found. This approach was flawed because the `remove` operation should be performed on the original `MutableRoaringBitmap` `F`, and `F` already possesses the necessary methods.
+
+My corrected approach addresses the performance of the `topK` method's final step more directly and correctly. The original code created a temporary bitmap (`turnoff`) by iterating through the results to identify and later remove the smallest `n` excess values. This is inefficient for large `n`.
+
+The fix replaces this iteration with two highly optimized `MutableRoaringBitmap` operations:
+1.  `F.select((int) (n - 1))`: This efficiently finds the `n`-th smallest value in the bitmap, which serves as the upper limit for removal.
+2.  `F.remove(0L, val + 1L)`: This removes all values from the beginning of the bitmap up to and including `val` in a single, fast operation. The range is `[0, val + 1)`, effectively removing values `<= val`.
+
+This new implementation is much faster, avoids creating a temporary bitmap, and fixes the build error by correctly calling methods on the `F` object itself.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "    MutableRoaringBitmap F = ImmutableRoaringBitmap.or(G, E);\n    long n = F.getLongCardinality() - k;\n    if (n > 0) {\n      // TODO: make faster\n      IntIterator i = F.getIntIterator();\n      MutableRoaringBitmap turnoff = new MutableRoaringBitmap();\n      while (i.hasNext() && n > 0) {\n        turnoff.add(i.next());\n        --n;\n      }\n      F.andNot(turnoff);\n    }",
+    "replace": "    MutableRoaringBitmap F = ImmutableRoaringBitmap.or(G, E);\n    long n = F.getLongCardinality() - k;\n    if (n > 0) {\n      // TODO: make faster\n      int val = F.select((int) (n - 1));\n      F.remove(0L, val + 1L);\n    }"
+  }
+]
+```

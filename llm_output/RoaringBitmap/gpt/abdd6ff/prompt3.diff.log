@@ -1,0 +1,11 @@
+I improved the `topK` method by replacing the manual iteration and removal of excess elements with the optimized `limit` operation, which quickly selects the first N elements to remove, significantly reducing overhead.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "MutableRoaringBitmap F = ImmutableRoaringBitmap.or(G, E);\n    long n = F.getLongCardinality() - k;\n    if (n > 0) {\n      // TODO: make faster\n      IntIterator i = F.getIntIterator();\n      MutableRoaringBitmap turnoff = new MutableRoaringBitmap();\n      while (i.hasNext() && n > 0) {\n        turnoff.add(i.next());\n        --n;\n      }\n      F.andNot(turnoff);\n    }",
+    "replace": "MutableRoaringBitmap F = ImmutableRoaringBitmap.or(G, E);\n    int toRemove = (int) (F.getLongCardinality() - k);\n    if (toRemove > 0) {\n      MutableRoaringBitmap turnoff = F.limit(toRemove);\n      F.andNot(turnoff);\n    }"
+  }
+]
+```

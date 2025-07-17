@@ -1,0 +1,19 @@
+The performance issue is the inefficient removal of excess elements in the `topK` method. The current implementation creates a new `MutableRoaringBitmap`, iterates to populate it with elements to be removed, and then performs a bitmap difference (`andNot`). This is slow and memory-intensive, especially when many elements need to be removed.
+
+My improvement replaces this logic with a much more efficient approach.
+1.  It determines the value of the n-th element to be removed.
+    -   If the number of elements to remove (`n`) is within the `int` range, it uses the highly optimized `select(rank)` method to find this value directly.
+    -   If `n` is very large (exceeds `Integer.MAX_VALUE`), it falls back to an iterator-based approach to find the value, but crucially, it does not build a large temporary bitmap.
+2.  Once the threshold value is found, it uses a single `remove(start, end)` operation to eliminate all elements up to that value in one go.
+
+This change significantly reduces CPU time and memory allocations by avoiding the creation of a large intermediate bitmap and leveraging more direct and efficient methods of the `RoaringBitmap` API.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "    MutableRoaringBitmap F = ImmutableRoaringBitmap.or(G, E);\n    long n = F.getLongCardinality() - k;\n    if (n > 0) {\n      // TODO: make faster\n      IntIterator i = F.getIntIterator();\n      MutableRoaringBitmap turnoff = new MutableRoaringBitmap();\n      while (i.hasNext() && n > 0) {\n        turnoff.add(i.next());\n        --n;\n      }\n      F.andNot(turnoff);\n    }",
+    "replace": "    MutableRoaringBitmap F = ImmutableRoaringBitmap.or(G, E);\n    long n = F.getLongCardinality() - k;\n    if (n > 0) {\n      // Faster removal of smallest n elements.\n      // This avoids creating a large temporary bitmap for the andNot operation.\n      final int limit;\n      if (n <= Integer.MAX_VALUE) { // select takes an int for rank\n        limit = F.select((int) (n - 1));\n      } else {\n        IntIterator i = F.getIntIterator();\n        for (long toSkip = n - 1; toSkip > 0; --toSkip) {\n          i.next();\n        }\n        limit = i.next();\n      }\n      // remove all elements up to and including limit\n      F.remove((long) F.first(), (long) limit + 1);\n    }"
+  }
+]
+```

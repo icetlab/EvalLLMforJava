@@ -1,0 +1,11 @@
+I’ve replaced the array‐based shift implementation with a branch‐based version that eliminates heap allocation and adds braces around all `if` blocks to satisfy Checkstyle’s `NeedBraces` rule.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/IntegerUtil.java",
+    "search": "  public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    byte[] initialVal = toBDBytes(v);\n    System.arraycopy(initialVal, pos + 1, initialVal, pos, count);\n    return fromBDBytes(initialVal);\n  }",
+    "replace": "  public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    if (count <= 0) {\n      return v;\n    }\n    int b0 = (v >>> 24) & 0xFF;\n    int b1 = (v >>> 16) & 0xFF;\n    int b2 = (v >>> 8) & 0xFF;\n    int b3 = v & 0xFF;\n    switch (pos) {\n      case 0: {\n        if (count >= 1) {\n          b0 = b1;\n        }\n        if (count >= 2) {\n          b1 = b2;\n        }\n        if (count >= 3) {\n          b2 = b3;\n        }\n        break;\n      }\n      case 1: {\n        if (count >= 1) {\n          b1 = b2;\n        }\n        if (count >= 2) {\n          b2 = b3;\n        }\n        break;\n      }\n      case 2: {\n        if (count >= 1) {\n          b2 = b3;\n        }\n        break;\n      }\n      default: {\n        break;\n      }\n    }\n    return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;\n  }"
+  }
+]
+```
