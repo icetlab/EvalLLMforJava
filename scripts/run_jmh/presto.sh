@@ -71,7 +71,14 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
 
             # Workaround
             sed -i '/^sphinx\([<=>!~]*[0-9.]*\)*$/s/.*/sphinx>=5.0/' presto-docs/requirements.txt
-
+cat <<'EOF' > src/checkstyle/presto-checks.xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE module PUBLIC
+        "-//Puppy Crawl//DTD Check Configuration 1.3//EN"
+        "http://checkstyle.sourceforge.net/dtds/configuration_1_3.dtd">
+<module name="Checker">
+    </module>
+EOF
             patch_name=$(basename "$patch_file")
             patch_rel_path="$PATCH_DIR/${patch_name}"
 
@@ -115,9 +122,11 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
                     # Run JMH benchmark and save results
                     echo "Running JMH benchmark: $jmh_case"
                     if [ "$id" = "297b089" ]; then
-                        JMH_OPTS="-p withNulls=NONE -wi 5 -i 20 -f 1 -r 1s -w 1s"
+                        JMH_OPTS='-p withNulls=NONE -p typeSignature=integer -wi 5 -i 20 -f 1 -r 1s -w 1s'
+                    elif [ "$id" = "000fa29" ]; then
+                        JMH_OPTS='-p type=ROW(BIGINT,BIGINT) -wi 10 -i 50 -f 1 -r 1s -w 1s'
                     else
-                        JMH_OPTS="-wi 10 -i 50 -f 1 -r 1s -w 1s"
+                        JMH_OPTS='-wi 10 -i 50 -f 1 -r 1s -w 1s'
                     fi
                     java -cp "target/jmh-benchmarks.jar:target/classes:target/test-classes:$(../mvnw dependency:build-classpath -Dmdep.scope=test -q -DincludeScope=test -Dsilent=true -Dmdep.outputFile=/dev/stdout | tail -n1)" \
                         org.openjdk.jmh.Main ".*$jmh_case.*" $JMH_OPTS -rff "$JSON_FILE" -rf json
@@ -169,9 +178,11 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
 
         # Run JMH benchmark and save results
         if [ "$id" = "297b089" ]; then
-            JMH_OPTS="-p withNulls=NONE -wi 5 -i 20 -f 1 -r 1s -w 1s"
+            JMH_OPTS='-p withNulls=NONE -p typeSignature=integer -wi 5 -i 20 -f 1 -r 1s -w 1s'
+        elif [ "$id" = "000fa29" ]; then
+            JMH_OPTS='-p type=ROW(BIGINT,BIGINT) -wi 10 -i 50 -f 1 -r 1s -w 1s'
         else
-            JMH_OPTS="-wi 10 -i 50 -f 1 -r 1s -w 1s"
+            JMH_OPTS='-wi 10 -i 50 -f 1 -r 1s -w 1s'
         fi
         java -cp "target/jmh-benchmarks.jar:target/classes:target/test-classes:$(../mvnw dependency:build-classpath -Dmdep.scope=test -q -DincludeScope=test -Dsilent=true -Dmdep.outputFile=/dev/stdout | tail -n1)" \
             org.openjdk.jmh.Main ".*$jmh_case.*" $JMH_OPTS -rff "$JSON_FILE" -rf json

@@ -144,6 +144,7 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
     else
         # Reset repository to specific commit
         git reset --hard "$commit_hash"
+        git clean -fd
 
         # Restore only the necessary source files in org mode
         if [ "$MODE" = "-org" ]; then
@@ -158,6 +159,14 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
             <skip>true</skip>\
         </configuration>
         }' pom.xml
+
+        sed -i 's#<maven.compiler.source>1\.6</maven.compiler.source>#<maven.compiler.source>1.8</maven.compiler.source>#g' pom.xml
+        sed -i 's#<maven.compiler.target>1\.6</maven.compiler.target>#<maven.compiler.target>1.8</maven.compiler.target>#g' pom.xml
+
+        if [ ! -f ./mvnw ]; then
+            echo "mvnw not found, generating Maven wrapper..."
+            mvn -N io.takari:maven:wrapper
+        fi
 
         # Non-LLM normal flow
         # # Compile and run unit test before benchmarking
