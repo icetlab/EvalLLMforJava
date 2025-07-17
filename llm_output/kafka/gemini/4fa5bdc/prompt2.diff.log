@@ -1,0 +1,18 @@
+The performance issue is caused by unnecessary `Set` creation for prefixed ACLs during every authorization check. This leads to excessive object allocation and garbage collection pressure, especially when many prefixed ACLs are defined.
+
+My improvement addresses this by making two related changes. First, I will update the `AclSets` helper class to operate on more generic `Iterable`s instead of `Set`s, and I will optimize its `find` method to be lazy. Second, I will modify the `matchingAcls` method to leverage this change by passing a lazy `Iterable` of prefixed ACLs, thus avoiding the costly creation of a new `Set` on each call.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  class AclSets(sets: Set[AclEntry]*) {\n    def find(p: AclEntry => Boolean): Option[AclEntry] = sets.flatMap(_.find(p)).headOption\n    def isEmpty: Boolean = !sets.exists(_.nonEmpty)\n  }",
+    "replace": "  class AclSets(sets: Iterable[AclEntry]*) {\n    def find(p: AclEntry => Boolean): Option[AclEntry] = sets.view.flatMap(_.find(p)).headOption\n    def isEmpty: Boolean = !sets.exists(_.nonEmpty)\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "    val prefixed = aclCacheSnapshot\n      .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n      .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n      .filterKeys(resource => resourceName.startsWith(resource.name))\n      .values\n      .flatMap { _.acls }\n      .toSet",
+    "replace": "    val prefixed = aclCacheSnapshot\n      .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n      .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n      .filterKeys(resource => resourceName.startsWith(resource.name))\n      .values\n      .flatMap { _.acls }"
+  }
+]
+```

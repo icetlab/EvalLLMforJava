@@ -1,0 +1,16 @@
+I’m adding a thread-local scratch buffer to batch-read direct buffers into a single byte array and then call `checksum.update(byte[], …)` in one shot, greatly reducing the per-byte overhead.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "    private Checksums() {\n    }\n",
+    "replace": "    private Checksums() {\n    }\n\n    // Thread-local scratch buffer for bulk reads of direct ByteBuffers\n    private static final ThreadLocal<byte[]> BUFFER = ThreadLocal.withInitial(() -> new byte[1024]);\n"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }",
+    "replace": "        } else {\n            int start = buffer.position() + offset;\n            // Bulk-copy into a thread-local byte[] and update in one call\n            ByteBuffer slice = buffer.duplicate();\n            slice.position(start).limit(start + length);\n            byte[] temp = BUFFER.get();\n            if (temp.length < length) {\n                temp = new byte[length];\n                BUFFER.set(temp);\n            }\n            slice.get(temp, 0, length);\n            checksum.update(temp, 0, length);\n        }"
+  }
+]
+```

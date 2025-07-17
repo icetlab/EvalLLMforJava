@@ -1,0 +1,31 @@
+We can reduce object allocations by creating the TopicPartitionOperationKey once per DelayedOperations instance instead of on every method call.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/cluster/Partition.scala",
+    "search": "class DelayedOperations(topicPartition: TopicPartition,\n                        produce: DelayedOperationPurgatory[DelayedProduce],\n                        fetch: DelayedOperationPurgatory[DelayedFetch],\n                        deleteRecords: DelayedOperationPurgatory[DelayedDeleteRecords]) {",
+    "replace": "class DelayedOperations(topicPartition: TopicPartition,\n                        produce: DelayedOperationPurgatory[DelayedProduce],\n                        fetch: DelayedOperationPurgatory[DelayedFetch],\n                        deleteRecords: DelayedOperationPurgatory[DelayedDeleteRecords]) {\n  private val requestKey = TopicPartitionOperationKey(topicPartition)"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/cluster/Partition.scala",
+    "search": "def checkAndCompleteAll(): Unit = {\n    val requestKey = TopicPartitionOperationKey(topicPartition)\n    fetch.checkAndComplete(requestKey)\n    produce.checkAndComplete(requestKey)\n    deleteRecords.checkAndComplete(requestKey)\n  }",
+    "replace": "def checkAndCompleteAll(): Unit = {\n    fetch.checkAndComplete(requestKey)\n    produce.checkAndComplete(requestKey)\n    deleteRecords.checkAndComplete(requestKey)\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/cluster/Partition.scala",
+    "search": "def checkAndCompleteFetch(): Unit = {\n    fetch.checkAndComplete(TopicPartitionOperationKey(topicPartition))\n  }",
+    "replace": "def checkAndCompleteFetch(): Unit = {\n    fetch.checkAndComplete(requestKey)\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/cluster/Partition.scala",
+    "search": "def checkAndCompleteProduce(): Unit = {\n    produce.checkAndComplete(TopicPartitionOperationKey(topicPartition))\n  }",
+    "replace": "def checkAndCompleteProduce(): Unit = {\n    produce.checkAndComplete(requestKey)\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/cluster/Partition.scala",
+    "search": "def checkAndCompleteDeleteRecords(): Unit = {\n    deleteRecords.checkAndComplete(TopicPartitionOperationKey(topicPartition))\n  }",
+    "replace": "def checkAndCompleteDeleteRecords(): Unit = {\n    deleteRecords.checkAndComplete(requestKey)\n  }"
+  }
+]
+```

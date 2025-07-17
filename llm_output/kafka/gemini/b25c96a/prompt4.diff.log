@@ -1,0 +1,18 @@
+The current implementation for expiring producer IDs iterates over all producers, collects the expired ones into a list, and then removes them. This is inefficient due to the creation of an intermediate list and multiple iterations over the data. The same inefficient pattern is used for expiring verification states.
+
+My improvement is to use `Map.entrySet().removeIf()` for both `producers` and `verificationStates`. This allows removing entries in a single pass without creating intermediate collections, which is more memory and CPU efficient. The now-unused helper method `removeProducerIds` is also removed as part of this refactoring.
+
+```json
+[
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "    public void removeExpiredProducers(long currentTimeMs) {\n        List<Long> keys = producers.entrySet().stream()\n                .filter(entry -> isProducerExpired(currentTimeMs, entry.getValue()))\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        removeProducerIds(keys);\n\n        List<Long> verificationKeys = verificationStates.entrySet().stream()\n                .filter(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs())\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        verificationKeys.forEach(verificationStates::remove);\n    }",
+    "replace": "    public void removeExpiredProducers(long currentTimeMs) {\n        producers.entrySet().removeIf(entry -> isProducerExpired(currentTimeMs, entry.getValue()));\n        producerIdCount = producers.size();\n\n        verificationStates.entrySet().removeIf(entry ->\n            currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs());\n    }"
+  },
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "    private void removeProducerIds(List<Long> keys) {\n        producers.keySet().removeAll(keys);\n        producerIdCount = producers.size();\n    }\n",
+    "replace": ""
+  }
+]
+```

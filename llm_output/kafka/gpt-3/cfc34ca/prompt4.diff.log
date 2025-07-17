@@ -1,0 +1,16 @@
+I have inlined and optimized the checkpointing methods to avoid the expensive `logsByDir` grouping on every invocation. This reduces allocations by directly iterating over `currentLogs` and `futureLogs` for each live directory.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogManager.scala",
+    "search": "def checkpointLogRecoveryOffsets(): Unit = {\n    logsByDir.foreach { case (dir, partitionToLogMap) =>\n      liveLogDirs.find(_.getAbsolutePath.equals(dir)).foreach { f =>\n        checkpointRecoveryOffsetsAndCleanSnapshot(f, partitionToLogMap.values.toSeq)\n      }\n    }\n  }",
+    "replace": "def checkpointLogRecoveryOffsets(): Unit = {\n    for (dir <- liveLogDirs) {\n      val logsInDir = (currentLogs.iterator ++ futureLogs.iterator).collect {\n        case (_, log) if log.parentDirFile == dir => log\n      }.toSeq\n      checkpointRecoveryOffsetsAndCleanSnapshot(dir, logsInDir)\n    }\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogManager.scala",
+    "search": "private def checkpointLogStartOffsetsInDir(dir: File): Unit = {\n    for {\n      partitionToLog <- logsByDir.get(dir.getAbsolutePath)\n      checkpoint <- logStartOffsetCheckpoints.get(dir)\n    } {\n      try {\n        val logStartOffsets = partitionToLog.collect {\n          case (k, log) if log.logStartOffset > log.logSegments.head.baseOffset => k -> log.logStartOffset\n        }\n        checkpoint.write(logStartOffsets)\n      } catch {\n        case e: IOException =>\n          logDirFailureChannel.maybeAddOfflineLogDir(dir.getAbsolutePath, s\"Disk error while writing to logStartOffset file in directory $dir\", e)\n      }\n    }\n  }",
+    "replace": "private def checkpointLogStartOffsetsInDir(dir: File): Unit = {\n    logStartOffsetCheckpoints.get(dir).foreach { checkpoint =>\n      try {\n        val logStartOffsets = (currentLogs.iterator ++ futureLogs.iterator).collect {\n          case (tp, log) if log.parentDirFile == dir && log.logStartOffset > log.logSegments.head.baseOffset => tp -> log.logStartOffset\n        }.toMap\n        checkpoint.write(logStartOffsets)\n      } catch {\n        case e: IOException =>\n          logDirFailureChannel.maybeAddOfflineLogDir(dir.getAbsolutePath, s\"Disk error while writing to logStartOffset file in directory $dir\", e)\n      }\n    }\n  }"
+  }
+]
+```

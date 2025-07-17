@@ -1,0 +1,16 @@
+We optimize the fetcher by avoiding the creation of intermediate `PartitionState` objects—directly iterating over the underlying map when updating fetch offsets and building partition offset views.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/server/AbstractFetcherThread.scala",
+    "search": "val newStates: Map[TopicPartition, PartitionFetchState] = partitionStates.partitionStates.asScala\n      .map { state =>\n        val currentFetchState = state.value\n        val maybeTruncationComplete = fetchOffsets.get(state.topicPartition) match {",
+    "replace": "val newStates: Map[TopicPartition, PartitionFetchState] =\n        partitionStates.partitionStateMap.asScala.map { case (tp, currentFetchState) =>\n          val newState = fetchOffsets.get(tp) match {\n            case Some(offsetTruncationState) =>\n              val s = if (offsetTruncationState.truncationCompleted) Fetching else Truncating\n              PartitionFetchState(offsetTruncationState.offset, currentFetchState.lag,\n                currentFetchState.currentLeaderEpoch, currentFetchState.delay, s)\n            case None => currentFetchState\n          }\n          tp -> newState\n        }.toMap"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/server/AbstractFetcherThread.scala",
+    "search": "private[server] def partitionsAndOffsets: Map[TopicPartition, InitialFetchState] = inLock(partitionMapLock) {\n    partitionStates.partitionStates.asScala.map { state =>",
+    "replace": "private[server] def partitionsAndOffsets: Map[TopicPartition, InitialFetchState] = inLock(partitionMapLock) {\n    partitionStates.partitionStateMap.asScala.map { case (tp, currentFetchState) =>"
+  }
+]
+```

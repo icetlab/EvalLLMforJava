@@ -1,0 +1,18 @@
+My overall improvement strategy is to enhance the performance of the `ReplaceField` transformation by optimizing field filtering. The original implementation uses `java.util.List` for the `exclude` and `include` configurations. Checking for field existence in these lists with `List.contains()` has a linear time complexity of O(n), which can be inefficient when processing records with many fields or when the include/exclude lists are large.
+
+To address this, I will replace the `List` collections with `java.util.Set`. This change will reduce the time complexity of the `contains()` check to O(1) on average, significantly speeding up the `filter` method, which is a critical part of the transformation logic called for every field. I will use fully qualified names for `Set` and `HashSet` to avoid modifying the import statements, keeping the changes minimal and focused.
+
+```json
+[
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "    private List<String> exclude;\n    private List<String> include;",
+    "replace": "    private java.util.Set<String> exclude;\n    private java.util.Set<String> include;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "        exclude = config.getList(ConfigName.EXCLUDE);\n        include = config.getList(ConfigName.INCLUDE);",
+    "replace": "        exclude = new java.util.HashSet<>(config.getList(ConfigName.EXCLUDE));\n        include = new java.util.HashSet<>(config.getList(ConfigName.INCLUDE));"
+  }
+]
+```

@@ -1,0 +1,21 @@
+The changes below convert the include/exclude field lists to HashSet instances to achieve O(1) lookups instead of O(N), greatly improving filter performance when many fields are configured.
+
+```json
+[
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "import java.util.Map;",
+    "replace": "import java.util.Map;\nimport java.util.Set;\nimport java.util.HashSet;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "private List<String> exclude;\n    private List<String> include;",
+    "replace": "private Set<String> exclude;\n    private Set<String> include;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "exclude = config.getList(ConfigName.EXCLUDE);\n        include = config.getList(ConfigName.INCLUDE);",
+    "replace": "exclude = new HashSet<>(config.getList(ConfigName.EXCLUDE));\n        include = new HashSet<>(config.getList(ConfigName.INCLUDE));"
+  }
+]
+```

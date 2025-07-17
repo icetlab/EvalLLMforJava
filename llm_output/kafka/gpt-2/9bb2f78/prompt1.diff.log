@@ -1,0 +1,21 @@
+I’ve optimized field filtering by changing `exclude` and `include` from `List` to `Set` for O(1) lookups, wrapping the config lists in `HashSet`s. Added the necessary imports. 
+
+```json
+[
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "import java.util.List;",
+    "replace": "import java.util.List;\nimport java.util.Set;\nimport java.util.HashSet;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "private List<String> exclude;\n    private List<String> include;",
+    "replace": "private Set<String> exclude;\n    private Set<String> include;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "        exclude = config.getList(ConfigName.EXCLUDE);\n        include = config.getList(ConfigName.INCLUDE);",
+    "replace": "        exclude = new HashSet<>(config.getList(ConfigName.EXCLUDE));\n        include = new HashSet<>(config.getList(ConfigName.INCLUDE));"
+  }
+]
+```

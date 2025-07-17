@@ -1,0 +1,11 @@
+I’ve replaced the stream-based key collection in removeExpiredProducers with direct entrySet().removeIf calls to avoid creating intermediate lists, reducing GC pressure and improving iteration performance.
+
+```json
+[
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "public void removeExpiredProducers(long currentTimeMs) {\n        List<Long> keys = producers.entrySet().stream()\n                .filter(entry -> isProducerExpired(currentTimeMs, entry.getValue()))\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        removeProducerIds(keys);\n\n        List<Long> verificationKeys = verificationStates.entrySet().stream()\n                .filter(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs())\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        verificationKeys.forEach(verificationStates::remove);\n    }",
+    "replace": "public void removeExpiredProducers(long currentTimeMs) {\n        // Remove expired producers without intermediate collections\n        producers.entrySet().removeIf(entry -> isProducerExpired(currentTimeMs, entry.getValue()));\n        producerIdCount = producers.size();\n\n        // Remove expired verification states\n        long expirationMs = producerStateManagerConfig.producerIdExpirationMs();\n        verificationStates.entrySet().removeIf(entry -> currentTimeMs - entry.getValue().timestamp() >= expirationMs);\n    }"
+  }
+]
+```

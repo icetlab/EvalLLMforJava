@@ -1,0 +1,18 @@
+My proposed improvement for `AclAuthorizer.scala` focuses on optimizing the `acls` method. The original implementation was inefficient because it eagerly created intermediate `Set` collections and `AclBinding` objects for every ACL in the cache, even for those that would be filtered out later. This led to unnecessary object allocations and garbage collection overhead, especially with a large number of ACLs.
+
+My change refactors the `acls` method to use a `for` comprehension over iterators. This approach has several performance benefits:
+1.  **Lazy Evaluation**: By operating on iterators, the filtering and mapping are performed lazily. No intermediate collections are created.
+2.  **Reduced Object Creation**: `AclBinding` objects are now created only for ACLs that match the filter criteria, significantly reducing object churn.
+3.  **Early Filtering**: The logic now filters by `ResourcePattern` first, and only then by `AccessControlEntry`. This avoids processing ACLs for resources that don't match the filter, further improving efficiency.
+
+The final result is collected into a single list at the end, which is much more efficient than creating multiple intermediate sets. This change preserves the method's functionality while significantly improving its performance.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n    inReadLock(lock) {\n      unorderedAcls.flatMap { case (resource, versionedAcls) =>\n        versionedAcls.acls.map(acl => new AclBinding(resource, acl.ace))\n            .filter(filter.matches)\n      }.asJava\n    }\n  }",
+    "replace": "  override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n    inReadLock(lock) {\n      val bindings = for {\n        (resource, versionedAcls) <- unorderedAcls.iterator\n        if filter.patternFilter.matches(resource)\n        acl <- versionedAcls.acls.iterator\n        if filter.entryFilter.matches(acl.ace)\n      } yield new AclBinding(resource, acl.ace)\n      bindings.toList.asJava\n    }\n  }"
+  }
+]
+```

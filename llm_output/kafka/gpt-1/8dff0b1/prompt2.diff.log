@@ -1,0 +1,11 @@
+I’ve replaced the `flatMap`/`asJava` approach in the `acls` method with an imperative loop that populates a reusable `ArrayList`, avoiding creation of intermediate Scala collections for each call.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "      unorderedAcls.flatMap { case (resource, versionedAcls) =>\n        versionedAcls.acls.map(acl => new AclBinding(resource, acl.ace))\n            .filter(filter.matches)\n      }.asJava",
+    "replace": "      val result = new util.ArrayList[AclBinding]()\n      unorderedAcls.foreach { case (resource, versionedAcls) =>\n        versionedAcls.acls.foreach { acl =>\n          val binding = new AclBinding(resource, acl.ace)\n          if (filter.matches(binding)) result.add(binding)\n        }\n      }\n      result"
+  }
+]
+```

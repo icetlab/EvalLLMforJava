@@ -1,0 +1,16 @@
+I’ve unrolled and replaced the iterative loops in sizeOfUnsignedVarint and sizeOfVarlong with direct bit‐mask checks to determine the encoded length in constant time, which avoids repeated shifts and branch mispredictions and boosts performance for these hot‐path methods.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "public static int sizeOfUnsignedVarint(int value) {\n    int bytes = 1;\n    while ((value & 0xffffff80) != 0L) {\n        bytes += 1;\n        value >>>= 7;\n    }\n    return bytes;\n}",
+    "replace": "public static int sizeOfUnsignedVarint(int value) {\n    if (value < 0) {\n        return 5;\n    }\n    if ((value & ~0x7F) == 0)  return 1;\n    if ((value & ~0x3FFF) == 0)  return 2;\n    if ((value & ~0x1FFFFF) == 0)  return 3;\n    if ((value & ~0x0FFFFFFF) == 0)  return 4;\n    return 5;\n}"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "public static int sizeOfVarlong(long value) {\n    long v = (value << 1) ^ (value >> 63);\n    int bytes = 1;\n    while ((v & 0xffffffffffffff80L) != 0L) {\n        bytes += 1;\n        v >>>= 7;\n    }\n    return bytes;\n}",
+    "replace": "public static int sizeOfVarlong(long value) {\n    long v = (value << 1) ^ (value >> 63);\n    if ((v & ~0x7FL) == 0L)                     return 1;\n    if ((v & ~0x3FFFL) == 0L)                  return 2;\n    if ((v & ~0x1FFFFFL) == 0L)                return 3;\n    if ((v & ~0x0FFFFFFFL) == 0L)              return 4;\n    if ((v & ~0x07FFFFFFFFL) == 0L)            return 5;\n    if ((v & ~0x03FFFFFFFFFFL) == 0L)          return 6;\n    if ((v & ~0x01FFFFFFFFFFFFL) == 0L)        return 7;\n    if ((v & ~0x00FFFFFFFFFFFFFFL) == 0L)      return 8;\n    if ((v & ~0x007FFFFFFFFFFFFFFFL) == 0L)    return 9;\n    return 10;\n}"
+  }
+]
+```

@@ -1,0 +1,32 @@
+I’ve improved key hot-path methods to reduce overhead by:
+
+1. Replacing `Random` with `ThreadLocalRandom` for backoff jitter to avoid contention.
+2. Simplifying ACL matching to use `exists` with inline logging instead of `find` + `exists`.
+3. Streamlining the empty-ACL check.
+
+These changes preserve behavior and should yield better throughput under contention.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "import scala.util.{Failure, Random, Success, Try}",
+    "replace": "import scala.util.{Failure, Success, Try}\nimport java.util.concurrent.ThreadLocalRandom"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "private def backoffTime = {\n    retryBackoffMs + Random.nextInt(retryBackoffJitterMs)\n  }",
+    "replace": "private def backoffTime: Int = retryBackoffMs + ThreadLocalRandom.current().nextInt(retryBackoffJitterMs)"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "def isEmptyAclAndAuthorized(acls: Set[AclEntry]): Boolean = {\n      if (acls.isEmpty) {\n        // No ACLs found for this resource, permission is determined by value of config allow.everyone.if.no.acl.found\n        authorizerLogger.debug(s\"No acl found for resource $resource, authorized = $shouldAllowEveryoneIfNoAclIsFound\")\n        shouldAllowEveryoneIfNoAclIsFound\n      } else false\n    }",
+    "replace": "def isEmptyAclAndAuthorized(acls: Set[AclEntry]): Boolean = {\n      val emptyAllow = acls.isEmpty && shouldAllowEveryoneIfNoAclIsFound\n      if (acls.isEmpty) {\n        authorizerLogger.debug(s\"No acl found for resource $resource, authorized = $shouldAllowEveryoneIfNoAclIsFound\")\n      }\n      emptyAllow\n    }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "private def matchingAclExists(operation: AclOperation,\n                                resource: ResourcePattern,\n                                principal: KafkaPrincipal,\n                                host: String,\n                                permissionType: AclPermissionType,\n                                acls: Set[AclEntry]): Boolean = {\n    acls.find { acl =>\n      acl.permissionType == permissionType &&\n        (acl.kafkaPrincipal == principal || acl.kafkaPrincipal == AclEntry.WildcardPrincipal) &&\n        (operation == acl.operation || acl.operation == AclOperation.ALL) &&\n        (acl.host == host || acl.host == AclEntry.WildcardHost)\n    }.exists { acl =>\n      authorizerLogger.debug(s\"operation = $operation on resource = $resource from host = $host is $permissionType based on acl = $acl\")\n      true\n    }\n  }",
+    "replace": "private def matchingAclExists(operation: AclOperation,\n                                resource: ResourcePattern,\n                                principal: KafkaPrincipal,\n                                host: String,\n                                permissionType: AclPermissionType,\n                                acls: Set[AclEntry]): Boolean = {\n    acls.exists { acl =>\n      val matches = acl.permissionType == permissionType &&\n        (acl.kafkaPrincipal == principal || acl.kafkaPrincipal == AclEntry.WildcardPrincipal) &&\n        (operation == acl.operation || acl.operation == AclOperation.ALL) &&\n        (acl.host == host || acl.host == AclEntry.WildcardHost)\n      if (matches) {\n        authorizerLogger.debug(s\"operation = $operation on resource = $resource from host = $host is $permissionType based on acl = $acl\")\n      }\n      matches\n    }\n  }"
+  }
+]
+```

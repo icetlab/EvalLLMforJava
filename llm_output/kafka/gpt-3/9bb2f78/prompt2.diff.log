@@ -1,0 +1,21 @@
+I’ve updated the `exclude` and `include` collections from `List` to `Set` and initialize them as `HashSet` instances to achieve O(1) containment checks.  
+
+```json
+[
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "import java.util.HashMap;\nimport java.util.List;\nimport java.util.Map;",
+    "replace": "import java.util.HashMap;\nimport java.util.List;\nimport java.util.Map;\nimport java.util.Set;\nimport java.util.HashSet;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "private List<String> exclude;\n    private List<String> include;",
+    "replace": "private Set<String> exclude;\n    private Set<String> include;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "exclude = config.getList(ConfigName.EXCLUDE);\n        include = config.getList(ConfigName.INCLUDE);",
+    "replace": "exclude = new HashSet<>(config.getList(ConfigName.EXCLUDE));\n        include = new HashSet<>(config.getList(ConfigName.INCLUDE));"
+  }
+]
+```

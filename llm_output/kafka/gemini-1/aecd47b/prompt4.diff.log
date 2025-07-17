@@ -1,0 +1,23 @@
+The build failure was caused by checkstyle indentation errors. The patch tool likely preserved the indentation of the line where the `search` block was found and prepended it to the `replace` block. Since my original `replace` blocks already contained leading indentation, this resulted in double indentation (8 spaces instead of 4), violating the checkstyle rules.
+
+To fix this, I've adjusted the `search` blocks to include the leading indentation from the original source file. This makes the search more specific and ensures that when the replacement happens, the indentation level is correct. The `replace` blocks already had the correct internal and leading indentation, so they remain as they were. This change should resolve the checkstyle errors while keeping the performance-enhancing logic intact.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "import java.nio.ByteBuffer;\nimport java.util.zip.Checksum;",
+    "replace": "import java.lang.reflect.InvocationTargetException;\nimport java.lang.reflect.Method;\nimport java.nio.ByteBuffer;\nimport java.util.zip.Checksum;"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "    private Checksums() {\n    }",
+    "replace": "    private static final Method CHECKSUM_UPDATE_METHOD = getChecksumUpdateMethod();\n\n    private static Method getChecksumUpdateMethod() {\n        if (Java.IS_JAVA9_COMPATIBLE) {\n            try {\n                return Checksum.class.getMethod(\"update\", ByteBuffer.class);\n            } catch (NoSuchMethodException e) {\n                // Should not happen on Java 9+\n                throw new RuntimeException(\"Unable to find Checksum.update(ByteBuffer) method\", e);\n            }\n        }\n        return null;\n    }\n\n    private Checksums() {\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }",
+    "replace": "    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            if (CHECKSUM_UPDATE_METHOD != null) {\n                int originalPosition = buffer.position();\n                try {\n                    // Create a slice of the buffer. This allows us to checksum a sub-range of the buffer without\n                    // modifying the buffer's own position and limit.\n                    buffer.position(originalPosition + offset);\n                    ByteBuffer slice = buffer.slice();\n                    slice.limit(length);\n                    CHECKSUM_UPDATE_METHOD.invoke(checksum, slice);\n                } catch (IllegalAccessException | InvocationTargetException e) {\n                    throw new RuntimeException(\"Unable to invoke Checksum.update(ByteBuffer) method\", e);\n                } finally {\n                    buffer.position(originalPosition);\n                }\n            } else {\n                int start = buffer.position() + offset;\n                for (int i = start; i < start + length; i++)\n                    checksum.update(buffer.get(i));\n            }\n        }\n    }"
+  }
+]
+```

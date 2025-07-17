@@ -1,0 +1,13 @@
+The `acls()` method in `AclAuthorizer` iterates over all cached ACLs. For each resource, it maps its ACL entries to `AclBinding` objects and then filters them. This process creates an intermediate `Set` for each resource, which is inefficient and can lead to performance degradation from excessive object allocation and garbage collection, particularly when many resources are cached.
+
+To optimize this, I will add `.view` to the ACLs set before the `map` and `filter` operations. This creates a lazy `View` of the set, causing `map` and `filter` to be executed without creating intermediate collections. The final list of `AclBinding` objects is constructed directly by `flatMap`, which significantly reduces memory allocations and improves performance.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "      unorderedAcls.flatMap { case (resource, versionedAcls) =>\n        versionedAcls.acls.map(acl => new AclBinding(resource, acl.ace))\n            .filter(filter.matches)\n      }.asJava",
+    "replace": "      unorderedAcls.flatMap { case (resource, versionedAcls) =>\n        versionedAcls.acls.view.map(acl => new AclBinding(resource, acl.ace))\n            .filter(filter.matches)\n      }.asJava"
+  }
+]
+```

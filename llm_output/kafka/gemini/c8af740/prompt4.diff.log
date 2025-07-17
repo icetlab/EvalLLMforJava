@@ -1,0 +1,13 @@
+The performance issue lies in the `removeExpiredProducers` method, which inefficiently uses streams to identify and remove expired producer IDs. The current implementation iterates through the maps, collects keys into a list, and then iterates over that list to perform removals. This process is memory-intensive and computationally expensive due to the creation of intermediate collections.
+
+My improvement replaces this two-step process with a single, more efficient step using `Map.entrySet().removeIf()`. This method iterates over the map entries and removes them in-place if they satisfy the expiration predicate, avoiding the overhead of creating temporary lists and reducing the overall complexity. This change directly targets the performance bottleneck identified in the benchmark.
+
+```json
+[
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "    public void removeExpiredProducers(long currentTimeMs) {\n        List<Long> keys = producers.entrySet().stream()\n                .filter(entry -> isProducerExpired(currentTimeMs, entry.getValue()))\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        removeProducerIds(keys);\n\n        List<Long> verificationKeys = verificationStates.entrySet().stream()\n                .filter(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs())\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        verificationKeys.forEach(verificationStates::remove);\n    }",
+    "replace": "    public void removeExpiredProducers(long currentTimeMs) {\n        producers.entrySet().removeIf(entry -> isProducerExpired(currentTimeMs, entry.getValue()));\n        producerIdCount = producers.size();\n\n        verificationStates.entrySet().removeIf(entry ->\n            currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs());\n    }"
+  }
+]
+```

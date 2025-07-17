@@ -1,0 +1,21 @@
+The overall improvement is to leverage the `Checksum.update(ByteBuffer)` method introduced in Java 9 for better performance with direct `ByteBuffer`s. This is achieved by using a `MethodHandle` to dynamically invoke the method on Java 9+ while maintaining compatibility with older Java versions. This avoids the inefficient byte-by-byte processing for direct buffers.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "import java.nio.ByteBuffer;\nimport java.util.zip.Checksum;",
+    "replace": "import java.lang.invoke.MethodHandle;\nimport java.lang.invoke.MethodHandles;\nimport java.lang.invoke.MethodType;\nimport java.nio.ByteBuffer;\nimport java.util.zip.Checksum;"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "public final class Checksums {\n\n    private Checksums() {\n    }",
+    "replace": "public final class Checksums {\n\n    private static final MethodHandle CHECKSUM_UPDATE_METHOD_HANDLE;\n\n    static {\n        MethodHandle handle = null;\n        // Checksum#update(ByteBuffer) is only available in Java 9+\n        try {\n            handle = MethodHandles.lookup().findVirtual(Checksum.class, \"update\",\n                MethodType.methodType(void.class, ByteBuffer.class));\n        } catch (NoSuchMethodException | IllegalAccessException e) {\n            // Method not found, we are on Java 8 or the security manager prevents access.\n        }\n        CHECKSUM_UPDATE_METHOD_HANDLE = handle;\n    }\n\n    private Checksums() {\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }",
+    "replace": "    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            if (CHECKSUM_UPDATE_METHOD_HANDLE != null) {\n                int pos = buffer.position();\n                int limit = buffer.limit();\n                try {\n                    buffer.position(pos + offset);\n                    buffer.limit(pos + offset + length);\n                    CHECKSUM_UPDATE_METHOD_HANDLE.invoke(checksum, buffer);\n                } catch (Throwable e) {\n                    // This should not happen\n                    throw new RuntimeException(\"The Checksum#update(ByteBuffer) method threw an exception\", e);\n                } finally {\n                    buffer.limit(limit);\n                    buffer.position(pos);\n                }\n            } else {\n                int start = buffer.position() + offset;\n                for (int i = start; i < start + length; i++)\n                    checksum.update(buffer.get(i));\n            }\n        }\n    }"
+  }
+]
+```

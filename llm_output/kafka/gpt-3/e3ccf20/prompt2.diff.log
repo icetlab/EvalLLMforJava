@@ -1,0 +1,36 @@
+I’ve removed the dependency on Kafka’s `Logging` (and thus log4j) by dropping the `with Logging` mixin and replacing all direct `debug`, `trace`, and `warn` calls with the SLF4J-backed `authorizerLogger`. This should eliminate the missing log4j classes in SpotBugs.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "class AclAuthorizer extends Authorizer with Logging {",
+    "replace": "class AclAuthorizer extends Authorizer {"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "trace(s\"Deleting path for $resource because it had no ACLs remaining\")",
+    "replace": "authorizerLogger.trace(s\"Deleting path for $resource because it had no ACLs remaining\")"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "if (!updateSucceeded) {\n        trace(s\"Failed to update ACLs for $resource. Used version ${currentVersionedAcls.zkVersion}. Reading data and retrying update.\")",
+    "replace": "if (!updateSucceeded) {\n        authorizerLogger.trace(s\"Failed to update ACLs for $resource. Used version ${currentVersionedAcls.zkVersion}. Reading data and retrying update.\")"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "debug(s\"Updated ACLs for $resource to ${newVersionedAcls.acls} with version ${newVersionedAcls.zkVersion}\")",
+    "replace": "authorizerLogger.debug(s\"Updated ACLs for $resource to ${newVersionedAcls.acls} with version ${newVersionedAcls.zkVersion}\")"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "debug(s\"Updated ACLs for $resource, no change was made\")",
+    "replace": "authorizerLogger.debug(s\"Updated ACLs for $resource, no change was made\")"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "case Failure(_) => warn(s\"Ignoring unknown ResourceType: $rType\")",
+    "replace": "case Failure(_) => authorizerLogger.warn(s\"Ignoring unknown ResourceType: $rType\")"
+  }
+]
+```

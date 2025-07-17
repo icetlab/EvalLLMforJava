@@ -1,0 +1,11 @@
+I refactored the `acls` method to eliminate the creation of intermediate Scala collections and reduce object churn by using a single mutable Java `ArrayList` and direct iteration under the read lock.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n    inReadLock(lock) {\n      unorderedAcls.flatMap { case (resource, versionedAcls) =>\n        versionedAcls.acls.map(acl => new AclBinding(resource, acl.ace))\n            .filter(filter.matches)\n      }.asJava\n    }\n  }",
+    "replace": "override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n    inReadLock(lock) {\n      val results = new util.ArrayList[AclBinding]()\n      for ((resource, versionedAcls) <- unorderedAcls;\n           acl <- versionedAcls.acls) {\n        val binding = new AclBinding(resource, acl.ace)\n        if (filter.matches(binding)) results.add(binding)\n      }\n      results\n    }\n  }"
+  }
+]
+```

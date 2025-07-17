@@ -1,0 +1,24 @@
+My previous attempt to optimize `Checksums.java` failed due to a compilation error. The error occurred because I incorrectly assumed the `java.util.zip.Checksum` interface has an `update(ByteBuffer)` method, which is not available in the project's target Java version.
+
+I will now correct this mistake and provide a valid set of performance improvements.
+
+1.  **`update(Checksum, ByteBuffer, ...)` for direct buffers:** The original code iterates byte-by-byte over direct `ByteBuffer`s, which is inefficient. I will replace this with a bulk-read approach. A `ThreadLocal<byte[]>` will be used as a temporary buffer to read chunks of data from the direct `ByteBuffer`. This avoids both the slow per-byte `get()` calls and repeated memory allocations on the heap, significantly improving performance for non-array-backed buffers.
+
+2.  **`updateInt` and `updateLong` methods:** The original implementations make multiple `update(byte)` calls for each integer or long. I will optimize this by using a `ThreadLocal<ByteBuffer>` to write the number into a reusable buffer and then call `checksum.update()` on its backing array once. This reduces virtual method call overhead and eliminates object allocations.
+
+To ensure each change is atomic and independent, I will use the "initialization-on-demand holder" idiom, defining each `ThreadLocal` within a private static inner class. This encapsulates the `ThreadLocal` with its usage and makes the changes self-contained.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }",
+    "replace": "        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int originalPosition = buffer.position();\n            buffer.position(originalPosition + offset);\n\n            int remaining = length;\n            byte[] chunk = ThreadLocalChunk.CHUNK.get();\n            while (remaining > 0) {\n                int toRead = Math.min(remaining, chunk.length);\n                buffer.get(chunk, 0, toRead);\n                checksum.update(chunk, 0, toRead);\n                remaining -= toRead;\n            }\n\n            buffer.position(originalPosition);\n        }\n    }\n\n    private static class ThreadLocalChunk {\n        private static final ThreadLocal<byte[]> CHUNK = ThreadLocal.withInitial(() -> new byte[8192]);\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "    public static void updateInt(Checksum checksum, int input) {\n        checksum.update((byte) (input >> 24));\n        checksum.update((byte) (input >> 16));\n        checksum.update((byte) (input >> 8));\n        checksum.update((byte) input /* >> 0 */);\n    }\n\n    public static void updateLong(Checksum checksum, long input) {\n        checksum.update((byte) (input >> 56));\n        checksum.update((byte) (input >> 48));\n        checksum.update((byte) (input >> 40));\n        checksum.update((byte) (input >> 32));\n        checksum.update((byte) (input >> 24));\n        checksum.update((byte) (input >> 16));\n        checksum.update((byte) (input >> 8));\n        checksum.update((byte) input /* >> 0 */);\n    }",
+    "replace": "    private static class ThreadLocalBuffers {\n        private static final ThreadLocal<ByteBuffer> BYTE_BUFFER = ThreadLocal.withInitial(() -> ByteBuffer.allocate(8));\n    }\n\n    public static void updateInt(Checksum checksum, int input) {\n        ByteBuffer buffer = ThreadLocalBuffers.BYTE_BUFFER.get();\n        buffer.putInt(0, input);\n        checksum.update(buffer.array(), 0, 4);\n    }\n\n    public static void updateLong(Checksum checksum, long input) {\n        ByteBuffer buffer = ThreadLocalBuffers.BYTE_BUFFER.get();\n        buffer.putLong(0, input);\n        checksum.update(buffer.array(), 0, 8);\n    }"
+  }
+]
+```

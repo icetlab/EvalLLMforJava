@@ -1,0 +1,19 @@
+My proposed improvement for the `AclAuthorizer.acls()` method focuses on enhancing performance by avoiding the creation of unnecessary intermediate collections and `AclBinding` objects.
+
+The original implementation iterates through all ACLs, creates an `AclBinding` object for each one, and then filters them. This is inefficient as it allocates objects that are immediately discarded if they don't match the filter. This is particularly wasteful when filtering by resource pattern, as all ACLs for a non-matching resource will have `AclBinding` objects created for them unnecessarily.
+
+My improved version refactors this logic to be more efficient:
+1.  **Filter Before Allocating**: It first checks if a resource pattern matches the filter. Only for matching resources does it proceed to check the individual ACL entries. An `AclBinding` is created only after both the resource and the entry have been confirmed to match the filter.
+2.  **Direct-to-Java Collection**: It iterates through the matching ACLs and adds the newly created `AclBinding` objects directly to a `java.util.ArrayList`. This avoids creating intermediate Scala collections that would then need to be converted to a Java collection.
+
+This approach significantly reduces object allocation and garbage collection overhead, especially when a large number of ACLs are present, leading to better performance and memory usage. It replaces the functional-style chain of `flatMap`, `map`, and `filter` with a more direct, imperative approach using `foreach` loops, which is both efficient and clear, and less likely to cause issues with static analysis tools like SpotBugs.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "unorderedAcls.flatMap { case (resource, versionedAcls) =>\n        versionedAcls.acls.map(acl => new AclBinding(resource, acl.ace))\n            .filter(filter.matches)\n      }.asJava",
+    "replace": "val bindings = new java.util.ArrayList[AclBinding]\n      unorderedAcls.foreach { case (resource, versionedAcls) =>\n        if (filter.patternFilter.matches(resource)) {\n          versionedAcls.acls.foreach { acl =>\n            if (filter.entryFilter.matches(acl.ace)) {\n              bindings.add(new AclBinding(resource, acl.ace))\n            }\n          }\n        }\n      }\n      bindings"
+  }
+]
+```

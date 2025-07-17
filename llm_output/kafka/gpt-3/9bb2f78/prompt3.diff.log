@@ -1,0 +1,26 @@
+I have optimized field inclusion/exclusion checks by converting the lists to hash sets for O(1) lookups, which should significantly improve performance when handling large numbers of fields.
+
+```json
+[
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "import java.util.Map;",
+    "replace": "import java.util.Map;\nimport java.util.Set;\nimport java.util.HashSet;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "private List<String> exclude;\n    private List<String> include;",
+    "replace": "private List<String> exclude;\n    private Set<String> excludeSet;\n    private List<String> include;\n    private Set<String> includeSet;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "reverseRenames = invert(renames);\n\n        schemaUpdateCache = new SynchronizedCache<>(new LRUCache<>(16));",
+    "replace": "reverseRenames = invert(renames);\n        // convert include/exclude lists to sets for faster lookup\n        excludeSet = new HashSet<>(exclude);\n        includeSet = new HashSet<>(include);\n\n        schemaUpdateCache = new SynchronizedCache<>(new LRUCache<>(16));"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "boolean filter(String fieldName) {\n        return !exclude.contains(fieldName) && (include.isEmpty() || include.contains(fieldName));\n    }",
+    "replace": "boolean filter(String fieldName) {\n        return !excludeSet.contains(fieldName) && (includeSet.isEmpty() || includeSet.contains(fieldName));\n    }"
+  }
+]
+```

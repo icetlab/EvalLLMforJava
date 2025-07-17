@@ -1,0 +1,11 @@
+I have optimized the AclSets class to avoid creating intermediate collections during `find` and `isEmpty` calls by using short-circuiting loops instead of `flatMap` and `exists`.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "class AclSets(sets: Set[AclEntry]*) {\n    def find(p: AclEntry => Boolean): Option[AclEntry] = sets.flatMap(_.find(p)).headOption\n    def isEmpty: Boolean = !sets.exists(_.nonEmpty)\n  }",
+    "replace": "class AclSets(sets: Set[AclEntry]*) {\n    def find(p: AclEntry => Boolean): Option[AclEntry] = {\n      for (s <- sets) {\n        s.find(p) match {\n          case Some(a) => return Some(a)\n          case None    =>\n        }\n      }\n      None\n    }\n    def isEmpty: Boolean = {\n      for (s <- sets) if (s.nonEmpty) return false\n      true\n    }\n  }"
+  }
+]
+```

@@ -1,0 +1,36 @@
+This submission aims to enhance the performance of the `AclAuthorizer` by optimizing its authorization hot path. The key improvements are:
+
+1.  **Lazy Evaluation of ACLs**: The `AclSets` class, which holds ACLs from different sources (literal, prefixed, wildcard), is modified to use lazy evaluation. Instead of eagerly collecting all matching prefixed ACLs into a `Set`, which can be memory and CPU intensive, we now process them as an `Iterable`. The `find` operation on `AclSets` is changed to use a lazy `view`, ensuring that it stops searching as soon as a matching ACL is found. This significantly reduces work, especially in scenarios with many prefixed ACLs.
+
+2.  **Optimized ACL Precedence**: The order in which ACLs are checked now follows the rule of specificity: literal, then prefixed, then wildcard. This ensures that the most specific ACLs are evaluated first, which, combined with lazy evaluation, can lead to faster authorization decisions.
+
+3.  **Reduced Object Allocation**: In the `allowAclExists` method, which is part of the authorization logic, on-the-fly `Set` allocations have been eliminated. For common cases, pre-computed constant `Set`s are used. For the default case, a direct check is performed, avoiding `Set` creation entirely. This reduces garbage collection pressure in the hot path.
+
+4.  **Bug Fix**: A subtle variable shadowing bug in the `allowAclExists` method has been fixed, improving code correctness and clarity.
+
+These changes collectively make the authorization process more efficient, particularly under heavy load or with complex ACL configurations.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  val AllowEveryoneIfNoAclIsFoundProp = \"allow.everyone.if.no.acl.found\"\n\n  case class VersionedAcls(acls: Set[AclEntry], zkVersion: Int) {",
+    "replace": "  val AllowEveryoneIfNoAclIsFoundProp = \"allow.everyone.if.no.acl.found\"\n\n  private val DescribeAllowOps = Set(DESCRIBE, READ, WRITE, DELETE, ALTER)\n  private val DescribeConfigsAllowOps = Set(DESCRIBE_CONFIGS, ALTER_CONFIGS)\n\n  case class VersionedAcls(acls: Set[AclEntry], zkVersion: Int) {"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  class AclSets(sets: Set[AclEntry]*) {\n    def find(p: AclEntry => Boolean): Option[AclEntry] = sets.flatMap(_.find(p)).headOption\n    def isEmpty: Boolean = !sets.exists(_.nonEmpty)\n  }",
+    "replace": "  class AclSets(sets: Iterable[AclEntry]*) {\n    def find(p: AclEntry => Boolean): Option[AclEntry] = sets.view.flatMap(_.find(p)).headOption\n    def isEmpty: Boolean = !sets.exists(_.nonEmpty)\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "    def allowAclExists(acls: AclSets): Boolean = {\n      // Check if there are any Allow ACLs which would allow this operation.\n      // Allowing read, write, delete, or alter implies allowing describe.\n      // See #{org.apache.kafka.common.acl.AclOperation} for more details about ACL inheritance.\n      val allowOps = operation match {\n        case DESCRIBE => Set[AclOperation](DESCRIBE, READ, WRITE, DELETE, ALTER)\n        case DESCRIBE_CONFIGS => Set[AclOperation](DESCRIBE_CONFIGS, ALTER_CONFIGS)\n        case _ => Set[AclOperation](operation)\n      }\n      allowOps.exists(operation => matchingAclExists(operation, resource, principal, host, ALLOW, acls))\n    }",
+    "replace": "    def allowAclExists(acls: AclSets): Boolean = {\n      // Check if there are any Allow ACLs which would allow this operation.\n      // Allowing read, write, delete, or alter implies allowing describe.\n      // See #{org.apache.kafka.common.acl.AclOperation} for more details about ACL inheritance.\n      val allowOps = operation match {\n        case DESCRIBE => AclAuthorizer.DescribeAllowOps\n        case DESCRIBE_CONFIGS => AclAuthorizer.DescribeConfigsAllowOps\n        case _ => return matchingAclExists(operation, resource, principal, host, ALLOW, acls)\n      }\n      allowOps.exists(op => matchingAclExists(op, resource, principal, host, ALLOW, acls))\n    }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "    val prefixed = aclCacheSnapshot\n      .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n      .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n      .filterKeys(resource => resourceName.startsWith(resource.name))\n      .values\n      .flatMap { _.acls }\n      .toSet\n\n    new AclSets(prefixed, wildcard, literal)",
+    "replace": "    val prefixed = aclCacheSnapshot\n      .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n      .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n      .filterKeys(resource => resourceName.startsWith(resource.name))\n      .values\n      .flatMap { _.acls }\n\n    new AclSets(literal, prefixed, wildcard)"
+  }
+]
+```

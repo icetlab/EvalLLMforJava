@@ -1,0 +1,25 @@
+My previous attempt to optimize ACL lookups for prefixed resources introduced a bug due to an incorrect assumption about the ordering of keys in the `aclCache`. The `takeWhile` condition was too aggressive and would prematurely terminate the search, causing valid ACLs to be missed and leading to the `testAuthorizeWithPrefixedResource` failure.
+
+I have corrected this logic. The new implementation for finding prefixed ACLs now correctly handles the reverse lexicographical ordering of resource names in the cache. It uses `iteratorFrom` to start the search and a `takeWhile` clause that correctly prunes the search space by only considering resource names that start with the same character as the resource being authorized. This is followed by a `filter` step to ensure an exact prefix match. This approach is not only correct but also more efficient than iterating over a wider range of keys, as it stops as soon as it's clear no more potential prefixes can be found.
+
+I've also retained the micro-optimizations from my previous attempt, which cache frequently used `Set` instances to reduce object allocations during authorization checks.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  val AllowEveryoneIfNoAclIsFoundProp = \"allow.everyone.if.no.acl.found\"\n\n  case class VersionedAcls(acls: Set[AclEntry], zkVersion: Int) {",
+    "replace": "  val AllowEveryoneIfNoAclIsFoundProp = \"allow.everyone.if.no.acl.found\"\n\n  private val DescribeOps = Set[AclOperation](DESCRIBE, READ, WRITE, DELETE, ALTER)\n  private val DescribeConfigsOps = Set[AclOperation](DESCRIBE_CONFIGS, ALTER_CONFIGS)\n\n  case class VersionedAcls(acls: Set[AclEntry], zkVersion: Int) {"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "      val allowOps = operation match {\n        case DESCRIBE => Set[AclOperation](DESCRIBE, READ, WRITE, DELETE, ALTER)\n        case DESCRIBE_CONFIGS => Set[AclOperation](DESCRIBE_CONFIGS, ALTER_CONFIGS)\n        case _ => Set[AclOperation](operation)\n      }",
+    "replace": "      val allowOps = operation match {\n        case DESCRIBE => AclAuthorizer.DescribeOps\n        case DESCRIBE_CONFIGS => AclAuthorizer.DescribeConfigsOps\n        case _ => Set[AclOperation](operation)\n      }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "      val prefixed = aclCache\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .filterKeys(resource => resourceName.startsWith(resource.name))\n        .values\n        .flatMap { _.acls }\n        .toSet",
+    "replace": "      val prefixed = aclCache\n        .iteratorFrom(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .takeWhile { case (resource, _) =>\n          resource.resourceType == resourceType &&\n          resource.patternType == PatternType.PREFIXED &&\n          resourceName.nonEmpty &&\n          resource.name.nonEmpty &&\n          resource.name.head == resourceName.head\n        }\n        .filter { case (resource, _) => resourceName.startsWith(resource.name) }\n        .flatMap { case (_, versionedAcls) => versionedAcls.acls }\n        .toSet"
+  }
+]
+```

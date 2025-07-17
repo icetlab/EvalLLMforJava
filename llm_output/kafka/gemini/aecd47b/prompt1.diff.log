@@ -1,0 +1,27 @@
+My overall improvement strategy focuses on optimizing checksum calculations in `Checksums.java`, particularly for scenarios involving direct `ByteBuffer` instances and primitive types like `int` and `long`.
+
+1.  **Direct `ByteBuffer` Optimization**: The original implementation for direct (non-array-backed) `ByteBuffer`s updated the checksum byte by byte using `buffer.get(i)`. This is inefficient. My change replaces this with a bulk-read approach. It reads data in chunks into a reusable, thread-local byte array and then updates the checksum with the entire chunk. This significantly reduces method call overhead and improves performance for direct buffers, while carefully preserving the buffer's original state (position and limit).
+
+2.  **Primitive Type Optimization**: The `updateInt` and `updateLong` methods originally performed multiple single-byte updates to the checksum. I've optimized this by using a thread-local `ByteBuffer` to first write the `int` or `long` and then perform a single, multi-byte `update` call on the checksum using the `ByteBuffer`'s backing array. This reduces the number of calls into the `Checksum` implementation, which is generally more performant.
+
+Using `ThreadLocal` for buffers in both cases avoids repeated memory allocation, making these utility methods more efficient in high-throughput scenarios.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "public final class Checksums {\n\n    private Checksums() {\n    }",
+    "replace": "public final class Checksums {\n\n    private static final ThreadLocal<ByteBuffer> BUFFERS = ThreadLocal.withInitial(() -> ByteBuffer.allocate(8));\n    private static final int DIRECT_BUFFER_UPDATE_CHUNK_SIZE = 8192;\n    private static final ThreadLocal<byte[]> DIRECT_BUFFER_UPDATE_ARRAYS =\n            ThreadLocal.withInitial(() -> new byte[DIRECT_BUFFER_UPDATE_CHUNK_SIZE]);\n\n    private Checksums() {\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }",
+    "replace": "    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int pos = buffer.position();\n            try {\n                buffer.position(pos + offset);\n                byte[] array = DIRECT_BUFFER_UPDATE_ARRAYS.get();\n                int remaining = Math.min(length, buffer.remaining());\n                while (remaining > 0) {\n                    int chunk = Math.min(remaining, array.length);\n                    buffer.get(array, 0, chunk);\n                    checksum.update(array, 0, chunk);\n                    remaining -= chunk;\n                }\n            } finally {\n                buffer.position(pos);\n            }\n        }\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "    public static void updateInt(Checksum checksum, int input) {\n        checksum.update((byte) (input >> 24));\n        checksum.update((byte) (input >> 16));\n        checksum.update((byte) (input >> 8));\n        checksum.update((byte) input /* >> 0 */);\n    }\n\n    public static void updateLong(Checksum checksum, long input) {\n        checksum.update((byte) (input >> 56));\n        checksum.update((byte) (input >> 48));\n        checksum.update((byte) (input >> 40));\n        checksum.update((byte) (input >> 32));\n        checksum.update((byte) (input >> 24));\n        checksum.update((byte) (input >> 16));\n        checksum.update((byte) (input >> 8));\n        checksum.update((byte) input /* >> 0 */);\n    }",
+    "replace": "    public static void updateInt(Checksum checksum, int input) {\n        ByteBuffer buffer = BUFFERS.get();\n        buffer.putInt(0, input);\n        checksum.update(buffer.array(), 0, 4);\n    }\n\n    public static void updateLong(Checksum checksum, long input) {\n        ByteBuffer buffer = BUFFERS.get();\n        buffer.putLong(0, input);\n        checksum.update(buffer.array(), 0, 8);\n    }"
+  }
+]
+```

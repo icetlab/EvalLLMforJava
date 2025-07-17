@@ -1,0 +1,13 @@
+The overall improvement intent is to optimize the `removeExpiredProducers` method. The original implementation iterates over all producers, collects the keys of expired producers into a new list, and then iterates over this new list to remove them from the map. This is inefficient, especially when a large number of producers have expired, as it requires extra memory for the list of keys and involves multiple iterations.
+
+The proposed change refactors this logic to use `Map.entrySet().removeIf()`. This allows for in-place removal of expired entries from the `producers` and `verificationStates` maps during a single iteration, which is more memory-efficient and performant by avoiding the creation of intermediate collections.
+
+```json
+[
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "    public void removeExpiredProducers(long currentTimeMs) {\n        List<Long> keys = producers.entrySet().stream()\n                .filter(entry -> isProducerExpired(currentTimeMs, entry.getValue()))\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        removeProducerIds(keys);\n\n        List<Long> verificationKeys = verificationStates.entrySet().stream()\n                .filter(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs())\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        verificationKeys.forEach(verificationStates::remove);\n    }",
+    "replace": "    public void removeExpiredProducers(long currentTimeMs) {\n        producers.entrySet().removeIf(entry -> isProducerExpired(currentTimeMs, entry.getValue()));\n        producerIdCount = producers.size();\n\n        verificationStates.entrySet().removeIf(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs());\n    }"
+  }
+]
+```

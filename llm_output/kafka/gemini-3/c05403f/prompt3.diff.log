@@ -1,0 +1,21 @@
+My main improvement strategy is to replace loop-based calculations in `sizeOfUnsignedVarint` and `sizeOfVarlong` with a more performant, branch-free approach. The new implementation uses `Integer.numberOfLeadingZeros` and `Long.numberOfLeadingZeros`, which are JVM intrinsics that often compile down to a single, fast CPU instruction. This avoids the data dependencies and potential branch mispredictions of a loop. I also included a minor cleanup in `readUnsignedIntLE` to remove a redundant operation and improve code clarity.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "    public static int readUnsignedIntLE(byte[] buffer, int offset) {\n        return (buffer[offset] << 0 & 0xff)\n                | ((buffer[offset + 1] & 0xff) << 8)\n                | ((buffer[offset + 2] & 0xff) << 16)\n                | ((buffer[offset + 3] & 0xff) << 24);\n    }",
+    "replace": "    public static int readUnsignedIntLE(byte[] buffer, int offset) {\n        return (buffer[offset] & 0xff)\n                | ((buffer[offset + 1] & 0xff) << 8)\n                | ((buffer[offset + 2] & 0xff) << 16)\n                | ((buffer[offset + 3] & 0xff) << 24);\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "    public static int sizeOfUnsignedVarint(int value) {\n        int bytes = 1;\n        while ((value & 0xffffff80) != 0L) {\n            bytes += 1;\n            value >>>= 7;\n        }\n        return bytes;\n    }",
+    "replace": "    public static int sizeOfUnsignedVarint(int value) {\n        // The number of bytes is ceil(bits/7). For a 32-bit integer, this can be computed based on the number\n        // of leading zeros, which is faster than a loop.\n        return (31 - Integer.numberOfLeadingZeros(value)) / 7 + 1;\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "    public static int sizeOfVarlong(long value) {\n        long v = (value << 1) ^ (value >> 63);\n        int bytes = 1;\n        while ((v & 0xffffffffffffff80L) != 0L) {\n            bytes += 1;\n            v >>>= 7;\n        }\n        return bytes;\n    }",
+    "replace": "    public static int sizeOfVarlong(long value) {\n        long v = (value << 1) ^ (value >> 63);\n        // The number of bytes is ceil(bits/7). For a 64-bit long, this can be computed based on the number\n        // of leading zeros of the zig-zag encoded value, which is faster than a loop.\n        return (63 - Long.numberOfLeadingZeros(v)) / 7 + 1;\n    }"
+  }
+]
+```

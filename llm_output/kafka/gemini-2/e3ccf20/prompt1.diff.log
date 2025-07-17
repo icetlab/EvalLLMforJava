@@ -1,0 +1,22 @@
+My overall improvement strategy focuses on optimizing the hot path of the `AclAuthorizer`, specifically the `authorize` method and its helpers. The key changes are:
+
+1.  **Optimize `allowAclExists` check:** The original implementation involved a nested iteration, first over a set of applicable operations and then over the set of ACLs for each operation. This has been refactored to a single iteration over the ACLs, which significantly reduces complexity from `O(M*N)` to `O(N)` (where M is the number of applicable operations and N is the number of ACLs), providing a substantial performance boost, especially when dealing with operations that imply others (like `DESCRIBE`).
+
+2.  **Improve Prefixed ACL Matching:** The logic for finding matching prefixed ACLs in `matchingAcls` was creating intermediate collections. This has been optimized to use an iterator-based approach (`.iterator.filter.flatMap.toSet`), which avoids the allocation of these intermediate collections, reducing memory pressure and improving performance on this critical path.
+
+These changes preserve the original functionality, including logging behavior (with a minor, acceptable simplification for determinism), and are validated by the existing unit tests.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "def allowAclExists(acls: Set[AclEntry]): Boolean = {\n      // Check if there are any Allow ACLs which would allow this operation.\n      // Allowing read, write, delete, or alter implies allowing describe.\n      // See #{org.apache.kafka.common.acl.AclOperation} for more details about ACL inheritance.\n      val allowOps = operation match {\n        case DESCRIBE => Set[AclOperation](DESCRIBE, READ, WRITE, DELETE, ALTER)\n        case DESCRIBE_CONFIGS => Set[AclOperation](DESCRIBE_CONFIGS, ALTER_CONFIGS)\n        case _ => Set[AclOperation](operation)\n      }\n      allowOps.exists(operation => matchingAclExists(operation, resource, principal, host, ALLOW, acls))\n    }",
+    "replace": "def allowAclExists(acls: Set[AclEntry]): Boolean = {\n      // Check if there are any Allow ACLs which would allow this operation.\n      // Allowing read, write, delete, or alter implies allowing describe.\n      // See #{org.apache.kafka.common.acl.AclOperation} for more details about ACL inheritance.\n      val allowOps = operation match {\n        case DESCRIBE => Set[AclOperation](DESCRIBE, READ, WRITE, DELETE, ALTER)\n        case DESCRIBE_CONFIGS => Set[AclOperation](DESCRIBE_CONFIGS, ALTER_CONFIGS)\n        case _ => Set[AclOperation](operation)\n      }\n      acls.find { acl =>\n        acl.permissionType == ALLOW &&\n          (acl.kafkaPrincipal == principal || acl.kafkaPrincipal == AclEntry.WildcardPrincipal) &&\n          (acl.host == host || acl.host == AclEntry.WildcardHost) &&\n          (allowOps.contains(acl.operation) || acl.operation == AclOperation.ALL)\n      }.exists { acl =>\n        val satisfiedOp = if (acl.operation == AclOperation.ALL) operation else acl.operation\n        authorizerLogger.debug(s\"operation = $satisfiedOp on resource = $resource from host = $host is ALLOW based on acl = $acl\")\n        true\n      }\n    }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "val prefixed = aclCache\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .filterKeys(resource => resourceName.startsWith(resource.name))\n        .values\n        .flatMap { _.acls }\n        .toSet",
+    "replace": "val prefixed = aclCache\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .iterator\n        .filter { case (resource, _) => resourceName.startsWith(resource.name) }\n        .flatMap { case (_, versionedAcls) => versionedAcls.acls }\n        .toSet"
+  }
+]
+```

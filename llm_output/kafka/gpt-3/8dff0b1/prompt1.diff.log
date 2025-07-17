@@ -1,0 +1,19 @@
+I have made targeted micro-optimizations to reduce unnecessary allocations and logging overhead:
+
+1. Replaced the two-step `find(...).exists` in `matchingAclExists` with a single `exists` call to avoid creating an intermediate `Option`.
+2. Guarded debug logging with `isDebugEnabled` checks to prevent string interpolation when debug logging is disabled.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "acls.find { acl =>\n      acl.permissionType == permissionType &&\n        (acl.kafkaPrincipal == principal || acl.kafkaPrincipal == AclEntry.WildcardPrincipal) &&\n        (operation == acl.operation || acl.operation == AclOperation.ALL) &&\n        (acl.host == host || acl.host == AclEntry.WildcardHost)\n    }.exists { acl =>\n      authorizerLogger.debug(s\"operation = $operation on resource = $resource from host = $host is $permissionType based on acl = $acl\")\n      true\n    }",
+    "replace": "acls.exists { acl =>\n      if (acl.permissionType == permissionType &&\n        (acl.kafkaPrincipal == principal || acl.kafkaPrincipal == AclEntry.WildcardPrincipal) &&\n        (operation == acl.operation || acl.operation == AclOperation.ALL) &&\n        (acl.host == host || acl.host == AclEntry.WildcardHost)) {\n        if (authorizerLogger.underlying.isDebugEnabled)\n          authorizerLogger.debug(s\"operation = $operation on resource = $resource from host = $host is $permissionType based on acl = $acl\")\n        true\n      } else {\n        false\n      }\n    }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "if (acls.isEmpty) {\n        // No ACLs found for this resource, permission is determined by value of config allow.everyone.if.no.acl.found\n        authorizerLogger.debug(s\"No acl found for resource $resource, authorized = $shouldAllowEveryoneIfNoAclIsFound\")\n        shouldAllowEveryoneIfNoAclIsFound\n      } else false",
+    "replace": "if (acls.isEmpty) {\n        // No ACLs found for this resource, permission is determined by value of config allow.everyone.if.no.acl.found\n        if (authorizerLogger.underlying.isDebugEnabled)\n          authorizerLogger.debug(s\"No acl found for resource $resource, authorized = $shouldAllowEveryoneIfNoAclIsFound\")\n        shouldAllowEveryoneIfNoAclIsFound\n      } else false"
+  }
+]
+```

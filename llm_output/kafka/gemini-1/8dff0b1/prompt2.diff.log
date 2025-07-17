@@ -1,0 +1,11 @@
+The original `acls` method was inefficient as it created intermediate collections for every resource in the ACL cache during filtering. The updated implementation avoids these allocations by using a mutable builder. It also improves filtering logic by first matching on resource patterns and then on ACL entries, reducing redundant computations and object creation.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n    inReadLock(lock) {\n      unorderedAcls.flatMap { case (resource, versionedAcls) =>\n        versionedAcls.acls.map(acl => new AclBinding(resource, acl.ace))\n            .filter(filter.matches)\n      }.asJava\n    }\n  }",
+    "replace": "  override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n    inReadLock(lock) {\n      val builder = new mutable.ArrayBuffer[AclBinding]\n      val resourceFilter = filter.patternFilter\n      val entryFilter = filter.entryFilter\n\n      unorderedAcls.foreach { case (resource, versionedAcls) =>\n        if (resourceFilter.matches(resource)) {\n          versionedAcls.acls.foreach { acl =>\n            if (entryFilter.matches(acl.ace)) {\n              builder += new AclBinding(resource, acl.ace)\n            }\n          }\n        }\n      }\n      builder.asJava\n    }\n  }"
+  }
+]
+```

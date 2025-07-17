@@ -1,0 +1,21 @@
+The changes introduce bulk‐update paths to reduce per‐byte `Checksum.update` calls. For non‐array ByteBuffers we now chunk into a temporary byte[] and call `checksum.update(byte[], …)` repeatedly, and we also batch the 4 or 8 individual byte updates in `updateInt`/`updateLong` into single array updates.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }",
+    "replace": "        } else {\n            ByteBuffer duplicate = buffer.duplicate();\n            duplicate.position(buffer.position() + offset);\n            int remaining = length;\n            byte[] tmp = new byte[1024];\n            while (remaining > 0) {\n                int chunk = Math.min(remaining, tmp.length);\n                duplicate.get(tmp, 0, chunk);\n                checksum.update(tmp, 0, chunk);\n                remaining -= chunk;\n            }\n        }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "    public static void updateInt(Checksum checksum, int input) {\n        checksum.update((byte) (input >> 24));\n        checksum.update((byte) (input >> 16));\n        checksum.update((byte) (input >> 8));\n        checksum.update((byte) input /* >> 0 */);\n    }",
+    "replace": "    public static void updateInt(Checksum checksum, int input) {\n        byte[] bytes = new byte[] {\n            (byte) (input >> 24),\n            (byte) (input >> 16),\n            (byte) (input >> 8),\n            (byte) input\n        };\n        checksum.update(bytes, 0, 4);\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "    public static void updateLong(Checksum checksum, long input) {\n        checksum.update((byte) (input >> 56));\n        checksum.update((byte) (input >> 48));\n        checksum.update((byte) (input >> 40));\n        checksum.update((byte) (input >> 32));\n        checksum.update((byte) (input >> 24));\n        checksum.update((byte) (input >> 16));\n        checksum.update((byte) (input >> 8));\n        checksum.update((byte) input /* >> 0 */);\n    }",
+    "replace": "    public static void updateLong(Checksum checksum, long input) {\n        byte[] bytes = new byte[] {\n            (byte) (input >> 56),\n            (byte) (input >> 48),\n            (byte) (input >> 40),\n            (byte) (input >> 32),\n            (byte) (input >> 24),\n            (byte) (input >> 16),\n            (byte) (input >> 8),\n            (byte) input\n        };\n        checksum.update(bytes, 0, 8);\n    }"
+  }
+]
+```

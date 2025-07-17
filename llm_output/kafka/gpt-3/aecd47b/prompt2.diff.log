@@ -1,0 +1,21 @@
+I’ve broken the large insertion into three focused, independent edits: adding the necessary reflection imports, injecting the cached `Method` lookup right after the private constructor, and enhancing the `update(..., offset, length)` method to use the Java 9+ `update(ByteBuffer)` when available, with a byte‐by‐byte fallback.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "import java.util.zip.Checksum;",
+    "replace": "import java.util.zip.Checksum;\nimport java.lang.reflect.Method;\nimport java.lang.reflect.InvocationTargetException;"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "    private Checksums() {\n    }",
+    "replace": "    private Checksums() {\n    }\n\n    private static final Method JDK_CRC32C_UPDATE_BUFFER_METHOD;\n    static {\n        Method method = null;\n        try {\n            Class<?> jdkCrc32C = Class.forName(\"java.util.zip.CRC32C\");\n            method = jdkCrc32C.getMethod(\"update\", java.nio.ByteBuffer.class);\n        } catch (ClassNotFoundException | NoSuchMethodException e) {\n            // Java <9 or no update(ByteBuffer)\n        }\n        JDK_CRC32C_UPDATE_BUFFER_METHOD = method;\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }",
+    "replace": "public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int start = buffer.position() + offset;\n            if (JDK_CRC32C_UPDATE_BUFFER_METHOD != null &&\n                JDK_CRC32C_UPDATE_BUFFER_METHOD.getDeclaringClass().isInstance(checksum)) {\n                try {\n                    ByteBuffer duplicate = buffer.duplicate();\n                    duplicate.position(start);\n                    duplicate.limit(start + length);\n                    JDK_CRC32C_UPDATE_BUFFER_METHOD.invoke(checksum, duplicate);\n                } catch (IllegalAccessException | InvocationTargetException e) {\n                    for (int i = start; i < start + length; i++) {\n                        checksum.update(buffer.get(i));\n                    }\n                }\n            } else {\n                for (int i = start; i < start + length; i++) {\n                    checksum.update(buffer.get(i));\n                }\n            }\n        }\n    }"
+  }
+]
+```

@@ -1,0 +1,29 @@
+My overall improvement strategy focuses on optimizing hot paths within the `AclAuthorizer` to reduce object allocations and improve lookup efficiency, which is critical for authorization-heavy workloads.
+
+Specifically, I've made two main improvements:
+
+1.  **Optimized `allowAclExists` function:** The original implementation created new `Set` objects for ACL operations on every authorization check. I've replaced this by pre-calculating and caching these sets as private `val`s within the `AclAuthorizer` class. This avoids repeated object allocation in the `authorizeAction` method, a very frequently called part of the code.
+
+2.  **Efficient Prefixed ACL Lookup:** The logic for finding matching prefixed ACLs in `matchingAcls` previously used a combination of `from`, `to`, and `filterKeys` on an immutable `TreeMap`. This approach could be inefficient as it might create intermediate collections. I've replaced it with a more performant iterator-based approach using `iteratorFrom` and `takeWhile`. This lazily iterates over the cache and stops as soon as a non-matching prefix is found, significantly reducing overhead, especially in scenarios with many prefixed ACLs.
+
+These changes are designed to enhance performance while strictly preserving the original authorization logic.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  private var aclChangeListeners: Iterable[AclChangeSubscription] = Iterable.empty\n  private var extendedAclSupport: Boolean = _\n\n  @volatile",
+    "replace": "  private var aclChangeListeners: Iterable[AclChangeSubscription] = Iterable.empty\n  private var extendedAclSupport: Boolean = _\n\n  private val DescribeAllowOps = Set[AclOperation](DESCRIBE, READ, WRITE, DELETE, ALTER)\n  private val DescribeConfigsAllowOps = Set[AclOperation](DESCRIBE_CONFIGS, ALTER_CONFIGS)\n\n  @volatile"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "    def allowAclExists(acls: AclSets): Boolean = {\n      // Check if there are any Allow ACLs which would allow this operation.\n      // Allowing read, write, delete, or alter implies allowing describe.\n      // See #{org.apache.kafka.common.acl.AclOperation} for more details about ACL inheritance.\n      val allowOps = operation match {\n        case DESCRIBE => Set[AclOperation](DESCRIBE, READ, WRITE, DELETE, ALTER)\n        case DESCRIBE_CONFIGS => Set[AclOperation](DESCRIBE_CONFIGS, ALTER_CONFIGS)\n        case _ => Set[AclOperation](operation)\n      }\n      allowOps.exists(operation => matchingAclExists(operation, resource, principal, host, ALLOW, acls))\n    }",
+    "replace": "    def allowAclExists(acls: AclSets): Boolean = {\n      // Check if there are any Allow ACLs which would allow this operation.\n      // Allowing read, write, delete, or alter implies allowing describe.\n      // See #{org.apache.kafka.common.acl.AclOperation} for more details about ACL inheritance.\n      operation match {\n        case DESCRIBE => DescribeAllowOps.exists(op => matchingAclExists(op, resource, principal, host, ALLOW, acls))\n        case DESCRIBE_CONFIGS => DescribeConfigsAllowOps.exists(op => matchingAclExists(op, resource, principal, host, ALLOW, acls))\n        case _ => matchingAclExists(operation, resource, principal, host, ALLOW, acls)\n      }\n    }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "      val prefixed = aclCacheSnapshot\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .filterKeys(resource => resourceName.startsWith(resource.name))\n        .values\n        .flatMap { _.acls }\n        .toSet",
+    "replace": "      val prefixed = aclCacheSnapshot\n        .iteratorFrom(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .takeWhile { case (resource, _) =>\n          resource.resourceType == resourceType &&\n          resource.patternType == PatternType.PREFIXED &&\n          resourceName.startsWith(resource.name)\n        }\n        .flatMap { case (_, versionedAcls) => versionedAcls.acls }\n        .toSet"
+  }
+]
+```

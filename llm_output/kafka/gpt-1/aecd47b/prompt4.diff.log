@@ -1,0 +1,16 @@
+The goal is to leverage Java 9’s Checksum.update(ByteBuffer) when available for direct (or read‐only) buffers, falling back to byte‐by‐byte otherwise, without altering the original buffer’s position. We use reflection to detect and invoke the new method, and duplicate the buffer slice so the original position remains unchanged.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "import java.util.zip.Checksum;",
+    "replace": "import java.util.zip.Checksum;\nimport java.lang.reflect.Method;\nimport java.lang.reflect.InvocationTargetException;"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }",
+    "replace": "public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            try {\n                Method updateBB = checksum.getClass().getMethod(\"update\", ByteBuffer.class);\n                ByteBuffer slice = buffer.duplicate();\n                int start = buffer.position() + offset;\n                slice.position(start);\n                slice.limit(start + length);\n                updateBB.invoke(checksum, slice);\n            } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {\n                int start = buffer.position() + offset;\n                for (int i = start; i < start + length; i++) {\n                    checksum.update(buffer.get(i));\n                }\n            }\n        }\n    }"
+  }
+]
+```

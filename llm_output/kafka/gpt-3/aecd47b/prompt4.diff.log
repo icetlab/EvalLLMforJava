@@ -1,0 +1,16 @@
+I’ve enhanced the `Checksums.update` method to detect and invoke a Java 9+ optimized `Checksum.update(ByteBuffer)` implementation via reflection when available, falling back to the existing per-byte loop otherwise. This enables zero-copy checksumming for direct or read-only buffers on Java 9+, improving throughput for large buffers.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "import java.util.zip.Checksum;",
+    "replace": "import java.util.zip.Checksum;\nimport java.lang.reflect.Method;\nimport java.lang.reflect.InvocationTargetException;"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }",
+    "replace": "public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int start = buffer.position() + offset;\n            // Use Java 9+ Checksum.update(ByteBuffer) if available\n            try {\n                Method updateMethod = checksum.getClass().getMethod(\"update\", ByteBuffer.class);\n                ByteBuffer duplicate = buffer.duplicate();\n                duplicate.position(start).limit(start + length);\n                updateMethod.invoke(checksum, duplicate);\n                return;\n            } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {\n                // fallback to byte-by-byte update\n            }\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }"
+  }
+]
+```

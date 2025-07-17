@@ -1,0 +1,22 @@
+The previous attempt failed due to a SpotBugs error, likely caused by inefficient reflection (`getMethod` called repeatedly within a method) and overly broad exception handling (`catch (Exception)`).
+
+This new version addresses these issues:
+1.  The `Method` object for `Checksum.update(ByteBuffer)` is now looked up only once using reflection and cached in a `static final` field. This is more performant and avoids potential SpotBugs warnings about reflection performance.
+2.  The `try-catch` block now catches more specific exceptions (`IllegalAccessException | InvocationTargetException`) instead of the generic `Exception`, which is better practice and should satisfy SpotBugs.
+
+This approach maintains the goal of using the optimized `ByteBuffer`-aware `update` method on Java 9+ while remaining compatible with Java 8 and passing static analysis checks.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "import java.nio.ByteBuffer;\nimport java.util.zip.Checksum;",
+    "replace": "import java.lang.reflect.InvocationTargetException;\nimport java.lang.reflect.Method;\nimport java.nio.ByteBuffer;\nimport java.util.zip.Checksum;"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "public final class Checksums {\n\n    private Checksums() {\n    }\n\n    public static void update(Checksum checksum, ByteBuffer buffer, int length) {\n        update(checksum, buffer, 0, length);\n    }\n\n    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }",
+    "replace": "public final class Checksums {\n\n    private static final Method CHECKSUM_UPDATE_METHOD;\n\n    static {\n        Method method = null;\n        // The Checksum interface was updated in Java 9 to add a method for processing ByteBuffers:\n        // https://docs.oracle.com/javase/9/docs/api/java/util/zip/Checksum.html#update-java.nio.ByteBuffer-\n        // The direct method call is not possible because Kafka is built against Java 8.\n        // We can use reflection to look up the method and cache it.\n        if (Java.IS_JAVA9_COMPATIBLE) {\n            try {\n                method = Checksum.class.getMethod(\"update\", ByteBuffer.class);\n            } catch (NoSuchMethodException e) {\n                // Should not happen on Java 9+, but we can fall back to the slow path if it does.\n            }\n        }\n        CHECKSUM_UPDATE_METHOD = method;\n    }\n\n    private Checksums() {\n    }\n\n    public static void update(Checksum checksum, ByteBuffer buffer, int length) {\n        update(checksum, buffer, 0, length);\n    }\n\n    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            if (CHECKSUM_UPDATE_METHOD != null) {\n                try {\n                    // In Java 9, the Checksum interface was updated to add a method for processing ByteBuffers.\n                    // We use a slice to avoid modifying the buffer's position and limit.\n                    int pos = buffer.position();\n                    try {\n                        buffer.position(pos + offset);\n                        ByteBuffer slice = buffer.slice();\n                        slice.limit(length);\n                        CHECKSUM_UPDATE_METHOD.invoke(checksum, slice);\n                        return;\n                    } finally {\n                        buffer.position(pos);\n                    }\n                } catch (IllegalAccessException | InvocationTargetException e) {\n                    // This should not happen, but we fall back to the byte-by-byte update if it does\n                }\n            }\n\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }"
+  }
+]
+```

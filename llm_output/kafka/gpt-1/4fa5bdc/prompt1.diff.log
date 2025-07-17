@@ -1,0 +1,11 @@
+I’ve replaced the broken TreeMap slicing logic in `matchingAcls` with a simple `collect` that scans all cached patterns and picks those PREFIXED patterns whose name is a prefix of the resource, ensuring correct and efficient prefix matching.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "val prefixed = aclCacheSnapshot\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .filterKeys(resource => resourceName.startsWith(resource.name))\n        .values\n        .flatMap { _.acls }\n        .toSet",
+    "replace": "val prefixed = {\n      aclCacheSnapshot.collect {\n        case (pattern, versionedAcls) if pattern.resourceType == resourceType &&\n                                          pattern.patternType == PatternType.PREFIXED &&\n                                          resourceName.startsWith(pattern.name) =>\n          versionedAcls.acls\n      }.flatten.toSet\n    }"
+  }
+]
+```

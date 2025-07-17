@@ -1,0 +1,11 @@
+I’ve optimized the `acls` method to eliminate intermediate Scala collections and unnecessary `Set` creations by directly building a `java.util.ArrayList`, reducing GC pressure and improving throughput.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n    inReadLock(lock) {\n      unorderedAcls.flatMap { case (resource, versionedAcls) =>\n        versionedAcls.acls.map(acl => new AclBinding(resource, acl.ace))\n            .filter(filter.matches)\n      }.asJava\n    }\n  }",
+    "replace": "override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n    inReadLock(lock) {\n      val result = new util.ArrayList[AclBinding]()\n      // iterate resources and their ACL entries, adding only matching bindings\n      for ((resource, versionedAcls) <- unorderedAcls;\n           entry <- versionedAcls.acls) {\n        val binding = new AclBinding(resource, entry.ace)\n        if (filter.matches(binding)) {\n          result.add(binding)\n        }\n      }\n      result\n    }\n  }"
+  }
+]
+```

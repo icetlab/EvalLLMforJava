@@ -1,0 +1,24 @@
+The current implementation for expiring producer IDs iterates through all producers, collects the expired ones into a list, and then removes them from the main map. This is inefficient as it requires a full scan and an intermediate collection.
+
+My improvement refactors this process to use `Map.entrySet().removeIf()`. This allows for the removal of expired entries in a single pass over the map without allocating an intermediate list of keys to be removed, leading to better performance and reduced memory pressure.
+
+Specifically:
+1.  The `removeExpiredProducers` method is updated to use `removeIf` for both the `producers` map and the `verificationStates` map, which is a more direct and efficient way to remove elements based on a predicate.
+2.  The private helper method `removeProducerIds`, which was only used in the old implementation of `removeExpiredProducers`, has been removed as it is no longer needed.
+
+These changes preserve the original functionality while making the expiration logic more performant.
+
+```json
+[
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "    private void removeProducerIds(List<Long> keys) {\n        producers.keySet().removeAll(keys);\n        producerIdCount = producers.size();\n    }\n\n",
+    "replace": ""
+  },
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "    public void removeExpiredProducers(long currentTimeMs) {\n        List<Long> keys = producers.entrySet().stream()\n                .filter(entry -> isProducerExpired(currentTimeMs, entry.getValue()))\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        removeProducerIds(keys);\n\n        List<Long> verificationKeys = verificationStates.entrySet().stream()\n                .filter(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs())\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        verificationKeys.forEach(verificationStates::remove);\n    }",
+    "replace": "    public void removeExpiredProducers(long currentTimeMs) {\n        producers.entrySet().removeIf(entry -> isProducerExpired(currentTimeMs, entry.getValue()));\n        producerIdCount = producers.size();\n\n        verificationStates.entrySet().removeIf(entry ->\n            currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs());\n    }"
+  }
+]
+```

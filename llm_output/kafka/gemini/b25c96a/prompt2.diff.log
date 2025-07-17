@@ -1,0 +1,13 @@
+The current implementation for expiring producer IDs in `ProducerStateManager` is inefficient. It iterates through all producers, collects the keys of expired producers into a list, and then removes them from the map. This process is repeated for verification state entries. This approach creates unnecessary intermediate collections and can be slow, especially with a large number of producers.
+
+My improvement replaces this two-step process (collect then remove) with a more direct and efficient single-step removal using `Map.entrySet().removeIf()`. This method iterates over the map entries and removes those that match the provided predicate in-place, avoiding the overhead of creating temporary lists of keys to be removed. This change preserves the original logic while significantly improving performance by reducing object allocations and redundant iterations.
+
+```json
+[
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "    public void removeExpiredProducers(long currentTimeMs) {\n        List<Long> keys = producers.entrySet().stream()\n                .filter(entry -> isProducerExpired(currentTimeMs, entry.getValue()))\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        removeProducerIds(keys);\n\n        List<Long> verificationKeys = verificationStates.entrySet().stream()\n                .filter(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs())\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        verificationKeys.forEach(verificationStates::remove);\n    }",
+    "replace": "    public void removeExpiredProducers(long currentTimeMs) {\n        producers.entrySet().removeIf(entry -> isProducerExpired(currentTimeMs, entry.getValue()));\n        producerIdCount = producers.size();\n\n        verificationStates.entrySet().removeIf(entry ->\n            currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs());\n    }"
+  }
+]
+```

@@ -1,0 +1,16 @@
+I’ve added local caching of the `records.batches.asScala` collection in the non-compressed conversion and assignment methods to avoid repeatedly converting the Java collection to Scala on each loop, reducing allocation overhead and improving iteration performance.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogValidator.scala",
+    "search": "val firstBatch = getFirstBatchAndMaybeValidateNoMoreBatches(records, NoCompressionCodec)\n    for (batch <- records.batches.asScala) {",
+    "replace": "val firstBatch = getFirstBatchAndMaybeValidateNoMoreBatches(records, NoCompressionCodec)\n    val batches = records.batches.asScala\n    for (batch <- batches) {"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogValidator.scala",
+    "search": "val firstBatch = getFirstBatchAndMaybeValidateNoMoreBatches(records, NoCompressionCodec)\n    for (batch <- records.batches.asScala) {",
+    "replace": "val firstBatch = getFirstBatchAndMaybeValidateNoMoreBatches(records, NoCompressionCodec)\n    val batches = records.batches.asScala\n    for (batch <- batches) {"
+  }
+]
+```

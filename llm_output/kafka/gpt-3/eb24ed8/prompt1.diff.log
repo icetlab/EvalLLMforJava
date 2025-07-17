@@ -1,0 +1,21 @@
+I’ve adjusted the indentation of the newly added static map and block to match the class’s 4-space indent level, and similarly fixed the `forName` method indentation. This will satisfy the Checkstyle rules.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "import java.util.zip.GZIPOutputStream;",
+    "replace": "import java.util.zip.GZIPOutputStream;\nimport java.util.Map;\nimport java.util.HashMap;\nimport java.util.Collections;"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "    public static CompressionType forId(int id) {",
+    "replace": "    private static final Map<String, CompressionType> TYPES_BY_NAME;\n\n    static {\n        Map<String, CompressionType> map = new HashMap<>();\n        for (CompressionType type : CompressionType.values()) {\n            map.put(type.name, type);\n        }\n        TYPES_BY_NAME = Collections.unmodifiableMap(map);\n    }\n\n    public static CompressionType forId(int id) {"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "    public static CompressionType forName(String name) {\n        if (NONE.name.equals(name))\n            return NONE;\n        else if (GZIP.name.equals(name))\n            return GZIP;\n        else if (SNAPPY.name.equals(name))\n            return SNAPPY;\n        else if (LZ4.name.equals(name))\n            return LZ4;\n        else if (ZSTD.name.equals(name))\n            return ZSTD;\n        else\n            throw new IllegalArgumentException(\"Unknown compression name: \" + name);\n    }",
+    "replace": "    public static CompressionType forName(String name) {\n        CompressionType type = TYPES_BY_NAME.get(name);\n        if (type != null)\n            return type;\n        else\n            throw new IllegalArgumentException(\"Unknown compression name: \" + name);\n    }"
+  }
+]
+```

@@ -1,0 +1,21 @@
+My overall improvement strategy is to enhance performance by minimizing unnecessary object allocations within the `Partition` class, particularly in frequently executed code paths. I will achieve this by optimizing collection operations to prevent the creation of intermediate collections. Specifically, I'm replacing a `filter` followed by `foreach` with a more efficient single `foreach` containing an `if` condition. Additionally, I'm streamlining the `getOutOfSyncReplicas` method to avoid generating an intermediate set. I will also align the Java-to-Scala collection conversion logic for better code consistency and readability.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/cluster/Partition.scala",
+    "search": "      updateAssignmentAndIsr(\n        assignment = partitionState.replicas.asScala.iterator.map(_.toInt).toSeq,\n        isr = Set.empty[Int],\n        addingReplicas = partitionState.addingReplicas.asScala.map(_.toInt),\n        removingReplicas = partitionState.removingReplicas.asScala.map(_.toInt)\n      )",
+    "replace": "      updateAssignmentAndIsr(\n        assignment = partitionState.replicas.asScala.map(_.toInt),\n        isr = Set.empty[Int],\n        addingReplicas = partitionState.addingReplicas.asScala.map(_.toInt),\n        removingReplicas = partitionState.removingReplicas.asScala.map(_.toInt)\n      )"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/cluster/Partition.scala",
+    "search": "    assignment\n      .filter(_ != localBrokerId)\n      .foreach(id => remoteReplicasMap.getAndMaybePut(id, new Replica(id, topicPartition)))",
+    "replace": "    assignment.foreach { id =>\n      if (id != localBrokerId)\n        remoteReplicasMap.getAndMaybePut(id, new Replica(id, topicPartition))\n    }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/cluster/Partition.scala",
+    "search": "    val candidateReplicaIds = inSyncReplicaIds - localBrokerId\n    val currentTimeMs = time.milliseconds()\n    val leaderEndOffset = localLogOrException.logEndOffset\n    candidateReplicaIds.filter(replicaId => isFollowerOutOfSync(replicaId, leaderEndOffset, currentTimeMs, maxLagMs))",
+    "replace": "    val currentTimeMs = time.milliseconds()\n    val leaderEndOffset = localLogOrException.logEndOffset\n    inSyncReplicaIds.filter(replicaId => replicaId != localBrokerId && isFollowerOutOfSync(replicaId, leaderEndOffset, currentTimeMs, maxLagMs))"
+  }
+]
+```

@@ -1,0 +1,21 @@
+The previous changes introduced a bug in prefixed ACL matching logic, causing a test failure. I have identified and reverted the incorrect change in the `matchingAcls` method. The remaining changes, which are valid performance optimizations for other methods (`authorize`, `createAcls`, and `acls`), have been retained. These optimizations reduce object allocations and improve efficiency by replacing functional collection transformations with imperative loops and iterators, without altering the original functionality.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  override def authorize(requestContext: AuthorizableRequestContext, actions: util.List[Action]): util.List[AuthorizationResult] = {\n    actions.asScala.map { action => authorizeAction(requestContext, action) }.asJava\n  }",
+    "replace": "  override def authorize(requestContext: AuthorizableRequestContext, actions: util.List[Action]): util.List[AuthorizationResult] = {\n    val results = new util.ArrayList[AuthorizationResult](actions.size)\n    val iter = actions.iterator\n    while (iter.hasNext) {\n      results.add(authorizeAction(requestContext, iter.next()))\n    }\n    results\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "    val results = new Array[AclCreateResult](aclBindings.size)\n    val aclsToCreate = aclBindings.asScala.zipWithIndex\n      .filter { case (aclBinding, i) =>\n        try {\n          if (!extendedAclSupport && aclBinding.pattern.patternType == PatternType.PREFIXED) {\n            throw new UnsupportedVersionException(s\"Adding ACLs on prefixed resource patterns requires \" +\n              s\"${KafkaConfig.InterBrokerProtocolVersionProp} of $KAFKA_2_0_IV1 or greater\")\n          }\n          AuthorizerUtils.validateAclBinding(aclBinding)\n          true\n        } catch {\n          case e: Throwable =>\n            results(i) = new AclCreateResult(new InvalidRequestException(\"Failed to create ACL\", apiException(e)))\n            false\n        }\n      }.groupBy(_._1.pattern)",
+    "replace": "    val results = new Array[AclCreateResult](aclBindings.size)\n    val aclsToCreate = new mutable.HashMap[ResourcePattern, mutable.Buffer[(AclBinding, Int)]]()\n    val aclBindingsIter = aclBindings.iterator()\n    var i = 0\n    while (aclBindingsIter.hasNext) {\n      val aclBinding = aclBindingsIter.next()\n      try {\n        if (!extendedAclSupport && aclBinding.pattern.patternType == PatternType.PREFIXED) {\n          throw new UnsupportedVersionException(s\"Adding ACLs on prefixed resource patterns requires \" +\n            s\"${KafkaConfig.InterBrokerProtocolVersionProp} of $KAFKA_2_0_IV1 or greater\")\n        }\n        AuthorizerUtils.validateAclBinding(aclBinding)\n        val aclsForPattern = aclsToCreate.getOrElseUpdate(aclBinding.pattern, mutable.Buffer.empty)\n        aclsForPattern += ((aclBinding, i))\n      } catch {\n        case e: Throwable =>\n          results(i) = new AclCreateResult(new InvalidRequestException(\"Failed to create ACL\", apiException(e)))\n      }\n      i += 1\n    }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "    inReadLock(lock) {\n      unorderedAcls.flatMap { case (resource, versionedAcls) =>\n        versionedAcls.acls.map(acl => new AclBinding(resource, acl.ace))\n            .filter(filter.matches)\n      }.asJava\n    }",
+    "replace": "    inReadLock(lock) {\n      aclCache.iterator.filter { case (resource, _) =>\n        filter.patternFilter.matches(resource)\n      }.flatMap { case (resource, versionedAcls) =>\n        versionedAcls.acls.iterator.map(_.ace)\n          .filter(filter.entryFilter.matches)\n          .map(ace => new AclBinding(resource, ace))\n      }.toIterable.asJava\n    }"
+  }
+]
+```

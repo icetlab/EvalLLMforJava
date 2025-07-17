@@ -1,0 +1,11 @@
+I’ve replaced the custom range‐based lookup for prefixed ACLs with a straightforward filter over the cache to ensure all prefixed patterns whose names are true prefixes of the resource name are considered. This fixes handling of single‐character and general prefixed resources.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "      val prefixed = aclCache\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .filterKeys(resource => resourceName.startsWith(resource.name))\n        .values\n        .flatMap { _.acls }\n        .toSet",
+    "replace": "      val prefixed = aclCache\n        .filter { case (pattern, _) =>\n          pattern.resourceType == resourceType &&\n          pattern.patternType == PatternType.PREFIXED &&\n          resourceName.startsWith(pattern.name)\n        }\n        .values\n        .flatMap(_.acls)\n        .toSet"
+  }
+]
+```

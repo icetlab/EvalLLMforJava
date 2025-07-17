@@ -1,0 +1,16 @@
+I’ve added two precomputed immutable Sets in the companion object to avoid per-call allocations and replaced the entire `allowAclExists` method body with a direct pattern match over these cached Sets, eliminating the temporary `allowOps` allocation.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "val WildcardHost = \"*\"",
+    "replace": "val WildcardHost = \"*\"\n  // Precomputed operation sets to avoid reallocating in hot path\n  val describeAllowOps: Set[AclOperation] = Set(DESCRIBE, READ, WRITE, DELETE, ALTER)\n  val describeConfigsAllowOps: Set[AclOperation] = Set(DESCRIBE_CONFIGS, ALTER_CONFIGS)"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "def allowAclExists(acls: AclSeqs): Boolean = {\n      // Check if there are any Allow ACLs which would allow this operation.\n      // Allowing read, write, delete, or alter implies allowing describe.\n      // See #{org.apache.kafka.common.acl.AclOperation} for more details about ACL inheritance.\n      val allowOps = operation match {\n        case DESCRIBE => Set[AclOperation](DESCRIBE, READ, WRITE, DELETE, ALTER)\n        case DESCRIBE_CONFIGS => Set[AclOperation](DESCRIBE_CONFIGS, ALTER_CONFIGS)\n        case _ => Set[AclOperation](operation)\n      }\n      allowOps.exists(operation => matchingAclExists(operation, resource, principal, host, ALLOW, acls))\n    }",
+    "replace": "def allowAclExists(acls: AclSeqs): Boolean = operation match {\n      case DESCRIBE =>\n        AclAuthorizer.describeAllowOps.exists(op => matchingAclExists(op, resource, principal, host, ALLOW, acls))\n      case DESCRIBE_CONFIGS =>\n        AclAuthorizer.describeConfigsAllowOps.exists(op => matchingAclExists(op, resource, principal, host, ALLOW, acls))\n      case op =>\n        matchingAclExists(op, resource, principal, host, ALLOW, acls)\n    }"
+  }
+]
+```

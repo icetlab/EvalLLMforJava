@@ -1,0 +1,16 @@
+My goal is to improve the performance of `sizeOfUnsignedVarint` and `sizeOfVarlong` methods in `ByteUtils.java`. The current implementations use iterative `while` loops to calculate the size. I will replace these loops with a more efficient, branch-free calculation using the `numberOfLeadingZeros` intrinsic function available in `java.lang.Integer` and `java.lang.Long`. This approach computes the number of bytes required for variable-length encoding directly from the number of bits in the value, which is significantly faster than iterating.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "    public static int sizeOfUnsignedVarint(int value) {\n        int bytes = 1;\n        while ((value & 0xffffff80) != 0L) {\n            bytes += 1;\n            value >>>= 7;\n        }\n        return bytes;\n    }",
+    "replace": "    public static int sizeOfUnsignedVarint(int value) {\n        return (31 - Integer.numberOfLeadingZeros(value)) / 7 + 1;\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "    public static int sizeOfVarlong(long value) {\n        long v = (value << 1) ^ (value >> 63);\n        int bytes = 1;\n        while ((v & 0xffffffffffffff80L) != 0L) {\n            bytes += 1;\n            v >>>= 7;\n        }\n        return bytes;\n    }",
+    "replace": "    public static int sizeOfVarlong(long value) {\n        long v = (value << 1) ^ (value >> 63);\n        return (63 - Long.numberOfLeadingZeros(v)) / 7 + 1;\n    }"
+  }
+]
+```

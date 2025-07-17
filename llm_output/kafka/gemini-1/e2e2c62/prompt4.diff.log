@@ -1,0 +1,20 @@
+The performance issue is a regression in `AclAuthorizer`'s `matchingAcls` method, specifically in how it handles prefixed ACLs. The current implementation eagerly constructs a collection of all potentially matching prefixed ACLs by using `flatMap` on a `TreeMap` slice. When there are many prefixed ACLs, this slice can be very large, and the subsequent filtering (`resourceName.startsWith(...)`) and collection building (`toBuffer`) become a bottleneck. This is especially true when the `TreeMap.from/to` filtering is not effective at narrowing down the candidates.
+
+The previous implementation likely used a lazy approach (e.g., `filterKeys` which returned a `MapView`), and the move to an eager `flatMap` caused the regression.
+
+My improvement restores the lazy evaluation for prefixed ACLs. I will modify the `matchingAcls` method to:
+1.  Use `.view` on the `TreeMap` slice to create a lazy view of the candidate resource patterns.
+2.  Perform the `flatMap` operation on this lazy view. The `flatMap` itself will then be executed lazily.
+3.  Convert the resulting lazy view into a `LazyList` instead of an eager `Buffer`.
+
+A `LazyList` is a memoizing, immutable `Seq` that computes its elements only when they are accessed. This avoids the upfront cost of building the entire collection of matching prefixed ACLs. When `denyAclExists` and `allowAclExists` iterate over this `LazyList`, elements will be computed on demand. The memoization ensures that for the second iteration (in `allowAclExists`), already computed elements are not re-computed, making it efficient. This change is localized to the `prefixed` ACLs calculation, which is the source of the performance problem, and preserves the existing authorization logic.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "    val prefixed = aclCacheSnapshot\n      .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n      .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n      .flatMap { case (resource, acls) => if (resourceName.startsWith(resource.name)) acls.acls else Seq.empty }\n      .toBuffer",
+    "replace": "    val prefixed = aclCacheSnapshot\n      .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n      .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n      .view\n      .flatMap { case (resource, acls) => if (resourceName.startsWith(resource.name)) acls.acls else Seq.empty }\n      .to(LazyList)"
+  }
+]
+```

@@ -1,0 +1,44 @@
+The previous build failed because a method signature was changed, but not all of its call sites were updated, leading to a compilation error. The fix involves ensuring all calls to `checkpointLogStartOffsetsInDir` are updated to match the new signature. I've expanded the search context for the patches to ensure they apply correctly.
+
+The overall performance improvement intent remains the same: to reduce allocations and CPU usage during log checkpointing, which can be a bottleneck on brokers with a large number of replicas. This is achieved through two main optimizations:
+
+1.  The `logsByDir` method, which groups logs by their parent directory, is rewritten to be more efficient. The original implementation created several large intermediate collections. The new implementation iterates over the logs and builds the final map structure directly, significantly reducing memory allocations.
+
+2.  The `checkpointLogStartOffsets` method, which is called periodically, is refactored to avoid calling the expensive `logsByDir` method inside a loop. Instead, `logsByDir` is called once, and the resulting map is passed down to the helper method that performs the checkpointing for each directory. This avoids redundant work and allocations on each checkpoint cycle.
+
+These changes together make the log checkpointing process more performant and scalable.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogManager.scala",
+    "search": "        debug(s\"Updating log start offsets at $dir\")\n        checkpointLogStartOffsetsInDir(dir)",
+    "replace": "        debug(s\"Updating log start offsets at $dir\")\n        checkpointLogStartOffsetsInDir(dir, localLogsByDir.get(dir.toString))"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogManager.scala",
+    "search": "  def checkpointLogStartOffsets(): Unit = {\n    liveLogDirs.foreach(checkpointLogStartOffsetsInDir)\n  }",
+    "replace": "  def checkpointLogStartOffsets(): Unit = {\n    val allLogsByDir = logsByDir\n    liveLogDirs.foreach(dir => checkpointLogStartOffsetsInDir(dir, allLogsByDir.get(dir.getAbsolutePath)))\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogManager.scala",
+    "search": "  private def checkpointLogStartOffsetsInDir(dir: File): Unit = {\n    for {\n      partitionToLog <- logsByDir.get(dir.getAbsolutePath)\n      checkpoint <- logStartOffsetCheckpoints.get(dir)\n    } {",
+    "replace": "  private def checkpointLogStartOffsetsInDir(dir: File, partitionToLogMapOption: Option[Map[TopicPartition, Log]]): Unit = {\n    for {\n      partitionToLog <- partitionToLogMapOption\n      checkpoint <- logStartOffsetCheckpoints.get(dir)\n    } {"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogManager.scala",
+    "search": "        sourceLog.close()\n        checkpointRecoveryOffsetsAndCleanSnapshot(sourceLog.parentDirFile, ArrayBuffer.empty)\n        checkpointLogStartOffsetsInDir(sourceLog.parentDirFile)\n        addLogToBeDeleted(sourceLog)",
+    "replace": "        sourceLog.close()\n        checkpointRecoveryOffsetsAndCleanSnapshot(sourceLog.parentDirFile, ArrayBuffer.empty)\n        checkpointLogStartOffsetsInDir(sourceLog.parentDirFile, logsByDir.get(sourceLog.parentDirFile.getAbsolutePath))\n        addLogToBeDeleted(sourceLog)"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogManager.scala",
+    "search": "      removedLog.renameDir(Log.logDeleteDirName(topicPartition))\n      checkpointRecoveryOffsetsAndCleanSnapshot(removedLog.parentDirFile, ArrayBuffer.empty)\n      checkpointLogStartOffsetsInDir(removedLog.parentDirFile)\n      addLogToBeDeleted(removedLog)",
+    "replace": "      removedLog.renameDir(Log.logDeleteDirName(topicPartition))\n      checkpointRecoveryOffsetsAndCleanSnapshot(removedLog.parentDirFile, ArrayBuffer.empty)\n      checkpointLogStartOffsetsInDir(removedLog.parentDirFile, logsByDir.get(removedLog.parentDirFile.getAbsolutePath))\n      addLogToBeDeleted(removedLog)"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogManager.scala",
+    "search": "  private def logsByDir: Map[String, Map[TopicPartition, Log]] = {\n    (this.currentLogs.toList ++ this.futureLogs.toList).toMap\n      .groupBy { case (_, log) => log.parentDir }\n  }",
+    "replace": "  private def logsByDir: Map[String, Map[TopicPartition, Log]] = {\n    val builder = mutable.Map.empty[String, mutable.Map[TopicPartition, Log]]\n    (currentLogs.iterator ++ futureLogs.iterator).foreach { case (tp, log) =>\n      builder.getOrElseUpdate(log.parentDir, mutable.Map.empty) += (tp -> log)\n    }\n    builder.view.mapValues(_.toMap).toMap\n  }"
+  }
+]
+```

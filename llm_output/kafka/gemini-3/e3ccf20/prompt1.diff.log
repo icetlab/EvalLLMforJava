@@ -1,0 +1,27 @@
+My overall improvement strategy focuses on optimizing the hot path in the `AclAuthorizer`, specifically within the `authorize` method and its callees. The key improvements are:
+
+1.  **Efficient Prefixed ACL Matching**: The logic for finding matching prefixed ACLs involved creating an intermediate `TreeMap` via `filterKeys`, which is inefficient. I've changed this to use an iterator-based approach (`iterator.filter.flatMap.toSet`), which avoids the overhead of creating intermediate collections and improves performance, especially when there are many prefixed ACLs.
+
+2.  **Reduced Object Allocation for ACL Inheritance**: In the `allowAclExists` method, `Set`s of `AclOperation` were created on every invocation to handle ACL inheritance (e.g., `READ` implies `DESCRIBE`). I've replaced this with pre-computed, static `Set`s defined in the companion object. This avoids repeated object allocation and garbage collection pressure in a frequently called method, leading to better performance and lower latency.
+
+These changes are designed to make the authorization process faster and more memory-efficient without altering its behavior.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "object AclAuthorizer {\n  // Optional override zookeeper cluster configuration where acls will be stored. If not specified,\n  // acls will be stored in the same zookeeper where all other kafka broker metadata is stored.\n  val configPrefix = \"authorizer.\"",
+    "replace": "object AclAuthorizer {\n  private val DescribeOps = Set[AclOperation](DESCRIBE, READ, WRITE, DELETE, ALTER)\n  private val DescribeConfigsOps = Set[AclOperation](DESCRIBE_CONFIGS, ALTER_CONFIGS)\n\n  // Optional override zookeeper cluster configuration where acls will be stored. If not specified,\n  // acls will be stored in the same zookeeper where all other kafka broker metadata is stored.\n  val configPrefix = \"authorizer.\""
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "      // See #{org.apache.kafka.common.acl.AclOperation} for more details about ACL inheritance.\n      val allowOps = operation match {\n        case DESCRIBE => Set[AclOperation](DESCRIBE, READ, WRITE, DELETE, ALTER)\n        case DESCRIBE_CONFIGS => Set[AclOperation](DESCRIBE_CONFIGS, ALTER_CONFIGS)\n        case _ => Set[AclOperation](operation)\n      }\n      allowOps.exists(operation => matchingAclExists(operation, resource, principal, host, ALLOW, acls))",
+    "replace": "      // See #{org.apache.kafka.common.acl.AclOperation} for more details about ACL inheritance.\n      operation match {\n        case DESCRIBE => AclAuthorizer.DescribeOps.exists(op => matchingAclExists(op, resource, principal, host, ALLOW, acls))\n        case DESCRIBE_CONFIGS => AclAuthorizer.DescribeConfigsOps.exists(op => matchingAclExists(op, resource, principal, host, ALLOW, acls))\n        case _ => matchingAclExists(operation, resource, principal, host, ALLOW, acls)\n      }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "      val prefixed = aclCache\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .filterKeys(resource => resourceName.startsWith(resource.name))\n        .values\n        .flatMap { _.acls }\n        .toSet",
+    "replace": "      val prefixed = aclCache\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .iterator\n        .filter { case (resource, _) => resourceName.startsWith(resource.name) }\n        .flatMap { case (_, versionedAcls) => versionedAcls.acls }\n        .toSet"
+  }
+]
+```

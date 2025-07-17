@@ -1,0 +1,16 @@
+I’ve broken down the backoff jitter change into two precise, minimal edits to ensure the patterns are easily found, replacing the import of `Random` and the one-line `Random.nextInt` usage.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "import scala.util.{Failure, Random, Success, Try}",
+    "replace": "import scala.util.{Failure, Success, Try}\nimport java.util.concurrent.ThreadLocalRandom"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "retryBackoffMs + Random.nextInt(retryBackoffJitterMs)",
+    "replace": "retryBackoffMs + ThreadLocalRandom.current().nextInt(retryBackoffJitterMs)"
+  }
+]
+```

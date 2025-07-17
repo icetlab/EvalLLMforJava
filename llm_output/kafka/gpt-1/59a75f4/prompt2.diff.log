@@ -1,0 +1,16 @@
+I have replaced the two hot spots where we were materializing a Seq of PartitionState objects by directly iterating over the internal partitionStateMap, eliminating needless allocations and improving performance during fetch offset updates and partition-offset snapshots.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/server/AbstractFetcherThread.scala",
+    "search": "val newStates: Map[TopicPartition, PartitionFetchState] = partitionStates.partitionStates.asScala\n      .map { state =>",
+    "replace": "val newStates: Map[TopicPartition, PartitionFetchState] = partitionStates.partitionStateMap.asScala\n      .map { case (tp, currentFetchState) =>"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/server/AbstractFetcherThread.scala",
+    "search": "partitionStates.partitionStates.asScala.map { state =>\n      val initialFetchState = InitialFetchState(sourceBroker,\n        currentLeaderEpoch = state.value.currentLeaderEpoch,\n        initOffset = state.value.fetchOffset)\n      state.topicPartition -> initialFetchState",
+    "replace": "partitionStates.partitionStateMap.asScala.map { case (tp, state) =>\n      val initialFetchState = InitialFetchState(sourceBroker,\n        currentLeaderEpoch = state.currentLeaderEpoch,\n        initOffset = state.fetchOffset)\n      tp -> initialFetchState"
+  }
+]
+```

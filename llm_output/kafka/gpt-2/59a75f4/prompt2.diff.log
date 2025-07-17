@@ -1,0 +1,11 @@
+I’ve relaxed the search to target only the `try` block in `removePartitions` and replaced the per-partition `foreach` with a batch `removeAll` and `forEach` unregister to reduce lock contention.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/server/AbstractFetcherThread.scala",
+    "search": "try {\n      topicPartitions.foreach { topicPartition =>\n        partitionStates.remove(topicPartition)\n        fetcherLagStats.unregister(topicPartition)\n      }\n    } finally",
+    "replace": "try {\n      // batch removal to minimize size updates and lock contention\n      partitionStates.removeAll(topicPartitions.asJava)\n      // unregister metrics for each partition\n      topicPartitions.asJava.forEach(fetcherLagStats.unregister)\n    } finally"
+  }
+]
+```

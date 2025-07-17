@@ -1,0 +1,18 @@
+The previous attempt failed because it removed methods from `PartitionStates.java` that were used by other classes not included in the context, leading to build errors. This revised approach corrects this by focusing only on the performance optimizations within `AbstractFetcherThread.scala` without altering the public API of `PartitionStates.java`.
+
+The improvement intent is to reduce object allocation and improve iteration efficiency in `AbstractFetcherThread.scala`. I will refactor two methods, `updateFetchOffsetAndMaybeMarkTruncationComplete` and `partitionsAndOffsets`, to iterate directly over the underlying map of partition states (`partitionStateMap`) instead of using the `partitionStates()` method. The `partitionStates()` method creates a new list of `PartitionState` wrapper objects for each call, which is inefficient. By using `partitionStateMap` directly, we avoid this overhead, leading to better performance and reduced garbage collection pressure.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/server/AbstractFetcherThread.scala",
+    "search": "  private def updateFetchOffsetAndMaybeMarkTruncationComplete(fetchOffsets: Map[TopicPartition, OffsetTruncationState]): Unit = {\n    val newStates: Map[TopicPartition, PartitionFetchState] = partitionStates.partitionStates.asScala\n      .map { state =>\n        val currentFetchState = state.value\n        val maybeTruncationComplete = fetchOffsets.get(state.topicPartition) match {\n          case Some(offsetTruncationState) =>\n            val state = if (offsetTruncationState.truncationCompleted) Fetching else Truncating\n            PartitionFetchState(offsetTruncationState.offset, currentFetchState.lag,\n              currentFetchState.currentLeaderEpoch, currentFetchState.delay, state)\n          case None => currentFetchState\n        }\n        (state.topicPartition, maybeTruncationComplete)\n      }.toMap\n    partitionStates.set(newStates.asJava)\n  }",
+    "replace": "  private def updateFetchOffsetAndMaybeMarkTruncationComplete(fetchOffsets: Map[TopicPartition, OffsetTruncationState]): Unit = {\n    val newStates: Map[TopicPartition, PartitionFetchState] = partitionStates.partitionStateMap.asScala.map {\n      case (tp, currentFetchState) =>\n        val newFetchState = fetchOffsets.get(tp) match {\n          case Some(offsetTruncationState) =>\n            val state = if (offsetTruncationState.truncationCompleted) Fetching else Truncating\n            PartitionFetchState(offsetTruncationState.offset, currentFetchState.lag,\n              currentFetchState.currentLeaderEpoch, currentFetchState.delay, state)\n          case None => currentFetchState\n        }\n        tp -> newFetchState\n    }.toMap\n    partitionStates.set(newStates.asJava)\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/server/AbstractFetcherThread.scala",
+    "search": "  private[server] def partitionsAndOffsets: Map[TopicPartition, InitialFetchState] = inLock(partitionMapLock) {\n    partitionStates.partitionStates.asScala.map { state =>\n      val initialFetchState = InitialFetchState(sourceBroker,\n        currentLeaderEpoch = state.value.currentLeaderEpoch,\n        initOffset = state.value.fetchOffset)\n      state.topicPartition -> initialFetchState\n    }.toMap\n  }",
+    "replace": "  private[server] def partitionsAndOffsets: Map[TopicPartition, InitialFetchState] = inLock(partitionMapLock) {\n    partitionStates.partitionStateMap.asScala.map { case (tp, state) =>\n      val initialFetchState = InitialFetchState(sourceBroker,\n        currentLeaderEpoch = state.currentLeaderEpoch,\n        initOffset = state.fetchOffset)\n      tp -> initialFetchState\n    }.toMap\n  }"
+  }
+]
+```

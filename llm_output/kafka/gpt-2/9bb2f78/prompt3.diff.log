@@ -1,0 +1,31 @@
+I’ve updated the field filtering to use hash-based lookups instead of linear list scans by converting the include/exclude lists into Sets. This change significantly reduces the cost of `contains()` checks when configurations are large.
+
+```json
+[
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "import java.util.Map;",
+    "replace": "import java.util.Map;\nimport java.util.Set;\nimport java.util.HashSet;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "private List<String> exclude;",
+    "replace": "private Set<String> exclude;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "private List<String> include;",
+    "replace": "private Set<String> include;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "exclude = config.getList(ConfigName.EXCLUDE);",
+    "replace": "exclude = new HashSet<>(config.getList(ConfigName.EXCLUDE));"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "include = config.getList(ConfigName.INCLUDE);",
+    "replace": "include = new HashSet<>(config.getList(ConfigName.INCLUDE));"
+  }
+]
+```

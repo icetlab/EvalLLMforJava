@@ -1,0 +1,16 @@
+I’ve corrected the `matchingAclExists` replacement to include the proper braces and closing of the method, and kept the simplified `exists` logic. I’ve also retained the `ResourceOrdering` reverse-comparison change.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "    acls.find { acl =>\n      acl.permissionType == permissionType &&\n        (acl.kafkaPrincipal == principal || acl.kafkaPrincipal == AclEntry.WildcardPrincipal) &&\n        (operation == acl.operation || acl.operation == AclOperation.ALL) &&\n        (acl.host == host || acl.host == AclEntry.WildcardHost)\n    }.exists { acl =>\n      authorizerLogger.debug(s\"operation = $operation on resource = $resource from host = $host is $permissionType based on acl = $acl\")\n      true\n    }\n  }",
+    "replace": "    acls.exists { acl =>\n      val matches = acl.permissionType == permissionType &&\n        (acl.kafkaPrincipal == principal || acl.kafkaPrincipal == AclEntry.WildcardPrincipal) &&\n        (operation == acl.operation || acl.operation == AclOperation.ALL) &&\n        (acl.host == host || acl.host == AclEntry.WildcardHost)\n      if (matches) authorizerLogger.debug(s\"operation = $operation on resource = $resource from host = $host is $permissionType based on acl = $acl\")\n      matches\n    }\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "else\n          (a.name compare b.name) * -1",
+    "replace": "else\n          (b.name compare a.name)"
+  }
+]
+```

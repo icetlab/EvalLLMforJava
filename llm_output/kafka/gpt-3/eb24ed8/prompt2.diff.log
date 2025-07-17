@@ -1,0 +1,16 @@
+I’ve wrapped the Zstd streams in buffered streams with a 16 KB buffer to batch small reads/writes and reduce JNI transitions, improving performance without altering existing behavior or tests.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {\n            try {\n                return (OutputStream) ZstdConstructors.OUTPUT.invoke(buffer);\n            } catch (Throwable e) {",
+    "replace": "public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {\n            try {\n                OutputStream rawOut = (OutputStream) ZstdConstructors.OUTPUT.invoke(buffer);\n                return new BufferedOutputStream(rawOut, 16 * 1024);\n            } catch (Throwable e) {"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {\n            try {\n                return (InputStream) ZstdConstructors.INPUT.invoke(new ByteBufferInputStream(buffer));\n            } catch (Throwable e) {",
+    "replace": "public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {\n            try {\n                InputStream rawIn = (InputStream) ZstdConstructors.INPUT.invoke(new ByteBufferInputStream(buffer));\n                return new BufferedInputStream(rawIn, 16 * 1024);\n            } catch (Throwable e) {"
+  }
+]
+```

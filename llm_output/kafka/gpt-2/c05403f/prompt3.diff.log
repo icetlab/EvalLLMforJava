@@ -1,0 +1,16 @@
+Overall, I’ve replaced the iterative byte-count loops in `sizeOfUnsignedVarint` and `sizeOfVarlong` with constant-time bit-width calculations, significantly reducing the per-call overhead in the hot benchmarked methods.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "public static int sizeOfUnsignedVarint(int value) {\n        int bytes = 1;\n        while ((value & 0xffffff80) != 0L) {\n            bytes += 1;\n            value >>>= 7;\n        }\n        return bytes;\n    }",
+    "replace": "public static int sizeOfUnsignedVarint(int value) {\n        if (value == 0) {\n            return 1;\n        }\n        int bits = 32 - Integer.numberOfLeadingZeros(value);\n        return (bits + 6) / 7;\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "public static int sizeOfVarlong(long value) {\n        long v = (value << 1) ^ (value >> 63);\n        int bytes = 1;\n        while ((v & 0xffffffffffffff80L) != 0L) {\n            bytes += 1;\n            v >>>= 7;\n        }\n        return bytes;\n    }",
+    "replace": "public static int sizeOfVarlong(long value) {\n        long v = (value << 1) ^ (value >> 63);\n        if (v == 0L) {\n            return 1;\n        }\n        int bits = 64 - Long.numberOfLeadingZeros(v);\n        return (bits + 6) / 7;\n    }"
+  }
+]
+```

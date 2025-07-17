@@ -1,0 +1,11 @@
+I have replaced the use of Scala collection transformations in the `acls` method with an imperative loop that directly builds a Java `ArrayList`, avoiding unnecessary intermediate set and list allocations for better performance.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n    inReadLock(lock) {\n      unorderedAcls.flatMap { case (resource, versionedAcls) =>\n        versionedAcls.acls.map(acl => new AclBinding(resource, acl.ace))\n            .filter(filter.matches)\n      }.asJava\n    }\n  }",
+    "replace": "override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n    inReadLock(lock) {\n      val result = new util.ArrayList[AclBinding]()\n      for ((resource, versionedAcls) <- unorderedAcls) {\n        versionedAcls.acls.foreach { acl =>\n          val binding = new AclBinding(resource, acl.ace)\n          if (filter.matches(binding)) result.add(binding)\n        }\n      }\n      result\n    }\n  }"
+  }
+]
+```

@@ -1,0 +1,44 @@
+The performance issue is related to high allocation rates in `LogManager.checkpointLogRecoveryOffsets` and `LogManager.checkpointLogStartOffsets`, particularly when the number of replicas is large. This is caused by the inefficient implementation of the `logsByDir` method, which is called frequently by these checkpointing methods.
+
+My improvement strategy involves two main changes:
+
+1.  **Optimize `logsByDir` implementation:** The original implementation of `logsByDir` created several large intermediate collections, leading to high garbage collection pressure. It also contained a subtle bug that would cause future logs to overwrite current logs for the same topic-partition. I've replaced it with a more efficient version that uses `groupBy` on an `Iterable` view of all logs, avoiding intermediate collection allocations and fixing the bug. This will improve the performance of both `checkpointLogRecoveryOffsets` and `checkpointLogStartOffsets`.
+
+2.  **Avoid repeated `logsByDir` calls:** The `checkpointLogStartOffsets` method called `checkpointLogStartOffsetsInDir` for each log directory, and `checkpointLogStartOffsetsInDir` in turn called `logsByDir`. This resulted in `logsByDir` being re-computed for every log directory. I've modified `checkpointLogStartOffsets` to compute `logsByDir` only once and pass the result to `checkpointLogStartOffsetsInDir`. This required updating the signature of `checkpointLogStartOffsetsInDir` and all its call sites to accept the pre-computed map of logs.
+
+These changes reduce memory allocations and CPU usage during log checkpointing, directly addressing the identified performance bottleneck.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogManager.scala",
+    "search": "  private def logsByDir: Map[String, Map[TopicPartition, Log]] = {\n    (this.currentLogs.toList ++ this.futureLogs.toList).toMap\n      .groupBy { case (_, log) => log.parentDir }\n  }",
+    "replace": "  private def logsByDir: Map[String, Map[TopicPartition, Log]] = {\n    allLogs.groupBy(_.parentDir).map { case (dir, logs) =>\n      dir -> logs.map(log => (log.topicPartition, log)).toMap\n    }\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogManager.scala",
+    "search": "        debug(s\"Updating log start offsets at $dir\")\n        checkpointLogStartOffsetsInDir(dir)",
+    "replace": "        debug(s\"Updating log start offsets at $dir\")\n        checkpointLogStartOffsetsInDir(dir, localLogsByDir)"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogManager.scala",
+    "search": "  def checkpointLogStartOffsets(): Unit = {\n    liveLogDirs.foreach(checkpointLogStartOffsetsInDir)\n  }",
+    "replace": "  def checkpointLogStartOffsets(): Unit = {\n    val byDir = logsByDir\n    liveLogDirs.foreach(checkpointLogStartOffsetsInDir(_, byDir))\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogManager.scala",
+    "search": "  private def checkpointLogStartOffsetsInDir(dir: File): Unit = {\n    for {\n      partitionToLog <- logsByDir.get(dir.getAbsolutePath)\n      checkpoint <- logStartOffsetCheckpoints.get(dir)\n    } {",
+    "replace": "  private def checkpointLogStartOffsetsInDir(dir: File, logsByDir: Map[String, Map[TopicPartition, Log]]): Unit = {\n    for {\n      partitionToLog <- logsByDir.get(dir.getAbsolutePath)\n      checkpoint <- logStartOffsetCheckpoints.get(dir)\n    } {"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogManager.scala",
+    "search": "        checkpointRecoveryOffsetsAndCleanSnapshot(sourceLog.parentDirFile, ArrayBuffer.empty)\n        checkpointLogStartOffsetsInDir(sourceLog.parentDirFile)\n        addLogToBeDeleted(sourceLog)",
+    "replace": "        checkpointRecoveryOffsetsAndCleanSnapshot(sourceLog.parentDirFile, ArrayBuffer.empty)\n        checkpointLogStartOffsetsInDir(sourceLog.parentDirFile, logsByDir)\n        addLogToBeDeleted(sourceLog)"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogManager.scala",
+    "search": "      checkpointRecoveryOffsetsAndCleanSnapshot(removedLog.parentDirFile, ArrayBuffer.empty)\n      checkpointLogStartOffsetsInDir(removedLog.parentDirFile)\n      addLogToBeDeleted(removedLog)",
+    "replace": "      checkpointRecoveryOffsetsAndCleanSnapshot(removedLog.parentDirFile, ArrayBuffer.empty)\n      checkpointLogStartOffsetsInDir(removedLog.parentDirFile, logsByDir)\n      addLogToBeDeleted(removedLog)"
+  }
+]
+```

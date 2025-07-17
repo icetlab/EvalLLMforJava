@@ -1,0 +1,30 @@
+My overall improvement strategy focuses on two areas.
+
+First, the most significant performance gain comes from changing the `include` and `exclude` lists to `HashSet`. The original implementation used `List<String>`, resulting in `O(n)` complexity for checking if a field should be filtered. By converting these to `HashSet<String>`, the check becomes an average-case `O(1)` operation. This will substantially improve performance for records with many fields or when large inclusion/exclusion lists are configured. This change involves updating the field declarations, modifying the `configure` method to initialize `HashSet`s, and adding the necessary imports.
+
+Second, I've made a micro-optimization in the `parseRenameMappings` method. The original code used `String.split(":")`, which relies on regular expressions and can be inefficient. I've replaced it with a more performant implementation using `String.indexOf` and `String.substring`, while carefully preserving the original validation logic. Although this method is only called during configuration, it's a good practice to use more efficient string manipulation techniques.
+
+```json
+[
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "import java.util.HashMap;\nimport java.util.List;\nimport java.util.Map;",
+    "replace": "import java.util.HashMap;\nimport java.util.HashSet;\nimport java.util.List;\nimport java.util.Map;\nimport java.util.Set;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "    private List<String> exclude;\n    private List<String> include;",
+    "replace": "    private Set<String> exclude;\n    private Set<String> include;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "        exclude = config.getList(ConfigName.EXCLUDE);\n        include = config.getList(ConfigName.INCLUDE);",
+    "replace": "        exclude = new HashSet<>(config.getList(ConfigName.EXCLUDE));\n        include = new HashSet<>(config.getList(ConfigName.INCLUDE));"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "    static Map<String, String> parseRenameMappings(List<String> mappings) {\n        final Map<String, String> m = new HashMap<>();\n        for (String mapping : mappings) {\n            final String[] parts = mapping.split(\":\");\n            if (parts.length != 2) {\n                throw new ConfigException(ConfigName.RENAME, mappings, \"Invalid rename mapping: \" + mapping);\n            }\n            m.put(parts[0], parts[1]);\n        }\n        return m;\n    }",
+    "replace": "    static Map<String, String> parseRenameMappings(List<String> mappings) {\n        final Map<String, String> m = new HashMap<>();\n        for (String mapping : mappings) {\n            final int sep = mapping.indexOf(':');\n            if (sep < 0 || sep == mapping.length() - 1 || mapping.indexOf(':', sep + 1) != -1) {\n                throw new ConfigException(ConfigName.RENAME, mappings, \"Invalid rename mapping: \" + mapping);\n            }\n            m.put(mapping.substring(0, sep), mapping.substring(sep + 1));\n        }\n        return m;\n    }"
+  }
+]
+```

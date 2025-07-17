@@ -1,0 +1,20 @@
+My overall improvement strategy focuses on optimizing ACL lookups and processing, which are critical for performance in an authorizer.
+
+1.  In the `matchingAcls` method, the logic for finding prefixed ACLs involved scanning a potentially large range of the `aclCache` and then filtering. I've replaced this with a more efficient approach that uses an iterator and the `takeWhile` operator. This new implementation starts scanning from the correct position and stops as soon as a resource name is no longer a prefix, significantly reducing the number of scanned elements, especially when many prefixed ACLs are configured.
+
+2.  In the `deleteAcls` method, the process of identifying which resources to update involved creating several intermediate collections, including a large map that was immediately filtered. I've refactored this to use iterators and build the final map of resources to update more directly. This avoids unnecessary object allocations and processing, improving both memory usage and execution speed, particularly when handling a large number of ACLs or deletion filters.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "      val resources = aclCache.keys ++ filters.map(_._1.patternFilter).filter(_.matchesAtMostOne).flatMap(filterToResources)\n      val resourcesToUpdate = resources.map { resource =>\n        val matchingFilters = filters.filter { case (filter, _) =>\n          filter.patternFilter.matches(resource)\n        }\n        resource -> matchingFilters\n      }.toMap.filter(_._2.nonEmpty)",
+    "replace": "      val resources = aclCache.keys ++ filters.iterator.map(_._1.patternFilter).filter(_.matchesAtMostOne).flatMap(filterToResources)\n      val resourcesToUpdate = mutable.Map[ResourcePattern, Seq[(AclBindingFilter, Int)]]()\n      for (resource <- resources) {\n        val matchingFilters = filters.filter { case (filter, _) =>\n          filter.patternFilter.matches(resource)\n        }\n        if (matchingFilters.nonEmpty) {\n          resourcesToUpdate.put(resource, matchingFilters)\n        }\n      }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "      val prefixed = aclCache\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .filterKeys(resource => resourceName.startsWith(resource.name))\n        .values\n        .flatMap { _.acls }\n        .toSet",
+    "replace": "      val prefixed = aclCache\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .iterator\n        .takeWhile { case (resource, _) =>\n          resource.resourceType == resourceType &&\n          resource.patternType == PatternType.PREFIXED &&\n          resourceName.startsWith(resource.name)\n        }\n        .flatMap { case (_, versionedAcls) => versionedAcls.acls }\n        .toSet"
+  }
+]
+```

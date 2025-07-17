@@ -1,0 +1,41 @@
+I’ve optimized the varint/varlong loops to use simpler bitmasks (avoiding unnecessary long promotions) and streamlined the first byte extraction in little-endian array reads. These changes are purely local and behavior-preserving but reduce per-iteration overhead.  
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "public static int readUnsignedIntLE(byte[] buffer, int offset) {\n        return (buffer[offset] << 0 & 0xff)\n                | ((buffer[offset + 1] & 0xff) << 8)\n                | ((buffer[offset + 2] & 0xff) << 16)\n                | ((buffer[offset + 3] & 0xff) << 24);\n    }",
+    "replace": "public static int readUnsignedIntLE(byte[] buffer, int offset) {\n        return (buffer[offset] & 0xff)\n                | ((buffer[offset + 1] & 0xff) << 8)\n                | ((buffer[offset + 2] & 0xff) << 16)\n                | ((buffer[offset + 3] & 0xff) << 24);\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "public static int sizeOfUnsignedVarint(int value) {\n        int bytes = 1;\n        while ((value & 0xffffff80) != 0L) {\n            bytes += 1;\n            value >>>= 7;\n        }\n        return bytes;\n    }",
+    "replace": "public static int sizeOfUnsignedVarint(int value) {\n        int bytes = 1;\n        while ((value & ~0x7f) != 0) {\n            bytes++;\n            value >>>= 7;\n        }\n        return bytes;\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "public static void writeUnsignedVarint(int value, ByteBuffer buffer) {\n        while ((value & 0xffffff80) != 0L) {\n            byte b = (byte) ((value & 0x7f) | 0x80);\n            buffer.put(b);\n            value >>>= 7;\n        }\n        buffer.put((byte) value);\n    }",
+    "replace": "public static void writeUnsignedVarint(int value, ByteBuffer buffer) {\n        while ((value & ~0x7f) != 0) {\n            byte b = (byte) ((value & 0x7f) | 0x80);\n            buffer.put(b);\n            value >>>= 7;\n        }\n        buffer.put((byte) value);\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "public static void writeUnsignedVarint(int value, DataOutput out) throws IOException {\n        while ((value & 0xffffff80) != 0L) {\n            byte b = (byte) ((value & 0x7f) | 0x80);\n            out.writeByte(b);\n            value >>>= 7;\n        }\n        out.writeByte((byte) value);\n    }",
+    "replace": "public static void writeUnsignedVarint(int value, DataOutput out) throws IOException {\n        while ((value & ~0x7f) != 0) {\n            byte b = (byte) ((value & 0x7f) | 0x80);\n            out.writeByte(b);\n            value >>>= 7;\n        }\n        out.writeByte((byte) value);\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "public static int sizeOfVarlong(long value) {\n        long v = (value << 1) ^ (value >> 63);\n        int bytes = 1;\n        while ((v & 0xffffffffffffff80L) != 0L) {\n            bytes += 1;\n            v >>>= 7;\n        }\n        return bytes;\n    }",
+    "replace": "public static int sizeOfVarlong(long value) {\n        long v = (value << 1) ^ (value >> 63);\n        int bytes = 1;\n        while ((v & ~0x7fL) != 0) {\n            bytes++;\n            v >>>= 7;\n        }\n        return bytes;\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "public static void writeVarlong(long value, DataOutput out) throws IOException {\n        long v = (value << 1) ^ (value >> 63);\n        while ((v & 0xffffffffffffff80L) != 0L) {\n            out.writeByte(((int) v & 0x7f) | 0x80);\n            v >>>= 7;\n        }\n        out.writeByte((byte) v);\n    }",
+    "replace": "public static void writeVarlong(long value, DataOutput out) throws IOException {\n        long v = (value << 1) ^ (value >> 63);\n        while ((v & ~0x7fL) != 0) {\n            out.writeByte(((int) v & 0x7f) | 0x80);\n            v >>>= 7;\n        }\n        out.writeByte((byte) v);\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "public static void writeVarlong(long value, ByteBuffer buffer) {\n        long v = (value << 1) ^ (value >> 63);\n        while ((v & 0xffffffffffffff80L) != 0L) {\n            byte b = (byte) ((v & 0x7f) | 0x80);\n            buffer.put(b);\n            v >>>= 7;\n        }\n        buffer.put((byte) v);\n    }",
+    "replace": "public static void writeVarlong(long value, ByteBuffer buffer) {\n        long v = (value << 1) ^ (value >> 63);\n        while ((v & ~0x7fL) != 0) {\n            byte b = (byte) ((v & 0x7f) | 0x80);\n            buffer.put(b);\n            v >>>= 7;\n        }\n        buffer.put((byte) v);\n    }"
+  }
+]
+```

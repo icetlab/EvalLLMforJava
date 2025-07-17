@@ -1,0 +1,21 @@
+I have switched the internal LinkedHashMap to access-order mode so that simple `get` and `put` operations will move entries to the end, eliminating redundant remove/put calls. This preserves all existing behavior and ordering, while reducing overhead in `moveToEnd` and `updateAndMoveToEnd`.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/internals/PartitionStates.java",
+    "search": "private final LinkedHashMap<TopicPartition, S> map = new LinkedHashMap<>();",
+    "replace": "private final LinkedHashMap<TopicPartition, S> map = new LinkedHashMap<>(16, 0.75f, true);"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/internals/PartitionStates.java",
+    "search": "public void moveToEnd(TopicPartition topicPartition) {\n        S state = map.remove(topicPartition);\n        if (state != null)\n            map.put(topicPartition, state);\n    }",
+    "replace": "public void moveToEnd(TopicPartition topicPartition) {\n        map.get(topicPartition);\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/internals/PartitionStates.java",
+    "search": "public void updateAndMoveToEnd(TopicPartition topicPartition, S state) {\n        map.remove(topicPartition);\n        map.put(topicPartition, state);\n        updateSize();\n    }",
+    "replace": "public void updateAndMoveToEnd(TopicPartition topicPartition, S state) {\n        map.put(topicPartition, state);\n        updateSize();\n    }"
+  }
+]
+```

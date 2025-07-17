@@ -1,0 +1,11 @@
+I’ve optimized the hot path in `matchingAclExists` by using `Set.exists` instead of `find`+`exists`, eliminating unnecessary `Option` allocations, and hoisting wildcard constants to local vals to reduce repeated field lookups.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "private def matchingAclExists(operation: AclOperation,\n                                resource: ResourcePattern,\n                                principal: KafkaPrincipal,\n                                host: String,\n                                permissionType: AclPermissionType,\n                                acls: Set[AclEntry]): Boolean = {\n    acls.find { acl =>\n      acl.permissionType == permissionType &&\n        (acl.kafkaPrincipal == principal || acl.kafkaPrincipal == AclEntry.WildcardPrincipal) &&\n        (operation == acl.operation || acl.operation == AclOperation.ALL) &&\n        (acl.host == host || acl.host == AclEntry.WildcardHost)\n    }.exists { acl =>\n      authorizerLogger.debug(s\"operation = $operation on resource = $resource from host = $host is $permissionType based on acl = $acl\")\n      true\n    }\n  }",
+    "replace": "private def matchingAclExists(operation: AclOperation,\n                                resource: ResourcePattern,\n                                principal: KafkaPrincipal,\n                                host: String,\n                                permissionType: AclPermissionType,\n                                acls: Set[AclEntry]): Boolean = {\n    // Hoist wildcard constants and use exists to avoid Option overhead\n    val wildcardPrincipal = AclEntry.WildcardPrincipal\n    val wildcardHost = AclEntry.WildcardHost\n    acls.exists { acl =>\n      val matches = acl.permissionType == permissionType &&\n        (acl.kafkaPrincipal == principal || acl.kafkaPrincipal == wildcardPrincipal) &&\n        (operation == acl.operation || acl.operation == AclOperation.ALL) &&\n        (acl.host == host || acl.host == wildcardHost)\n      if (matches)\n        authorizerLogger.debug(s\"operation = $operation on resource = $resource from host = $host is $permissionType based on acl = $acl\")\n      matches\n    }\n  }"
+  }
+]
+```

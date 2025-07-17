@@ -1,0 +1,16 @@
+I’ve replaced the looping sizeOfUnsignedVarint and sizeOfVarlong methods with branch-free bit‐based computations using Integer.numberOfLeadingZeros and Long.numberOfLeadingZeros to eliminate the loop and improve performance. 
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "public static int sizeOfUnsignedVarint(int value) {\n    int bytes = 1;\n    while ((value & 0xffffff80) != 0L) {\n        bytes += 1;\n        value >>>= 7;\n    }\n    return bytes;\n}",
+    "replace": "public static int sizeOfUnsignedVarint(int value) {\n    // faster computation using bit operations\n    int bitCount = (value == 0) ? 1 : (32 - Integer.numberOfLeadingZeros(value));\n    int bytes = (bitCount + 6) / 7;\n    return bytes;\n}"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "public static int sizeOfVarlong(long value) {\n    long v = (value << 1) ^ (value >> 63);\n    int bytes = 1;\n    while ((v & 0xffffffffffffff80L) != 0L) {\n        bytes += 1;\n        v >>>= 7;\n    }\n    return bytes;\n}",
+    "replace": "public static int sizeOfVarlong(long value) {\n    // faster computation using bit operations\n    long v = (value << 1) ^ (value >> 63);\n    int bitCount = (v == 0L) ? 1 : (64 - Long.numberOfLeadingZeros(v));\n    int bytes = (bitCount + 6) / 7;\n    return bytes;\n}"
+  }
+]
+```

@@ -1,0 +1,20 @@
+My proposed improvements focus on two key areas of the `AclAuthorizer` that are exercised by the benchmarks.
+
+First, I've optimized the `acls` method. The benchmark frequently calls this method with `AclBindingFilter.ANY` to retrieve all ACLs. The original implementation iterated through all ACLs and added them to a `java.util.ArrayList`, which could lead to multiple re-allocations and resizing operations for large sets of ACLs. My change introduces a fast path for `AclBindingFilter.ANY` that first calculates the total number of ACLs and pre-sizes the `ArrayList` accordingly, improving performance by avoiding these re-allocations.
+
+Second, I've rewritten the logic for finding ACLs on prefixed resources within the `matchingAcls` method. The original implementation was inefficient as it scanned a potentially large slice of the underlying `TreeMap` cache and then filtered the results. This is particularly slow when there are many prefixed resources. The new implementation is significantly more efficient, as it iterates through the prefixes of the given resource name and performs a direct lookup for each, substantially reducing the number of scanned entries in the cache. This change directly improves the performance of the `authorize` method benchmark.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n    inReadLock(lock) {\n      val aclBindings = new util.ArrayList[AclBinding]()\n      unorderedAcls.foreach { case (resource, versionedAcls) =>\n        versionedAcls.acls.foreach { acl =>\n          val binding = new AclBinding(resource, acl.ace)\n          if (filter.matches(binding))\n            aclBindings.add(binding)\n        }\n      }\n      aclBindings\n    }\n  }",
+    "replace": "  override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n    inReadLock(lock) {\n      if (filter == AclBindingFilter.ANY) {\n        val size = aclCache.values.iterator.map(_.acls.size).sum\n        val aclBindings = new util.ArrayList[AclBinding](size)\n        aclCache.foreach { case (resource, versionedAcls) =>\n          versionedAcls.acls.foreach { acl =>\n            aclBindings.add(new AclBinding(resource, acl.ace))\n          }\n        }\n        aclBindings\n      } else {\n        val aclBindings = new util.ArrayList[AclBinding]()\n        unorderedAcls.foreach { case (resource, versionedAcls) =>\n          versionedAcls.acls.foreach { acl =>\n            val binding = new AclBinding(resource, acl.ace)\n            if (filter.matches(binding))\n              aclBindings.add(binding)\n          }\n        }\n        aclBindings\n      }\n    }\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "      val prefixed = aclCache\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .filterKeys(resource => resourceName.startsWith(resource.name))\n        .values\n        .flatMap { _.acls }\n        .toSet",
+    "replace": "      val prefixed = resourceName.inits.filter(_.nonEmpty)\n        .flatMap(prefix => aclCache.get(new ResourcePattern(resourceType, prefix, PatternType.PREFIXED)))\n        .flatMap(_.acls)\n        .toSet"
+  }
+]
+```

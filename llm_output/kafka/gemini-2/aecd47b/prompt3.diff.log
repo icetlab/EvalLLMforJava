@@ -1,0 +1,13 @@
+My previous attempt failed because it used `Checksum.update(ByteBuffer)`, a method only available from Java 9 onwards, while the project uses Java 8.
+
+This corrected change fixes the performance of checksum calculations for direct `ByteBuffer` instances while remaining compatible with Java 8. The original implementation for non-array-backed buffers reads byte-by-byte, which is inefficient. The updated implementation reads data in chunks into a temporary byte array and then updates the checksum with this array. This bulk operation approach significantly reduces method call overhead and is much faster for direct buffers. The buffer's position is preserved by the change, ensuring functional correctness is maintained. This change avoids the performance penalty of single-byte reads without introducing incompatible API calls.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }",
+    "replace": "    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int pos = buffer.position();\n            buffer.position(pos + offset);\n\n            // use a temporary buffer to avoid single-byte get() calls\n            byte[] temp = new byte[Math.min(length, 8192)];\n            int remaining = length;\n            while (remaining > 0) {\n                int toRead = Math.min(remaining, temp.length);\n                buffer.get(temp, 0, toRead);\n                checksum.update(temp, 0, toRead);\n                remaining -= toRead;\n            }\n\n            buffer.position(pos);\n        }\n    }"
+  }
+]
+```

@@ -1,0 +1,23 @@
+The performance of the `ReplaceField` SMT is suboptimal when a large number of fields are configured for inclusion or exclusion. This is because the fields are stored in `ArrayLists`, and checking for the presence of a field is an O(N) operation. This check is performed for every field of every record, leading to significant overhead.
+
+To address this, I will replace the `List<String>` collections for `include` and `exclude` fields with `Set<String>`. By using `HashSet` for these collections, the field lookup operation becomes, on average, an O(1) operation. This change will dramatically improve performance when many fields are specified in the `include` or `exclude` configurations, without altering the transform's logic.
+
+```json
+[
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "import java.util.List;\nimport java.util.Map;",
+    "replace": "import java.util.HashSet;\nimport java.util.List;\nimport java.util.Map;\nimport java.util.Set;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "    private List<String> exclude;\n    private List<String> include;",
+    "replace": "    private Set<String> exclude;\n    private Set<String> include;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "        exclude = config.getList(ConfigName.EXCLUDE);\n        include = config.getList(ConfigName.INCLUDE);",
+    "replace": "        exclude = new HashSet<>(config.getList(ConfigName.EXCLUDE));\n        include = new HashSet<>(config.getList(ConfigName.INCLUDE));"
+  }
+]
+```

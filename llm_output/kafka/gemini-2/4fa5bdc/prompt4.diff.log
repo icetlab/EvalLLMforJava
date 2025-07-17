@@ -1,0 +1,22 @@
+My proposed improvement focuses on optimizing ACL matching in the `AclAuthorizer`. The key issue is the unnecessary creation of intermediate `Set` collections, particularly for prefixed ACLs, which can be numerous and lead to performance degradation.
+
+My changes address this by:
+1.  Modifying the `AclSets` helper class to operate on more generic and efficient `Iterable` collections instead of `Set`. This also includes making its `find` method lazy by using a `view`, which prevents the creation of intermediate collections and stops searching as soon as a match is found.
+2.  Updating the `matchingAcls` method to no longer create a new `Set` for prefixed ACLs. Instead, it will pass a lazy `Iterable` of ACLs directly to the `AclSets` constructor.
+
+These changes collectively reduce memory allocation and CPU cycles by avoiding the creation of large, temporary collections during the authorization process, directly addressing the identified performance bottleneck.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  class AclSets(sets: Set[AclEntry]*) {\n    def find(p: AclEntry => Boolean): Option[AclEntry] = sets.flatMap(_.find(p)).headOption\n    def isEmpty: Boolean = !sets.exists(_.nonEmpty)\n  }",
+    "replace": "  class AclSets(sets: Iterable[AclEntry]*) {\n    def find(p: AclEntry => Boolean): Option[AclEntry] = sets.view.flatMap(_.find(p)).headOption\n    def isEmpty: Boolean = !sets.exists(_.nonEmpty)\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "      .values\n      .flatMap { _.acls }\n      .toSet",
+    "replace": "      .values\n      .flatMap { _.acls }"
+  }
+]
+```

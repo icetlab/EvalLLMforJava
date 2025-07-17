@@ -1,0 +1,11 @@
+The change replaces the two costly immutable Set union operations in `matchingAcls` with a single mutable `HashSet` builder, reducing intermediate allocations and hash computations.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "      val prefixed = aclCache\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .filterKeys(resource => resourceName.startsWith(resource.name))\n        .values\n        .flatMap { _.acls }\n        .toSet\n\n      prefixed ++ wildcard ++ literal",
+    "replace": "      val prefixed = aclCache\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .filterKeys(resource => resourceName.startsWith(resource.name))\n        .values\n        .flatMap { _.acls }\n        .toSet\n\n      // optimized merging to reduce intermediate Set unions\n      {\n        val rs = mutable.HashSet.empty[AclEntry]\n        rs.sizeHint(prefixed.size + wildcard.size + literal.size)\n        rs ++= prefixed\n        rs ++= wildcard\n        rs ++= literal\n        rs.toSet\n      }"
+  }
+]
+```
