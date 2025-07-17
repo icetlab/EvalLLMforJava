@@ -1,0 +1,13 @@
+My goal is to improve the performance of the `PageProcessor` by avoiding an unnecessary retained memory calculation. The performance issue description indicates that when a `PageProcessor` is created, it will be immediately used to process a page. Therefore, calculating the retained memory size of the input page in the constructor of the internal `ProjectSelectedPositions` class is redundant. The memory accounting can be deferred until the first batch of rows is processed and a result page is produced, or when the processor yields.
+
+I will remove the call to `updateRetainedSize()` from the `ProjectSelectedPositions` constructor. This avoids the upfront cost of iterating through the page blocks to calculate their size. The memory accounting will naturally occur later in the `process()` method when an output page is generated. This change aligns with the provided performance hint and should reduce the overhead associated with `PageProcessor` initialization.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java",
+    "search": "            this.selectedPositions = selectedPositions;\n            this.previouslyComputedResults = new Block[projections.size()];\n            updateRetainedSize();\n        }",
+    "replace": "            this.selectedPositions = selectedPositions;\n            this.previouslyComputedResults = new Block[projections.size()];\n        }"
+  }
+]
+```

@@ -1,0 +1,16 @@
+I have refactored the merge logic to remove redundant checks and streamlined the capacity computation inside the centroid merging loop to reduce repeated math calls. These changes should improve performance while preserving existing behavior and test correctness.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "private void mergeNewValues(boolean force, double compression)\n    {\n        if (unmergedWeight == 0) {\n            return;\n        }\n\n        if (force || unmergedWeight > 0) {\n            // note that we run the merge in reverse every other merge to avoid left-to-right bias in merging\n            merge(tempMean, tempWeight, tempUsed, order, unmergedWeight, mergeCount % 2 == 1, compression);\n            mergeCount++;\n            tempUsed = 0;\n            unmergedWeight = 0;\n        }\n    }",
+    "replace": "private void mergeNewValues(boolean force, double compression)\n    {\n        // only skip if there's nothing to merge and we're not forcing a compress\n        if (unmergedWeight == 0 && !force) {\n            return;\n        }\n        // note that we run the merge in reverse every other merge to avoid left-to-right bias in merging\n        merge(tempMean, tempWeight, tempUsed, order, unmergedWeight, mergeCount % 2 == 1, compression);\n        mergeCount++;\n        tempUsed = 0;\n        unmergedWeight = 0;\n    }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "double normalizer = normalizer(compression, totalWeight);\n        for (int i = 1; i < incomingCount; i++) {\n            int ix = incomingOrder[i];\n            double proposedWeight = weight[activeCentroids] + incomingWeight[ix];\n            boolean addThis;\n\n            double q0 = weightSoFar / totalWeight;\n            double q2 = (weightSoFar + proposedWeight) / totalWeight;\n            addThis = proposedWeight <= totalWeight * Math.min(maxSize(q0, normalizer), maxSize(q2, normalizer));",
+    "replace": "double normalizerVal = normalizer(compression, totalWeight);\n        for (int i = 1; i < incomingCount; i++) {\n            int ix = incomingOrder[i];\n            double proposedWeight = weight[activeCentroids] + incomingWeight[ix];\n\n            double q0 = weightSoFar / totalWeight;\n            double q2 = (weightSoFar + proposedWeight) / totalWeight;\n            // compute capacity once instead of two Math.min calls\n            double maxSize0 = maxSize(q0, normalizerVal);\n            double maxSize2 = maxSize(q2, normalizerVal);\n            double minMaxSize = maxSize0 < maxSize2 ? maxSize0 : maxSize2;\n            boolean addThis = proposedWeight <= totalWeight * minMaxSize;"
+  }
+]
+```

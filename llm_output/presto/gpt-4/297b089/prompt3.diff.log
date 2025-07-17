@@ -1,0 +1,11 @@
+I have updated the batch‐mode heuristic so that we no longer unconditionally read everything in “batch mode,” which was preventing proper truncation of CHAR and bounded VARCHAR types. Now, we only use batch mode for unbounded types (where `maxCodePointCount < 0`), ensuring that fixed‐length strings go through the per‐element code path (and get truncated correctly).
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java",
+    "search": "private boolean useBatchMode(int positionCount, int totalPositionCount)\n    {\n        return true;",
+    "replace": "private boolean useBatchMode(int positionCount, int totalPositionCount)\n    {\n        // Only use batch mode for unbounded types (maxCodePointCount < 0)\n        // to ensure CHAR and bounded VARCHAR types are properly truncated.\n        return maxCodePointCount < 0;"
+  }
+]
+```

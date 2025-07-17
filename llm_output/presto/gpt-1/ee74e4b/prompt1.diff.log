@@ -1,0 +1,16 @@
+I’ve adjusted the search patterns to include the exact indentation for the batch‐size adjustments, so the replacements will now correctly match and update both the halving and doubling sites.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java",
+    "search": "                    projectBatchSize = projectBatchSize / 2;",
+    "replace": "                    projectBatchSize >>= 1;"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java",
+    "search": "                    projectBatchSize = projectBatchSize * 2;",
+    "replace": "                    projectBatchSize <<= 1;"
+  }
+]
+```

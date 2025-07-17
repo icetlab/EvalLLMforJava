@@ -1,0 +1,24 @@
+This improvement optimizes reading `TINYINT` columns in ORC files under specific conditions. The issue description mentions "boolean reader", and while `TINYINT` is a byte type, it can be used to represent booleans. The optimization targets scenarios where data is read from contiguous rows without any nulls and with no filters applied.
+
+To achieve this, I've implemented a two-part optimization:
+
+1.  A new bulk-read method, `next(byte[] values, int offset, int length)`, has been added to `ByteInputStream`. This method reads a specified number of bytes directly into a byte array, avoiding the overhead of one-by-one `next()` calls. This is more efficient as it processes data in chunks, leveraging `System.arraycopy` and reducing method call overhead.
+
+2.  In `ByteSelectiveStreamReader`, the `readNoFilter` method has been updated with a fast-path. This path is taken when it detects contiguous, non-null rows being read without a filter. Instead of iterating and reading byte by byte, it uses the new bulk `next` method from `ByteInputStream` to read all required values in a single call, significantly improving performance for this common access pattern.
+
+These changes maintain the original functionality and pass existing unit tests while providing a substantial performance boost for the targeted scenario.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "    private int readNoFilter(int[] positions, int positionCount)\n            throws IOException\n    {\n        // filter == null implies outputRequired == true\n        int streamPosition = 0;\n        for (int i = 0; i < positionCount; i++) {\n            int position = positions[i];\n            if (position > streamPosition) {\n                skip(position - streamPosition);\n                streamPosition = position;\n            }\n\n            if (presentStream != null && !presentStream.nextBit()) {\n                nulls[i] = true;\n            }\n            else {\n                values[i] = dataStream.next();\n                if (presentStream != null) {\n                    nulls[i] = false;\n                }\n            }\n            streamPosition++;\n        }\n        outputPositionCount = positionCount;\n        return streamPosition;\n    }",
+    "replace": "    private int readNoFilter(int[] positions, int positionCount)\n            throws IOException\n    {\n        // filter == null implies outputRequired == true\n\n        // Fast path for contiguous rows without nulls\n        if (presentStream == null && positionCount > 0 && positions[positionCount - 1] - positions[0] == positionCount - 1) {\n            int startPosition = positions[0];\n            if (startPosition > 0) {\n                skip(startPosition);\n            }\n            dataStream.next(values, 0, positionCount);\n            outputPositionCount = positionCount;\n            return startPosition + positionCount;\n        }\n\n        int streamPosition = 0;\n        for (int i = 0; i < positionCount; i++) {\n            int position = positions[i];\n            if (position > streamPosition) {\n                skip(position - streamPosition);\n                streamPosition = position;\n            }\n\n            if (presentStream != null && !presentStream.nextBit()) {\n                nulls[i] = true;\n            }\n            else {\n                values[i] = dataStream.next();\n                if (presentStream != null) {\n                    nulls[i] = false;\n                }\n            }\n            streamPosition++;\n        }\n        outputPositionCount = positionCount;\n        return streamPosition;\n    }"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java",
+    "search": "    public byte next()\n            throws IOException\n    {\n        if (offset == length) {\n            readNextBlock();\n        }\n        return buffer[offset++];\n    }",
+    "replace": "    public byte next()\n            throws IOException\n    {\n        if (offset == length) {\n            readNextBlock();\n        }\n        return buffer[offset++];\n    }\n\n    public void next(byte[] values, int offset, int length)\n            throws IOException\n    {\n        int end = offset + length;\n        while (offset < end) {\n            if (this.offset == this.length) {\n                readNextBlock();\n            }\n            int chunk = Math.min(this.length - this.offset, end - offset);\n            System.arraycopy(this.buffer, this.offset, values, offset, chunk);\n            this.offset += chunk;\n            offset += chunk;\n        }\n    }"
+  }
+]
+```

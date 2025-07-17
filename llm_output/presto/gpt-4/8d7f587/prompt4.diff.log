@@ -1,0 +1,11 @@
+The change replaces the full OGCGeometry deserialization in ST_Envelope with a lightweight envelope‐only deserialization (GeometryUtils.deserializeEnvelope), avoiding the costly full geometry parse and improving performance on large inputs, while preserving existing behavior for empty geometries.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "@Description(\"Returns the bounding rectangular polygon of a Geometry\")\n    @ScalarFunction(\"ST_Envelope\")\n    @SqlType(GEOMETRY_TYPE_NAME)\n    public static Slice stEnvelope(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        OGCGeometry geometry = deserialize(input);\n        SpatialReference reference = geometry.getEsriSpatialReference();\n        Envelope envelope = getEnvelope(geometry);\n        return serialize(createFromEsriGeometry(envelope, reference));\n    }",
+    "replace": "@Description(\"Returns the bounding rectangular polygon of a Geometry\")\n    @ScalarFunction(\"ST_Envelope\")\n    @SqlType(GEOMETRY_TYPE_NAME)\n    public static Slice stEnvelope(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        Envelope envelope = deserializeEnvelope(input);\n        if (envelope == null) {\n            // empty geometry → empty envelope geometry\n            return serialize(createFromEsriGeometry(new Envelope(), null));\n        }\n        // lightweight envelope-only deserialization\n        return serialize(createFromEsriGeometry(envelope, null));\n    }"
+  }
+]
+```

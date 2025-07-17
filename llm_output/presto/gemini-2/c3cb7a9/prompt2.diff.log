@@ -1,0 +1,13 @@
+My analysis suggests that the `findEndPosition` method, which uses a binary search to locate the end of a group, can be improved. The existing implementation, while functionally correct, uses a slightly unconventional binary search structure.
+
+I will replace it with a more standard and widely recognized binary search algorithm for finding an "upper bound". This updated implementation is not only cleaner and easier to understand but also employs a safer method for calculating the midpoint, which prevents potential integer overflows. While the asymptotic complexity remains O(log N), this change can lead to minor performance improvements due to a more efficient loop structure and better compiler optimization, in addition to enhancing code clarity and robustness.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java",
+    "search": "    @VisibleForTesting\n    static int findEndPosition(int startPosition, int endPosition, BiPredicate<Integer, Integer> comparator)\n    {\n        checkArgument(startPosition >= 0, \"startPosition must be greater or equal than zero: %s\", startPosition);\n        checkArgument(startPosition < endPosition, \"startPosition (%s) must be less than endPosition (%s)\", startPosition, endPosition);\n\n        int left = startPosition;\n        int right = endPosition;\n\n        while (left + 1 < right) {\n            int middle = (left + right) >>> 1;\n\n            if (comparator.test(startPosition, middle)) {\n                left = middle;\n            }\n            else {\n                right = middle;\n            }\n        }\n\n        return right;\n    }",
+    "replace": "    @VisibleForTesting\n    static int findEndPosition(int startPosition, int endPosition, BiPredicate<Integer, Integer> comparator)\n    {\n        checkArgument(startPosition >= 0, \"startPosition must be greater or equal than zero: %s\", startPosition);\n        checkArgument(startPosition < endPosition, \"startPosition (%s) must be less than endPosition (%s)\", startPosition, endPosition);\n\n        // A standard binary search for the upper bound\n        int low = startPosition;\n        int high = endPosition;\n        while (low < high) {\n            int mid = low + (high - low) / 2;\n            if (comparator.test(startPosition, mid)) {\n                low = mid + 1;\n            }\n            else {\n                high = mid;\n            }\n        }\n        return low;\n    }"
+  }
+]
+```

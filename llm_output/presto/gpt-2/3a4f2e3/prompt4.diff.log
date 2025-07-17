@@ -1,0 +1,11 @@
+I have added a fast‐path in readNoFilter to handle the common case of contiguous positions with no filter, avoiding per‐position skips and null‐checks.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java",
+    "search": "        // filter == null implies outputRequired == true\n        int streamPosition = 0;",
+    "replace": "        // filter == null implies outputRequired == true\n        // fast path for contiguous reads with no filter\n        boolean contiguous = true;\n        for (int i = 0; i < positionCount; i++) {\n            if (positions[i] != i) {\n                contiguous = false;\n                break;\n            }\n        }\n        if (contiguous) {\n            for (int i = 0; i < positionCount; i++) {\n                values[i] = (byte) (dataStream.nextBit() ? 1 : 0);\n                if (presentStream != null) {\n                    nulls[i] = false;\n                }\n            }\n            outputPositionCount = positionCount;\n            return positionCount;\n        }\n        int streamPosition = 0;"
+  }
+]
+```

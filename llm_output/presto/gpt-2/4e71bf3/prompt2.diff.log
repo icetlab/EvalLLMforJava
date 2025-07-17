@@ -1,0 +1,16 @@
+I’ve added a fast-path for fully sequential reads with no nulls or filters, bypassing per‐position checks, which should significantly speed up contiguous byte reads.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "if (dataStream == null && presentStream != null) {\n                streamPosition = readAllNulls(positions, positionCount);\n            }\n            else if (filter == null) {\n                streamPosition = readNoFilter(positions, positionCount);\n            }\n            else {\n                streamPosition = readWithFilter(positions, positionCount);\n            }",
+    "replace": "if (dataStream == null && presentStream != null) {\n                streamPosition = readAllNulls(positions, positionCount);\n            }\n            else if (filter == null && presentStream == null && isSequentialPositions(positions, positionCount)) {\n                streamPosition = readSequentialNoNulls(positions, positionCount);\n            }\n            else if (filter == null) {\n                streamPosition = readNoFilter(positions, positionCount);\n            }\n            else {\n                streamPosition = readWithFilter(positions, positionCount);\n            }"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "}\n\n    @Override\n    public String toString()",
+    "replace": "}\n\n    // Fast path for fully sequential reads with no nulls or filters\n    private static boolean isSequentialPositions(int[] positions, int positionCount)\n    {\n        for (int i = 0; i < positionCount; i++) {\n            if (positions[i] != i) {\n                return false;\n            }\n        }\n        return true;\n    }\n\n    private int readSequentialNoNulls(int[] positions, int positionCount)\n            throws IOException\n    {\n        for (int i = 0; i < positionCount; i++) {\n            values[i] = dataStream.next();\n        }\n        outputPositionCount = positionCount;\n        return positionCount;\n    }\n\n    @Override\n    public String toString()"
+  }
+]
+```

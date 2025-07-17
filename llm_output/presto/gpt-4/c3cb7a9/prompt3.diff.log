@@ -1,0 +1,16 @@
+I’ve optimized the group-end detection to use a simple linear scan instead of the binary‐search + boxed BiPredicate, reducing lambda allocations and unboxing overhead when partitioning pages.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java",
+    "search": "private static int findGroupEnd(Page page, PagesHashStrategy pagesHashStrategy, int startPosition)\n    {\n        checkArgument(page.getPositionCount() > 0, \"Must have at least one position\");\n        checkPositionIndex(startPosition, page.getPositionCount(), \"startPosition out of bounds\");\n\n        return findEndPosition(startPosition, page.getPositionCount(), (firstPosition, secondPosition) -> pagesHashStrategy.rowEqualsRow(firstPosition, page, secondPosition, page));\n    }",
+    "replace": "private static int findGroupEnd(Page page, PagesHashStrategy pagesHashStrategy, int startPosition)\n    {\n        checkArgument(page.getPositionCount() > 0, \"Must have at least one position\");\n        checkPositionIndex(startPosition, page.getPositionCount(), \"startPosition out of bounds\");\n\n        int pos = startPosition + 1;\n        while (pos < page.getPositionCount() && pagesHashStrategy.rowEqualsRow(startPosition, page, pos, page)) {\n            pos++;\n        }\n        return pos;\n    }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java",
+    "search": "private static int findGroupEnd(PagesIndex pagesIndex, PagesHashStrategy pagesHashStrategy, int startPosition)\n    {\n        checkArgument(pagesIndex.getPositionCount() > 0, \"Must have at least one position\");\n        checkPositionIndex(startPosition, pagesIndex.getPositionCount(), \"startPosition out of bounds\");\n\n        return findEndPosition(startPosition, pagesIndex.getPositionCount(), (firstPosition, secondPosition) -> pagesIndex.positionEqualsPosition(pagesHashStrategy, firstPosition, secondPosition));\n    }",
+    "replace": "private static int findGroupEnd(PagesIndex pagesIndex, PagesHashStrategy pagesHashStrategy, int startPosition)\n    {\n        checkArgument(pagesIndex.getPositionCount() > 0, \"Must have at least one position\");\n        checkPositionIndex(startPosition, pagesIndex.getPositionCount(), \"startPosition out of bounds\");\n\n        int pos = startPosition + 1;\n        while (pos < pagesIndex.getPositionCount() && pagesIndex.positionEqualsPosition(pagesHashStrategy, startPosition, pos)) {\n            pos++;\n        }\n        return pos;\n    }"
+  }
+]
+```

@@ -1,0 +1,11 @@
+I’ve tuned the sizing of the internal set and block builder to use actual entry counts (rather than raw position counts) to avoid over‐provisioning, and pulled out the immutable type list so it isn’t reallocated. These changes reduce memory waste and improve throughput.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapConcatFunction.java",
+    "search": "TypedSet typedSet = new TypedSet(keyType, rightMap.getPositionCount());\n        BlockBuilder blockBuilder = new InterleavedBlockBuilder(ImmutableList.of(keyType, valueType), new BlockBuilderStatus(), leftMap.getPositionCount() + rightMap.getPositionCount());",
+    "replace": "ImmutableList<Type> types = ImmutableList.of(keyType, valueType);\n        int rightEntryCount = rightMap.getPositionCount() / 2;\n        int leftEntryCount = leftMap.getPositionCount() / 2;\n        TypedSet typedSet = new TypedSet(keyType, rightEntryCount);\n        BlockBuilder blockBuilder = new InterleavedBlockBuilder(types, new BlockBuilderStatus(), leftEntryCount + rightEntryCount);"
+  }
+]
+```

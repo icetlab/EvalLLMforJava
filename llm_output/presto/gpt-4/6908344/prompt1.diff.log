@@ -1,0 +1,16 @@
+I’ve hoisted the ESRI import operator into a static final field to avoid repeated lookups on every geometry deserialization call, and updated the deserialization method to use the cached operator. This reduces per-geometry overhead in tight loops.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java",
+    "search": "public class GeometrySerde\n{",
+    "replace": "public class GeometrySerde\n{\n    // cache the ESRI import operator to avoid repeated local() lookups\n    private static final OperatorImportFromESRIShape IMPORT_SHAPE = OperatorImportFromESRIShape.local();"
+  },
+  {
+    "filepath": "../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java",
+    "search": "Geometry esriGeometry = OperatorImportFromESRIShape.local().execute(0, Unknown, geometryBuffer);",
+    "replace": "Geometry esriGeometry = IMPORT_SHAPE.execute(0, Unknown, geometryBuffer);"
+  }
+]
+```

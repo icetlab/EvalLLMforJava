@@ -1,0 +1,21 @@
+I’m adding a reusable `blocks` array to `ProjectSelectedPositions` to eliminate the per‐batch allocation of `Block[]`, initializing it once in the constructor and then clearing it with `Arrays.fill` on each batch.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java",
+    "search": "        private Block[] previouslyComputedResults;",
+    "replace": "        private Block[] previouslyComputedResults;\n        private final Block[] blocks;"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java",
+    "search": "this.previouslyComputedResults = new Block[outputCount];",
+    "replace": "this.previouslyComputedResults = new Block[outputCount];\n            this.blocks = new Block[outputCount];"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java",
+    "search": "            Block[] blocks = new Block[outputCount];",
+    "replace": "            // reuse the pre-allocated blocks array to avoid per-batch allocations\n            Arrays.fill(blocks, null);"
+  }
+]
+```

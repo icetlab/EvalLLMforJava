@@ -1,0 +1,21 @@
+I’ve optimized `seekKey` by hoisting repeated calculations and method calls out of the loop, replacing divisions with bit-shifts, and caching `rawKeyBlock` to reduce reflective lookups. These changes lower per-lookup overhead and improve overall seek performance.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java",
+    "search": "mapBlock.ensureHashTableLoaded();\n        int[] hashTable = mapBlock.getHashTables().get();\n\n        long hashCode;",
+    "replace": "mapBlock.ensureHashTableLoaded();\n        int[] hashTable = mapBlock.getHashTables().get();\n        // Precompute entry offset and counts to avoid repeated division\n        int entryOffset = offset >> 1;\n        int entryCount = positionCount >> 1;\n        int hashTableOffset = entryOffset * HASH_MULTIPLIER;\n        int hashTableSize = entryCount * HASH_MULTIPLIER;\n        // Cache rawKeyBlock to avoid repeated calls\n        Block rawKeyBlock = mapBlock.getRawKeyBlock();\n\n        long hashCode;"
+  },
+  {
+    "filepath": "../presto/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java",
+    "search": "int hashTableOffset = offset / 2 * HASH_MULTIPLIER;\n        int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;",
+    "replace": "// (moved up into preamble)"
+  },
+  {
+    "filepath": "../presto/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java",
+    "search": "match = (Boolean) mapBlock.keyBlockNativeEquals.invoke(mapBlock.getRawKeyBlock(), offset / 2 + keyPosition, nativeValue);",
+    "replace": "match = (Boolean) mapBlock.keyBlockNativeEquals.invoke(rawKeyBlock, entryOffset + keyPosition, nativeValue);"
+  }
+]
+```

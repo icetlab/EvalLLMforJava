@@ -1,0 +1,25 @@
+My overall improvement strategy focuses on optimizing data handling loops and improving the robustness of utility functions.
+
+In `ByteSelectiveStreamReader`, I've refactored the loops within the `getBlock` and `compactValues` methods. The original implementations iterated through all `outputPositions` to find matches in the requested `positions`. My change reverses this, iterating through the smaller `positions` array and performing targeted lookups in `outputPositions`. This significantly reduces loop iterations and improves performance, especially for sparse selections.
+
+In `ReaderUtils`, I've simplified the `convertLengthVectorToOffsetVector` method. The new implementation is more direct, easier to understand, and uses a `long` accumulator to prevent potential overflows. Crucially, it also fixes a bug by correctly handling empty input arrays, which would have caused an `ArrayIndexOutOfBoundsException` in the original code.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "        int positionIndex = 0;\n        int nextPosition = positions[positionIndex];\n        for (int i = 0; i < outputPositionCount; i++) {\n            if (outputPositions[i] < nextPosition) {\n                continue;\n            }\n\n            assert outputPositions[i] == nextPosition;\n\n            valuesCopy[positionIndex] = this.values[i];\n            if (nullsCopy != null) {\n                nullsCopy[positionIndex] = this.nulls[i];\n            }\n\n            positionIndex++;\n            if (positionIndex >= positionCount) {\n                break;\n            }\n\n            nextPosition = positions[positionIndex];\n        }",
+    "replace": "        int readIndex = 0;\n        for (int writeIndex = 0; writeIndex < positionCount; writeIndex++) {\n            int position = positions[writeIndex];\n\n            while (outputPositions[readIndex] < position) {\n                readIndex++;\n            }\n\n            assert outputPositions[readIndex] == position;\n\n            valuesCopy[writeIndex] = this.values[readIndex];\n            if (nullsCopy != null) {\n                nullsCopy[writeIndex] = this.nulls[readIndex];\n            }\n            readIndex++;\n        }"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "    private void compactValues(int[] positions, int positionCount, boolean compactNulls)\n    {\n        int positionIndex = 0;\n        int nextPosition = positions[positionIndex];\n        for (int i = 0; i < outputPositionCount; i++) {\n            if (outputPositions[i] < nextPosition) {\n                continue;\n            }\n\n            assert outputPositions[i] == nextPosition;\n\n            values[positionIndex] = values[i];\n            if (compactNulls) {\n                nulls[positionIndex] = nulls[i];\n            }\n            outputPositions[positionIndex] = nextPosition;\n\n            positionIndex++;\n            if (positionIndex >= positionCount) {\n                break;\n            }\n            nextPosition = positions[positionIndex];\n        }\n\n        outputPositionCount = positionCount;\n    }",
+    "replace": "    private void compactValues(int[] positions, int positionCount, boolean compactNulls)\n    {\n        int readIndex = 0;\n        for (int writeIndex = 0; writeIndex < positionCount; writeIndex++) {\n            int position = positions[writeIndex];\n\n            while (outputPositions[readIndex] < position) {\n                readIndex++;\n            }\n\n            assert outputPositions[readIndex] == position;\n\n            values[writeIndex] = values[readIndex];\n            if (compactNulls) {\n                nulls[writeIndex] = nulls[readIndex];\n            }\n            outputPositions[writeIndex] = position;\n\n            readIndex++;\n        }\n\n        outputPositionCount = positionCount;\n    }"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java",
+    "search": "    public static void convertLengthVectorToOffsetVector(int[] vector)\n    {\n        int currentLength = vector[0];\n        vector[0] = 0;\n        for (int i = 1; i < vector.length; i++) {\n            int nextLength = vector[i];\n            vector[i] = vector[i - 1] + currentLength;\n            currentLength = nextLength;\n        }\n    }",
+    "replace": "    public static void convertLengthVectorToOffsetVector(int[] vector)\n    {\n        long offset = 0;\n        for (int i = 0; i < vector.length; i++) {\n            long length = vector[i];\n            vector[i] = (int) offset;\n            offset += length;\n        }\n    }"
+  }
+]
+```

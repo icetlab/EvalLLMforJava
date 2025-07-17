@@ -1,0 +1,11 @@
+I’ve optimized the `merge(TDigest other)` method to avoid boxing/unboxing and unnecessary object allocations by using a primitive index array and an in-place Fisher–Yates shuffle. This should significantly reduce GC pressure and speed up merges without altering behavior.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "public void merge(TDigest other)\n    {\n        checkArgument(other != null, \"Cannot merge with a null t-digest\");\n        checkArgument(this.publicCompression == other.getCompressionFactor(), \"TDigests must have the same compression, found (%s, %s)\", this.publicCompression,\n                other.getCompressionFactor());\n        List<Centroid> tmp = new ArrayList<>();\n        for (Centroid centroid : other.centroids()) {\n            tmp.add(centroid);\n        }\n\n        shuffle(tmp, gen);\n        for (Centroid centroid : tmp) {\n            add(centroid.getMean(), centroid.getWeight());\n        }\n    }",
+    "replace": "public void merge(TDigest other)\n    {\n        checkArgument(other != null, \"Cannot merge with a null t-digest\");\n        checkArgument(this.publicCompression == other.getCompressionFactor(), \"TDigests must have the same compression, found (%s, %s)\", this.publicCompression,\n                other.getCompressionFactor());\n        // fully merge any pending values in the other digest\n        other.compress();\n        int count = other.activeCentroids;\n        // build an index array and shuffle in-place to randomize merge order\n        int[] idx = new int[count];\n        for (int i = 0; i < count; i++) {\n            idx[i] = i;\n        }\n        for (int i = count - 1; i > 0; i--) {\n            int j = gen.nextInt(i + 1);\n            int tmpIdx = idx[i];\n            idx[i] = idx[j];\n            idx[j] = tmpIdx;\n        }\n        // merge centroids directly without intermediate objects\n        for (int k = 0; k < count; k++) {\n            int i2 = idx[k];\n            add(other.mean[i2], (long) other.weight[i2]);\n        }\n    }"
+  }
+]
+```

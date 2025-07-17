@@ -1,0 +1,11 @@
+I’ve adjusted the change to introduce local variable caching in a smaller, more targeted edit that should match the existing indentation. This inserts the cached locals immediately before the original `streamPosition` initialization.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java",
+    "search": "        // filter == null implies outputRequired == true\n        int streamPosition = 0;",
+    "replace": "        // filter == null implies outputRequired == true\n        BooleanInputStream present = presentStream;\n        BooleanInputStream data = dataStream;\n        byte[] localValues = values;\n        boolean[] localNulls = nulls;\n        int streamPosition = 0;"
+  }
+]
+```

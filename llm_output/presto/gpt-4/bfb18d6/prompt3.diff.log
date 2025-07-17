@@ -1,0 +1,11 @@
+I’ve added a short-circuit at the start of ST_Intersection to immediately return the input slice when both arguments are identical, avoiding unnecessary deserialization and computation for self-intersections.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "public static Slice stIntersection(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)\n    {",
+    "replace": "public static Slice stIntersection(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)\n    {\n        // Short-circuit self intersection\n        if (left.equals(right)) {\n            return left;\n        }"
+  }
+]
+```

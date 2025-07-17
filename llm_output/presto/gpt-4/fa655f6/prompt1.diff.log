@@ -1,0 +1,26 @@
+I’ve added cached fields for entry offset/count and precomputed hash table parameters to eliminate repeated division/multiplication, updated the constructor and getSizeInBytes to use them, and simplified seekKey to use the cached values.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java",
+    "search": "private final AbstractMapBlock mapBlock;",
+    "replace": "private final AbstractMapBlock mapBlock;\n    private final int entryOffset;\n    private final int entryCount;\n    private final int hashTableOffset;\n    private final int hashTableSize;"
+  },
+  {
+    "filepath": "../presto/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java",
+    "search": "SingleMapBlock(int offset, int positionCount, AbstractMapBlock mapBlock)\n    {\n        this.offset = offset;\n        this.positionCount = positionCount;\n        this.mapBlock = mapBlock;\n    }",
+    "replace": "SingleMapBlock(int offset, int positionCount, AbstractMapBlock mapBlock)\n    {\n        this.offset = offset;\n        this.positionCount = positionCount;\n        this.mapBlock = mapBlock;\n        this.entryOffset = offset / 2;\n        this.entryCount = positionCount / 2;\n        this.hashTableOffset = entryOffset * HASH_MULTIPLIER;\n        this.hashTableSize = entryCount * HASH_MULTIPLIER;\n    }"
+  },
+  {
+    "filepath": "../presto/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java",
+    "search": "public long getSizeInBytes()\n    {\n        return mapBlock.getRawKeyBlock().getRegionSizeInBytes(offset / 2, positionCount / 2) +\n                mapBlock.getRawValueBlock().getRegionSizeInBytes(offset / 2, positionCount / 2) +\n                sizeOfIntArray(positionCount / 2 * HASH_MULTIPLIER);\n    }",
+    "replace": "public long getSizeInBytes()\n    {\n        return mapBlock.getRawKeyBlock().getRegionSizeInBytes(entryOffset, entryCount) +\n                mapBlock.getRawValueBlock().getRegionSizeInBytes(entryOffset, entryCount) +\n                sizeOfIntArray(hashTableSize);\n    }"
+  },
+  {
+    "filepath": "../presto/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java",
+    "search": "int hashTableOffset = offset / 2 * HASH_MULTIPLIER;\n            int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;\n            int position = computePosition(hashCode, hashTableSize);",
+    "replace": "int position = computePosition(hashCode, hashTableSize);"
+  }
+]
+```

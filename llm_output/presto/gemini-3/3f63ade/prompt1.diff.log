@@ -1,0 +1,20 @@
+My proposed improvement for `ArrayDistinctFunction` focuses on two optimizations within the `distinct` method.
+
+First, I'll introduce a fast path for arrays with fewer than two elements. Such arrays are inherently distinct, so we can return them immediately, avoiding the overhead of creating a `TypedSet` and `BlockBuilder`.
+
+Second, I'll optimize the main loop that identifies unique elements. The current implementation first checks for an element's presence in a `TypedSet` with `contains()` and then, if absent, adds it with `add()`. I will combine these two steps by using the boolean return value of `TypedSet.add()`, which indicates if the element was newly inserted. This change halves the number of hash lookups required, significantly improving performance for larger arrays.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java",
+    "search": "if (array.getPositionCount() == 0) {\n            return array;\n        }",
+    "replace": "if (array.getPositionCount() < 2) {\n            return array;\n        }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java",
+    "search": "if (!typedSet.contains(array, i)) {\n                typedSet.add(array, i);\n                type.appendTo(array, i, distinctElementBlockBuilder);\n            }",
+    "replace": "if (typedSet.add(array, i)) {\n                type.appendTo(array, i, distinctElementBlockBuilder);\n            }"
+  }
+]
+```

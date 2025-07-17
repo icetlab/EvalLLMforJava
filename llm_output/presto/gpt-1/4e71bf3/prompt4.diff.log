@@ -1,0 +1,16 @@
+I’ve added a fast-path in `read` for the case with no filter and no nulls (i.e. `presentStream == null`), and introduced a new `readNoFilterNoNulls` method to avoid per-element null checks and branching in that scenario.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "        int streamPosition = 0;\n        if (dataStream == null && presentStream != null) {\n            streamPosition = readAllNulls(positions, positionCount);\n        }\n        else if (filter == null) {\n            streamPosition = readNoFilter(positions, positionCount);\n        }\n        else {\n            streamPosition = readWithFilter(positions, positionCount);\n        }",
+    "replace": "        int streamPosition = 0;\n        if (dataStream == null && presentStream != null) {\n            streamPosition = readAllNulls(positions, positionCount);\n        }\n        else if (filter == null && presentStream == null) {\n            streamPosition = readNoFilterNoNulls(positions, positionCount);\n        }\n        else if (filter == null) {\n            streamPosition = readNoFilter(positions, positionCount);\n        }\n        else {\n            streamPosition = readWithFilter(positions, positionCount);\n        }"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "    }\n\n    private void skip",
+    "replace": "    }\n\n    private int readNoFilterNoNulls(int[] positions, int positionCount)\n            throws IOException\n    {\n        // fast path for no filter and no nulls\n        int streamPosition = 0;\n        for (int i = 0; i < positionCount; i++) {\n            int position = positions[i];\n            if (position > streamPosition) {\n                skip(position - streamPosition);\n                streamPosition = position;\n            }\n            values[i] = dataStream.next();\n            streamPosition++;\n        }\n        outputPositionCount = positionCount;\n        return streamPosition;\n    }\n\n    private void skip"
+  }
+]
+```

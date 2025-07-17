@@ -1,0 +1,21 @@
+I have optimized the PageProcessor to avoid expensive and skew-sensitive calls to getSizeInBytes(). In processBatch, block sizes are now computed via getRegionSizeInBytes(), and the final page size is aggregated from block region sizes instead of calling Page.getSizeInBytes().
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java",
+    "search": "for (int channel : outputChannels) {\n                        blocks[channel] = previouslyComputedResults[channel].getRegion(0, batchSize);\n                        pageSize += blocks[channel].getSizeInBytes();\n                    }",
+    "replace": "for (int channel : outputChannels) {\n                        blocks[channel] = previouslyComputedResults[channel].getRegion(0, batchSize);\n                        pageSize += blocks[channel].getRegionSizeInBytes(0, blocks[channel].getPositionCount());\n                    }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java",
+    "search": "blocks[channel] = previouslyComputedResults[channel];\n                            pageSize += blocks[channel].getSizeInBytes();",
+    "replace": "blocks[channel] = previouslyComputedResults[channel];\n                            pageSize += blocks[channel].getRegionSizeInBytes(0, blocks[channel].getPositionCount());"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java",
+    "search": "long pageSize = resultPage.getSizeInBytes();",
+    "replace": "long pageSize = 0;\n                for (int i = 0; i < resultPage.getChannelCount(); i++) {\n                    Block block = resultPage.getBlock(i);\n                    pageSize += block.getRegionSizeInBytes(0, block.getPositionCount());\n                }"
+  }
+]
+```

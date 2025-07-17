@@ -1,0 +1,11 @@
+The change adds a fast‐path in `read()` for the common case where there is no filter, no nulls, and the requested positions are contiguous from zero. In that scenario we can simply read `positionCount` values in a tight loop and skip all of the branching and position checks.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "        if (readOffset < offset) {\n            skip(offset - readOffset);\n        }\n\n        int streamPosition = 0;\n        if (dataStream == null && presentStream != null) {\n            streamPosition = readAllNulls(positions, positionCount);\n        }\n        else if (filter == null) {\n            streamPosition = readNoFilter(positions, positionCount);\n        }\n        else {\n            streamPosition = readWithFilter(positions, positionCount);\n        }\n\n        readOffset = offset + streamPosition;\n        return outputPositionCount;",
+    "replace": "        if (readOffset < offset) {\n            skip(offset - readOffset);\n        }\n\n        // fast path: no filter, no nulls, and contiguous positions\n        if (filter == null && presentStream == null) {\n            boolean contiguous = true;\n            for (int i = 0; i < positionCount; i++) {\n                if (positions[i] != i) {\n                    contiguous = false;\n                    break;\n                }\n            }\n            if (contiguous) {\n                for (int i = 0; i < positionCount; i++) {\n                    values[i] = dataStream.next();\n                }\n                outputPositionCount = positionCount;\n                readOffset = offset + positionCount;\n                return outputPositionCount;\n            }\n        }\n\n        int streamPosition = 0;\n        if (dataStream == null && presentStream != null) {\n            streamPosition = readAllNulls(positions, positionCount);\n        }\n        else if (filter == null) {\n            streamPosition = readNoFilter(positions, positionCount);\n        }\n        else {\n            streamPosition = readWithFilter(positions, positionCount);\n        }\n\n        readOffset = offset + streamPosition;\n        return outputPositionCount;"
+  }
+]
+```

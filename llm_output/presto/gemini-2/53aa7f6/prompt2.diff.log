@@ -1,0 +1,11 @@
+To improve performance, I will modify `GeneratedPageProjection` to pre-allocate memory for its `BlockBuilder`s. Currently, new `BlockBuilder`s are created with a default initial capacity for each page being processed. By calculating the required capacity from the number of `selectedPositions`, I can create builders that are appropriately sized from the start. This avoids costly resizing and data copying operations within the `BlockBuilder`s as they are filled, leading to better performance, especially for pages with a large number of rows.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java",
+    "search": "    @Override\n    public Work<List<Block>> project(SqlFunctionProperties properties, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions)\n    {\n        blockBuilders = blockBuilders.stream().map(blockBuilder -> blockBuilder.newBlockBuilderLike(null)).collect(toImmutableList());\n        try {\n            return (Work<List<Block>>) pageProjectionWorkFactory.invoke(blockBuilders, properties, page, selectedPositions);\n        }\n        catch (Throwable e) {\n            throw new RuntimeException(e);\n        }\n    }",
+    "replace": "    @Override\n    public Work<List<Block>> project(SqlFunctionProperties properties, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions)\n    {\n        blockBuilders = projections.stream()\n                .map(RowExpression::getType)\n                .map(type -> type.createBlockBuilder(null, selectedPositions.size()))\n                .collect(toImmutableList());\n        try {\n            return (Work<List<Block>>) pageProjectionWorkFactory.invoke(blockBuilders, properties, page, selectedPositions);\n        }\n        catch (Throwable e) {\n            throw new RuntimeException(e);\n        }\n    }"
+  }
+]
+```

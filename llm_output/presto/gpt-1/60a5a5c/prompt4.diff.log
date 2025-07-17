@@ -1,0 +1,16 @@
+I have introduced a reusable `compressionBuffer` field in `PagesSerde` to avoid allocating a new `ByteBuffer` on every call to `serialize`. The code now checks if the existing buffer is large enough, clears it if so, or reallocates only when necessary.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java",
+    "search": "private final Optional<SpillCipher> spillCipher;",
+    "replace": "private final Optional<SpillCipher> spillCipher;\n    private ByteBuffer compressionBuffer;"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java",
+    "search": "if (compressor.isPresent()) {\n            ByteBuffer compressionBuffer = ByteBuffer.allocate(compressor.get().maxCompressedLength(uncompressedSize));\n            compressor.get().compress(slice.toByteBuffer(), compressionBuffer);\n            compressionBuffer.flip();\n            if ((((double) compressionBuffer.remaining()) / uncompressedSize) <= MINIMUM_COMPRESSION_RATIO) {\n                slice = Slices.wrappedBuffer(compressionBuffer);\n                markers = COMPRESSED.set(markers);\n            }\n        }",
+    "replace": "if (compressor.isPresent()) {\n            int maxCompressedSize = compressor.get().maxCompressedLength(uncompressedSize);\n            if (compressionBuffer == null || compressionBuffer.capacity() < maxCompressedSize) {\n                compressionBuffer = ByteBuffer.allocate(maxCompressedSize);\n            }\n            else {\n                compressionBuffer.clear();\n            }\n            compressor.get().compress(slice.toByteBuffer(), compressionBuffer);\n            compressionBuffer.flip();\n            if (((double) compressionBuffer.remaining() / uncompressedSize) <= MINIMUM_COMPRESSION_RATIO) {\n                slice = Slices.wrappedBuffer(compressionBuffer);\n                markers = COMPRESSED.set(markers);\n            }\n        }"
+  }
+]
+```

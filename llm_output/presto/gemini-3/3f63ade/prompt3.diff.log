@@ -1,0 +1,24 @@
+My optimization strategy for `ArrayDistinctFunction` focuses on reducing object allocations and data copying within the `distinct` method.
+
+The original implementation iterates through the input array, and for each unique element, it immediately appends it to a `BlockBuilder`. This can be inefficient for a few reasons:
+1.  The `BlockBuilder` is always allocated with a capacity equal to the input array's size, which might be wasteful if there are many duplicates.
+2.  Appending to a `BlockBuilder`, especially for variable-width types like `VARCHAR`, involves data copying which can be expensive inside a loop.
+3.  A new `Block` is always created and returned, even if the input array already contains only distinct elements.
+
+My improved implementation addresses these points:
+1.  It first iterates through the array to identify the positions of unique elements, storing these positions in a simple `int` array. This avoids costly `appendTo` operations in the first pass.
+2.  If all elements are found to be unique, the original `Block` is returned directly, avoiding the overhead of creating a new `Block` and copying all the data.
+3.  If there are duplicates, a `BlockBuilder` is created with the exact size required for the distinct elements, which is more memory-efficient.
+4.  A second, simple loop then uses the stored positions to append only the unique elements to the `BlockBuilder`.
+
+This two-pass approach minimizes expensive operations and memory overhead, leading to better performance, particularly for variable-width types or when many input arrays are already distinct.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java",
+    "search": "    public static Block distinct(Type type, Block array)\n    {\n        if (array.getPositionCount() == 0) {\n            return array;\n        }\n\n        TypedSet typedSet = new TypedSet(type, array.getPositionCount());\n        BlockBuilder distinctElementBlockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), array.getPositionCount());\n        for (int i = 0; i < array.getPositionCount(); i++) {\n            if (!typedSet.contains(array, i)) {\n                typedSet.add(array, i);\n                type.appendTo(array, i, distinctElementBlockBuilder);\n            }\n        }\n\n        return distinctElementBlockBuilder.build();\n    }",
+    "replace": "    public static Block distinct(Type type, Block array)\n    {\n        if (array.getPositionCount() <= 1) {\n            return array;\n        }\n\n        TypedSet typedSet = new TypedSet(type, array.getPositionCount());\n        int[] distinctPositions = new int[array.getPositionCount()];\n        int distinctCount = 0;\n        for (int i = 0; i < array.getPositionCount(); i++) {\n            if (!typedSet.contains(array, i)) {\n                typedSet.add(array, i);\n                distinctPositions[distinctCount] = i;\n                distinctCount++;\n            }\n        }\n\n        if (distinctCount == array.getPositionCount()) {\n            return array;\n        }\n\n        BlockBuilder distinctElementBlockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), distinctCount);\n        for (int i = 0; i < distinctCount; i++) {\n            type.appendTo(array, distinctPositions[i], distinctElementBlockBuilder);\n        }\n\n        return distinctElementBlockBuilder.build();\n    }"
+  }
+]
+```

@@ -1,0 +1,15 @@
+The performance of `HashGenerator.getPartition` can be improved by optimizing the calculation of the partition number. The current implementation uses the modulo operator (`%`) on a `long` hash value, which can be computationally expensive.
+
+A standard optimization for this scenario is to replace the modulo operation with a bitwise AND operation when the partition count is a power of two. This change introduces a fast path that checks if `partitionCount` is a positive power of two. If so, it computes the partition using the significantly faster expression `rawHash & (partitionCount - 1)`. This also allows bypassing the subsequent `checkState` call, as the result of the bitwise AND is guaranteed to be within the valid range.
+
+For cases where the partition count is not a power of two, the original logic is retained to ensure correctness. This change will yield a substantial performance improvement in common scenarios where the number of partitions is configured to be a power of two.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java",
+    "search": "        rawHash &= 0x7fff_ffff_ffff_ffffL;\n\n        int partition = (int) (rawHash % partitionCount);",
+    "replace": "        rawHash &= 0x7fff_ffff_ffff_ffffL;\n\n        // fast path for power of two\n        if (partitionCount > 0 && (partitionCount & (partitionCount - 1)) == 0) {\n            return (int) (rawHash & (partitionCount - 1));\n        }\n\n        int partition = (int) (rawHash % partitionCount);"
+  }
+]
+```

@@ -1,0 +1,16 @@
+I have replaced the use of Java Streams in the hot-path constructor for building windowFunctions and outputTypes with hand-written loops and Guava’s ImmutableList.Builder to reduce lambda/stream allocation overhead and improve throughput.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java",
+    "search": "this.windowFunctions = windowFunctionDefinitions.stream()\n                .map(functionDefinition -> new FramedWindowFunction(functionDefinition.createWindowFunction(), functionDefinition.getFrameInfo()))\n                .collect(toImmutableList());",
+    "replace": "ImmutableList.Builder<FramedWindowFunction> windowFunctionsBuilder = ImmutableList.builder();\n            for (WindowFunctionDefinition functionDefinition : windowFunctionDefinitions) {\n                windowFunctionsBuilder.add(new FramedWindowFunction(\n                        functionDefinition.createWindowFunction(),\n                        functionDefinition.getFrameInfo()));\n            }\n            this.windowFunctions = windowFunctionsBuilder.build();"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java",
+    "search": "this.outputTypes = Stream.concat(\n                outputChannels.stream()\n                        .map(sourceTypes::get),\n                windowFunctionDefinitions.stream()\n                        .map(WindowFunctionDefinition::getType))\n                .collect(toImmutableList());",
+    "replace": "ImmutableList.Builder<Type> outputTypesBuilder = ImmutableList.builder();\n        for (int channel : outputChannels) {\n            outputTypesBuilder.add(sourceTypes.get(channel));\n        }\n        for (WindowFunctionDefinition functionDefinition : windowFunctionDefinitions) {\n            outputTypesBuilder.add(functionDefinition.getType());\n        }\n        this.outputTypes = outputTypesBuilder.build();"
+  }
+]
+```

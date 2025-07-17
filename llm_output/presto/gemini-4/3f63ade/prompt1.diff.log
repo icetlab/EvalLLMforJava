@@ -1,0 +1,15 @@
+The `array_distinct` function builds a new array containing only the unique elements from the input array. The original implementation constructs a new `Block` in all cases.
+
+My improvement optimizes for the common scenario where the input array already consists of distinct elements. In this case, the original code would unnecessarily construct a new `Block` that is identical to the input, involving a potentially expensive data copy.
+
+The proposed change adds a check after processing all elements. If the number of unique elements found is equal to the number of elements in the original array, it indicates that there were no duplicates. Instead of building a new `Block`, the function will return the original input `Block` directly, avoiding the overhead of the `build()` operation and data copy. This optimization improves performance for arrays with all or mostly distinct elements, at the negligible cost of an integer comparison.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java",
+    "search": "        return distinctElementBlockBuilder.build();",
+    "replace": "        if (distinctElementBlockBuilder.getPositionCount() == array.getPositionCount()) {\n            return array;\n        }\n        return distinctElementBlockBuilder.build();"
+  }
+]
+```

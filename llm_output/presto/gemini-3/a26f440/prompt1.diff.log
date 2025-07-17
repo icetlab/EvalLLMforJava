@@ -1,0 +1,26 @@
+The primary performance issue in the provided `TDigest` implementation lies within the `merge(TDigest other)` method. The original implementation is inefficient due to several factors:
+1.  It creates `Centroid` objects for each centroid in the `other` digest, leading to significant object allocation and garbage collection overhead, especially when merging digests with many centroids.
+2.  It populates an `ArrayList`, which may involve resizing.
+3.  It calls `add()` for each centroid individually. Each `add()` call checks if the internal buffer is full, potentially triggering multiple expensive `mergeNewValues()` operations during a single top-level `merge()` call.
+
+My improvement addresses these issues by:
+1.  Replacing the object-oriented iteration with direct access to the `other` digest's internal arrays (`mean` and `weight`), completely avoiding the creation of `Centroid` objects and the intermediate `ArrayList`.
+2.  Implementing a private `shuffle` helper method that operates on a primitive `int[]` array of indices. This avoids the overhead of boxing integers into an `ArrayList<Integer>` just for shuffling.
+3.  Adding all of `other`'s centroids to the internal buffer in a single batch. This includes a check to see if a preliminary merge of the current digest's unmerged points is needed to make space. This ensures that at most one expensive merge operation is performed, rather than potentially many.
+
+Additionally, I've simplified the `mergeNewValues` method by removing a redundant conditional check, which improves code clarity without changing its behavior.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "    public void merge(TDigest other)\n    {\n        checkArgument(other != null, \"Cannot merge with a null t-digest\");\n        checkArgument(this.publicCompression == other.getCompressionFactor(), \"TDigests must have the same compression, found (%s, %s)\", this.publicCompression,\n                other.getCompressionFactor());\n        List<Centroid> tmp = new ArrayList<>();\n        for (Centroid centroid : other.centroids()) {\n            tmp.add(centroid);\n        }\n\n        shuffle(tmp, gen);\n        for (Centroid centroid : tmp) {\n            add(centroid.getMean(), centroid.getWeight());\n        }\n    }",
+    "replace": "    private void shuffle(int[] array)\n    {\n        for (int i = array.length - 1; i > 0; i--) {\n            int j = gen.nextInt(i + 1);\n            // swap\n            int temp = array[i];\n            array[i] = array[j];\n            array[j] = temp;\n        }\n    }\n\n    public void merge(TDigest other)\n    {\n        checkArgument(other != null, \"Cannot merge with a null t-digest\");\n        checkArgument(this.publicCompression == other.getCompressionFactor(), \"TDigests must have the same compression, found (%s, %s)\", this.publicCompression,\n                other.getCompressionFactor());\n\n        other.compress();\n        if (other.activeCentroids == 0) {\n            return;\n        }\n\n        // if we don't have enough space to add all of other's centroids, merge our own first.\n        if (tempUsed + other.activeCentroids >= tempWeight.length - activeCentroids - 1) {\n            mergeNewValues();\n        }\n\n        int[] indices = new int[other.activeCentroids];\n        for (int i = 0; i < other.activeCentroids; i++) {\n            indices[i] = i;\n        }\n        shuffle(indices);\n\n        for (int i : indices) {\n            double x = other.mean[i];\n            double w = other.weight[i];\n            // inline add, without the buffer check, which we already did.\n            int where = tempUsed++;\n            tempWeight[where] = w;\n            tempMean[where] = x;\n            unmergedWeight += w;\n            if (x < min) {\n                min = x;\n            }\n            if (x > max) {\n                max = x;\n            }\n        }\n    }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "    private void mergeNewValues(boolean force, double compression)\n    {\n        if (unmergedWeight == 0) {\n            return;\n        }\n\n        if (force || unmergedWeight > 0) {\n            // note that we run the merge in reverse every other merge to avoid left-to-right bias in merging\n            merge(tempMean, tempWeight, tempUsed, order, unmergedWeight, mergeCount % 2 == 1, compression);\n            mergeCount++;\n            tempUsed = 0;\n            unmergedWeight = 0;\n        }\n    }",
+    "replace": "    private void mergeNewValues(boolean force, double compression)\n    {\n        if (unmergedWeight == 0) {\n            return;\n        }\n\n        // note that we run the merge in reverse every other merge to avoid left-to-right bias in merging\n        merge(tempMean, tempWeight, tempUsed, order, unmergedWeight, mergeCount % 2 == 1, compression);\n        mergeCount++;\n        tempUsed = 0;\n        unmergedWeight = 0;\n    }"
+  }
+]
+```

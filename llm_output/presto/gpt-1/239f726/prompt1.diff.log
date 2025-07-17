@@ -1,0 +1,11 @@
+Here’s a small optimization to avoid converting the input Slice to UTF-8 twice in `geometryFromText`, reducing redundant work:
+
+```json
+[
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "private static OGCGeometry geometryFromText(Slice input)\n    {\n        OGCGeometry geometry;\n        try {\n            geometry = OGCGeometry.fromText(input.toStringUtf8());\n        }\n        catch (IllegalArgumentException e) {\n            throw new PrestoException(INVALID_FUNCTION_ARGUMENT, \"Invalid WKT: \" + input.toStringUtf8(), e);\n        }\n        geometry.setSpatialReference(null);\n        return geometry;\n    }",
+    "replace": "private static OGCGeometry geometryFromText(Slice input)\n    {\n        String wkt = input.toStringUtf8();\n        OGCGeometry geometry;\n        try {\n            geometry = OGCGeometry.fromText(wkt);\n        }\n        catch (IllegalArgumentException e) {\n            throw new PrestoException(INVALID_FUNCTION_ARGUMENT, \"Invalid WKT: \" + wkt, e);\n        }\n        geometry.setSpatialReference(null);\n        return geometry;\n    }"
+  }
+]
+```

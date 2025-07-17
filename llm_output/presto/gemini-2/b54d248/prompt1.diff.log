@@ -1,0 +1,11 @@
+The `getPartition` method in `HashGenerator` is optimized. The modulo operation (`%`) is replaced with a bitwise AND (`&`) when the `partitionCount` is a power of two. This is a common performance optimization as bitwise operations are significantly faster than division/modulo. Additionally, the redundant `checkState` call is removed, as the logic for calculating the partition number already guarantees that the result is within the valid range. This avoids an unnecessary check and potential method call overhead.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java",
+    "search": "    default int getPartition(int partitionCount, int position, Page page)\n    {\n        long rawHash = hashPosition(position, page);\n\n        // clear the sign bit\n        rawHash &= 0x7fff_ffff_ffff_ffffL;\n\n        int partition = (int) (rawHash % partitionCount);\n\n        checkState(partition >= 0 && partition < partitionCount);\n        return partition;\n    }",
+    "replace": "    default int getPartition(int partitionCount, int position, Page page)\n    {\n        long rawHash = hashPosition(position, page);\n\n        // clear the sign bit\n        rawHash &= 0x7fff_ffff_ffff_ffffL;\n\n        // Power-of-2 optimization for modulo\n        // This check is valid for positive partitionCount, which is guaranteed by the callers.\n        if ((partitionCount & (partitionCount - 1)) == 0) {\n            return (int) (rawHash & (partitionCount - 1));\n        }\n        return (int) (rawHash % partitionCount);\n    }"
+  }
+]
+```

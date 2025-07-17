@@ -1,0 +1,45 @@
+The performance issue is that for point geometries, an ESRI-specific type identifier is being serialized, which is then read and discarded during deserialization. This is unnecessary overhead as the high-level geometry type is already encoded.
+
+My improvement strategy is to stop serializing this redundant type identifier for `POINT` geometries. This requires changes in both serialization and deserialization logic to maintain consistency. I will apply this optimization to both `GeometrySerde` (for ESRI's `OGCGeometry`) and `JtsGeometrySerde` (for JTS `Geometry`) to ensure their serialized outputs remain compatible, as verified by the existing tests.
+
+Specifically, for `POINT` type geometries only:
+1.  The serialization methods will be updated to no longer write the 4-byte ESRI shape type.
+2.  The corresponding deserialization methods will be updated to no longer read and skip this integer.
+3.  The envelope deserialization for points will also be adjusted.
+
+These changes will reduce the serialized size of points by 4 bytes and remove the associated processing overhead, directly addressing the performance issue. The logic for all other geometry types will remain unchanged.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java",
+    "search": "import static com.facebook.presto.geospatial.GeometryUtils.isEsriNaN;",
+    "replace": "import static com.facebook.presto.geospatial.GeometryUtils.isEsriNaN;\nimport static com.facebook.presto.geospatial.GeometryUtils.translateToAVNaN;"
+  },
+  {
+    "filepath": "../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java",
+    "search": "        switch (type) {\n            case POINT:\n            case MULTI_POINT:\n            case LINE_STRING:\n            case MULTI_LINE_STRING:\n            case POLYGON:\n            case MULTI_POLYGON:\n                writeSimpleGeometry(output, type, geometry);\n                break;",
+    "replace": "        switch (type) {\n            case POINT: {\n                output.appendByte(GeometryType.POINT.code());\n                Point point = (Point) geometry.getEsriGeometry();\n                if (point.isEmpty()) {\n                    output.appendDouble(translateToAVNaN(Double.NaN));\n                    output.appendDouble(translateToAVNaN(Double.NaN));\n                }\n                else {\n                    output.appendDouble(translateToAVNaN(point.getX()));\n                    output.appendDouble(translateToAVNaN(point.getY()));\n                }\n                break;\n            }\n            case MULTI_POINT:\n            case LINE_STRING:\n            case MULTI_LINE_STRING:\n            case POLYGON:\n            case MULTI_POLYGON:\n                writeSimpleGeometry(output, type, geometry);\n                break;"
+  },
+  {
+    "filepath": "../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java",
+    "search": "    private static OGCGeometry readGeometry(BasicSliceInput input, Slice inputSlice, GeometryType type, int length)\n    {\n        switch (type) {\n            case POINT:\n            case MULTI_POINT:\n            case LINE_STRING:\n            case MULTI_LINE_STRING:\n            case POLYGON:\n            case MULTI_POLYGON:\n                return readSimpleGeometry(input, inputSlice, type, length);",
+    "replace": "    private static OGCGeometry readGeometry(BasicSliceInput input, Slice inputSlice, GeometryType type, int length)\n    {\n        switch (type) {\n            case POINT: {\n                double x = input.readDouble();\n                double y = input.readDouble();\n                if (isEsriNaN(x) || isEsriNaN(y)) {\n                    return new OGCPoint(new Point(), null);\n                }\n                return new OGCPoint(new Point(x, y), null);\n            }\n            case MULTI_POINT:\n            case LINE_STRING:\n            case MULTI_LINE_STRING:\n            case POLYGON:\n            case MULTI_POLYGON:\n                return readSimpleGeometry(input, inputSlice, type, length);"
+  },
+  {
+    "filepath": "../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java",
+    "search": "    private static Envelope getPointEnvelope(BasicSliceInput input)\n    {\n        // skip type injected by esri\n        input.readInt();\n\n        double x = input.readDouble();",
+    "replace": "    private static Envelope getPointEnvelope(BasicSliceInput input)\n    {\n        double x = input.readDouble();"
+  },
+  {
+    "filepath": "../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java",
+    "search": "    private static Point readPoint(SliceInput input, boolean skipType)\n    {\n        if (skipType) {\n            skipEsriType(input);\n        }\n        Coordinate coordinates = readCoordinate(input);",
+    "replace": "    private static Point readPoint(SliceInput input, boolean skipType)\n    {\n        // For points, ESRI shape type is not serialized\n        Coordinate coordinates = readCoordinate(input);"
+  },
+  {
+    "filepath": "../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java",
+    "search": "        output.writeByte(GeometryType.POINT.code());\n        output.writeInt(EsriShapeType.POINT.code);",
+    "replace": "        output.writeByte(GeometryType.POINT.code());"
+  }
+]
+```

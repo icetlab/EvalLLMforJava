@@ -1,0 +1,13 @@
+My goal is to improve the performance of reading the `lengthVector` in `SliceDirectSelectiveStreamReader`. The current implementation first reads all the lengths into a `lengthVector` array and then iterates over this array to calculate the total length and maximum length. This results in two passes over the length data.
+
+To optimize this, I will merge these two passes into a single loop. In this new loop, I will read each length value one by one from the `lengthStream`, store it in the `lengthVector`, and simultaneously update the `totalLength` and `maxLength`. This approach avoids a second pass over the `lengthVector`, reducing memory access and potentially improving performance by enhancing data locality, especially when processing a large number of values. The change is applied within the `useBatchMode` path, which is the active code path for this reader. The original logic is preserved for the `else` path by moving the `nextIntVector` call into it.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java",
+    "search": "            lengthStream.nextIntVector(nonNullCount, lengthVector, 0);\n\n            if (useBatchMode(positionCount, totalPositions)) {\n                for (int i = 0; i < nonNullCount; i++) {\n                    totalLength += lengthVector[i];\n                    maxLength = Math.max(maxLength, lengthVector[i]);\n                }\n            }\n            else {",
+    "replace": "            if (useBatchMode(positionCount, totalPositions)) {\n                for (int i = 0; i < nonNullCount; i++) {\n                    int length = (int) lengthStream.next();\n                    lengthVector[i] = length;\n                    totalLength += length;\n                    maxLength = Math.max(maxLength, length);\n                }\n            }\n            else {\n                lengthStream.nextIntVector(nonNullCount, lengthVector, 0);"
+  }
+]
+```

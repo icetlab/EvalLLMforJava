@@ -1,0 +1,18 @@
+The performance issue is that `PageProcessor` performs memory accounting for the input page at construction time, which is unnecessary as processing starts immediately. This calculation can be deferred until the processing actually begins.
+
+My improvement defers the retained memory calculation from the constructor of the internal `ProjectSelectedPositions` class to the beginning of its `process()` method. This avoids the upfront cost and correctly handles cases where processing might not even start. To ensure the calculation is performed only once at the beginning of processing, I've introduced a `memoryAccounted` flag. This change correctly accounts for memory, especially in scenarios involving yields, while improving performance by delaying the calculation until it's truly needed.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java",
+    "search": "        private Block[] previouslyComputedResults;\n        private SelectedPositions selectedPositions;\n        private long retainedSizeInBytes;\n\n        // remember if we need to re-use the same batch size if we yield last time\n        private boolean lastComputeYielded;\n        private int lastComputeBatchSize;\n        private Work<Block> pageProjectWork;\n\n        private ProjectSelectedPositions(ConnectorSession session, DriverYieldSignal yieldSignal, LocalMemoryContext memoryContext, Page page, SelectedPositions selectedPositions)\n        {\n            this.session = session;\n            this.yieldSignal = yieldSignal;\n            this.page = page;\n            this.memoryContext = memoryContext;\n            this.selectedPositions = selectedPositions;\n            this.previouslyComputedResults = new Block[projections.size()];\n            updateRetainedSize();\n        }",
+    "replace": "        private Block[] previouslyComputedResults;\n        private SelectedPositions selectedPositions;\n        private long retainedSizeInBytes;\n        private boolean memoryAccounted;\n\n        // remember if we need to re-use the same batch size if we yield last time\n        private boolean lastComputeYielded;\n        private int lastComputeBatchSize;\n        private Work<Block> pageProjectWork;\n\n        private ProjectSelectedPositions(ConnectorSession session, DriverYieldSignal yieldSignal, LocalMemoryContext memoryContext, Page page, SelectedPositions selectedPositions)\n        {\n            this.session = session;\n            this.yieldSignal = yieldSignal;\n            this.page = page;\n            this.memoryContext = memoryContext;\n            this.selectedPositions = selectedPositions;\n            this.previouslyComputedResults = new Block[projections.size()];\n        }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java",
+    "search": "        @Override\n        public ProcessState<Page> process()\n        {\n            int batchSize;",
+    "replace": "        @Override\n        public ProcessState<Page> process()\n        {\n            if (!memoryAccounted) {\n                updateRetainedSize();\n                memoryAccounted = true;\n            }\n\n            int batchSize;"
+  }
+]
+```

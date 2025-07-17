@@ -1,0 +1,17 @@
+The performance of `SliceDirectSelectiveStreamReader` can be improved by optimizing the calculation of the total length of slices within the `prepareForNextRead` method.
+
+The current implementation iterates through the `lengthVector` to compute both `totalLength` and `maxLength`. However, `maxLength` is not used when operating in batch mode, which is the default and currently hardcoded behavior. Removing the unnecessary `Math.max` calculation for `maxLength` reduces computational overhead in the loop.
+
+Additionally, the `totalLength` is accumulated in an `int` variable, which can lead to integer overflow if the sum of lengths exceeds `Integer.MAX_VALUE`. This can cause incorrect buffer allocation and potential data corruption. To address this, I will use a `long` accumulator for the summation. The result is then safely cast back to an `int` after checking against `Integer.MAX_VALUE`, ensuring the subsequent size check against `ONE_GIGABYTE` works correctly without overflow issues.
+
+These changes make the length processing more efficient and robust.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java",
+    "search": "            if (useBatchMode(positionCount, totalPositions)) {\n                for (int i = 0; i < nonNullCount; i++) {\n                    totalLength += lengthVector[i];\n                    maxLength = Math.max(maxLength, lengthVector[i]);\n                }\n            }",
+    "replace": "            if (useBatchMode(positionCount, totalPositions)) {\n                long longTotalLength = 0;\n                for (int i = 0; i < nonNullCount; i++) {\n                    longTotalLength += lengthVector[i];\n                }\n                if (longTotalLength > Integer.MAX_VALUE) {\n                    totalLength = Integer.MAX_VALUE;\n                }\n                else {\n                    totalLength = (int) longTotalLength;\n                }\n            }"
+  }
+]
+```

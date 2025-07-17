@@ -1,0 +1,21 @@
+I’ve changed `blockBuilders` from an immutable list to a mutable `ArrayList` and updated the reset logic in `project` to reuse the existing list in-place instead of recreating it each time, reducing allocations and improving performance.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java",
+    "search": "import java.util.List;",
+    "replace": "import java.util.List;\nimport java.util.ArrayList;"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java",
+    "search": "this.blockBuilders = projections.stream().map(RowExpression::getType).map(type -> type.createBlockBuilder(null, 1)).collect(toImmutableList());",
+    "replace": "this.blockBuilders = new ArrayList<>(projections.stream()\n        .map(RowExpression::getType)\n        .map(type -> type.createBlockBuilder(null, 1))\n        .collect(toImmutableList()));"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java",
+    "search": "blockBuilders = blockBuilders.stream().map(blockBuilder -> blockBuilder.newBlockBuilderLike(null)).collect(toImmutableList());",
+    "replace": "for (int i = 0; i < blockBuilders.size(); i++) {\n            blockBuilders.set(i, blockBuilders.get(i).newBlockBuilderLike(null));\n        }"
+  }
+]
+```

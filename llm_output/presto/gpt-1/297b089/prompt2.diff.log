@@ -1,0 +1,11 @@
+I’ve restored the original heuristic in useBatchMode to avoid always reading the entire length vector in batch mode; now we only use batch mode when it’s likely beneficial, reducing unnecessary length reads for sparse or small reads.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java",
+    "search": "private boolean useBatchMode(int positionCount, int totalPositionCount)\n    {\n        return true;",
+    "replace": "private boolean useBatchMode(int positionCount, int totalPositionCount)\n    {\n        // maxCodePointCount < 0 means it's unbounded varchar VARCHAR.\n        // If the types are VARCHAR(N) or CHAR(N), the length of the string need to be calculated and truncated.\n        if (lengthStream == null || maxCodePointCount >= 0) {\n            return false;\n        }\n\n        double inputFilterRate = (double) (totalPositionCount - positionCount) / totalPositionCount;\n        if (filter == null) {  // readNoFilter\n            // When there is no filter, batch mode performs better for almost all inputFilterRate.\n            // But to limit data buffer size, we enable it for the range of [0.0, 0.5]\n            if (inputFilterRate >= 0.0 && inputFilterRate <= 0.5) {\n                return true;\n            }\n            return false;\n        }\n        else { // readWithFilter\n            // When there is filter, batch mode performs better for almost all inputFilterRate except around 0.1.\n            // To limit data buffer size, we enable it for the ranges [0.0, 0.05] and [0.15, 0.5]\n            if ((inputFilterRate >= 0.0 && inputFilterRate <= 0.05) || (inputFilterRate >= 0.15 && inputFilterRate <= 0.5)) {\n                return true;\n            }\n            return false;\n        }"
+  }
+]
+```

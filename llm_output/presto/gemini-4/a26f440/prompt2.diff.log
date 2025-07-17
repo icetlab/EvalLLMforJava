@@ -1,0 +1,11 @@
+This change optimizes T-Digest performance for small distributions. For a T-Digest with a small number of initial points, instead of running the full merge-and-compress algorithm, the points are simply sorted and stored as-is. This avoids the overhead of centroid creation, leading to faster execution and more accurate quantile estimations for small datasets.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "    private void mergeNewValues(boolean force, double compression)\n    {\n        if (unmergedWeight == 0) {\n            return;\n        }\n\n        if (force || unmergedWeight > 0) {\n            // note that we run the merge in reverse every other merge to avoid left-to-right bias in merging\n            merge(tempMean, tempWeight, tempUsed, order, unmergedWeight, mergeCount % 2 == 1, compression);\n            mergeCount++;\n            tempUsed = 0;\n            unmergedWeight = 0;\n        }\n    }",
+    "replace": "    private void mergeNewValues(boolean force, double compression)\n    {\n        if (unmergedWeight == 0) {\n            return;\n        }\n\n        if (force || unmergedWeight > 0) {\n            // For small distributions, we can just sort the buffer and keep all points\n            // rather than merging them. This is faster and more accurate.\n            if (activeCentroids == 0 && tempUsed <= weight.length) {\n                sort(order, tempMean, tempUsed);\n\n                totalWeight = unmergedWeight;\n                activeCentroids = tempUsed;\n                for (int i = 0; i < tempUsed; i++) {\n                    int originalIndex = order[i];\n                    mean[i] = tempMean[originalIndex];\n                    weight[i] = tempWeight[originalIndex];\n                }\n            }\n            else {\n                // note that we run the merge in reverse every other merge to avoid left-to-right bias in merging\n                merge(tempMean, tempWeight, tempUsed, order, unmergedWeight, mergeCount % 2 == 1, compression);\n            }\n            mergeCount++;\n            tempUsed = 0;\n            unmergedWeight = 0;\n        }\n    }"
+  }
+]
+```

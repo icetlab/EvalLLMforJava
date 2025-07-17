@@ -1,0 +1,13 @@
+The current implementation of `GeneratedPageProjection.project` uses a Java Stream to create a new list of `BlockBuilder`s on every invocation. This involves overhead from stream processing and collecting to an `ImmutableList`, which can be costly on a hot path.
+
+My improvement replaces this stream-based implementation with a more performant, loop-based approach. By iterating over the existing `blockBuilders` and adding new instances to a pre-sized `ArrayList`, we can avoid the overhead associated with streams and immutable collections. This change directly targets the performance-critical `project` method, ensuring that creating new `BlockBuilder`s for each page is as efficient as possible while preserving the original logic.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java",
+    "search": "    @Override\n    public Work<List<Block>> project(SqlFunctionProperties properties, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions)\n    {\n        blockBuilders = blockBuilders.stream().map(blockBuilder -> blockBuilder.newBlockBuilderLike(null)).collect(toImmutableList());\n        try {\n            return (Work<List<Block>>) pageProjectionWorkFactory.invoke(blockBuilders, properties, page, selectedPositions);\n        }\n        catch (Throwable e) {\n            throw new RuntimeException(e);\n        }\n    }",
+    "replace": "    @Override\n    public Work<List<Block>> project(SqlFunctionProperties properties, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions)\n    {\n        List<BlockBuilder> newBlockBuilders = new java.util.ArrayList<>(blockBuilders.size());\n        for (BlockBuilder blockBuilder : blockBuilders) {\n            newBlockBuilders.add(blockBuilder.newBlockBuilderLike(null));\n        }\n        blockBuilders = newBlockBuilders;\n        try {\n            return (Work<List<Block>>) pageProjectionWorkFactory.invoke(blockBuilders, properties, page, selectedPositions);\n        }\n        catch (Throwable e) {\n            throw new RuntimeException(e);\n        }\n    }"
+  }
+]
+```

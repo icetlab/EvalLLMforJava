@@ -1,0 +1,11 @@
+I’ve added a fast‐path in readNoFilter to bulk‐read when there are no nulls (presentStream == null), no filter, and the requested positions are contiguous. This avoids per‐position checks and skips.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "    private int readNoFilter(int[] positions, int positionCount)\n            throws IOException\n    {\n        // filter == null implies outputRequired == true",
+    "replace": "    private int readNoFilter(int[] positions, int positionCount)\n            throws IOException\n    {\n        // filter == null implies outputRequired == true\n        // fast path when no nulls and positions are contiguous\n        if (presentStream == null && dataStream != null) {\n            boolean contiguous = true;\n            for (int i = 1; i < positionCount; i++) {\n                if (positions[i] != positions[i - 1] + 1) {\n                    contiguous = false;\n                    break;\n                }\n            }\n            if (contiguous) {\n                int skip = positions[0];\n                if (skip > 0) {\n                    skip(skip);\n                }\n                for (int i = 0; i < positionCount; i++) {\n                    values[i] = dataStream.next();\n                }\n                outputPositionCount = positionCount;\n                return positions[positionCount - 1] + 1;\n            }\n        }"
+  }
+]
+```

@@ -1,0 +1,16 @@
+I’m adding a fast‐path in specialize() to bypass full map‐to‐map casting when the key and value types are identical, and introducing an identity helper method to return the input block directly.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java",
+    "search": "Type toMapType = functionAndTypeManager.getParameterizedType(",
+    "replace": "// fast path: no cast required when key and value types are the same\n        if (fromKeyType.equals(toKeyType) && fromValueType.equals(toValueType)) {\n            MethodHandle identity = methodHandle(MapToMapCast.class, \"identity\", SqlFunctionProperties.class, Block.class);\n            return new BuiltInScalarFunctionImplementation(\n                    true,\n                    ImmutableList.of(valueTypeArgumentProperty(RETURN_NULL_ON_NULL)),\n                    identity);\n        }\n        Type toMapType = functionAndTypeManager.getParameterizedType("
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java",
+    "search": "@UsedByGeneratedCode\n    public static Block mapCast(",
+    "replace": "@UsedByGeneratedCode\n    public static Block identity(SqlFunctionProperties properties, Block fromMap) {\n        // identity cast: return the original map block\n        return fromMap;\n    }\n\n    @UsedByGeneratedCode\n    public static Block mapCast("
+  }
+]
+```

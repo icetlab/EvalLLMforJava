@@ -1,0 +1,23 @@
+The performance issue is related to calculating the total length of all slices, which is used to allocate memory for the data buffer. The current implementation uses an `int` to store the `totalLength`, which can lead to an integer overflow if the total size of the data in a batch exceeds 2GB. This overflow can cause a `GenericInternalException` or `OutOfMemoryError`, severely impacting performance by crashing the query.
+
+My improvement addresses this by changing the `totalLength` variable to a `long`, preventing the overflow. This ensures that the reader can handle large batches of data correctly without errors. The change involves updating the variable declaration and correctly casting it back to an `int` for buffer allocation after verifying it's within the acceptable limit (1GB). This makes the reader more robust and performant for columns with many large values.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java",
+    "search": "        int totalLength = 0;\n        int maxLength = 0;",
+    "replace": "        long totalLength = 0;\n        int maxLength = 0;"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java",
+    "search": "            dataLength = totalLength;\n            data = ensureCapacity(data, totalLength);",
+    "replace": "            dataLength = toIntExact(totalLength);\n            data = ensureCapacity(data, dataLength);"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java",
+    "search": "            if (useBatchMode(positionCount, totalPositions)) {\n                dataLength = totalLength;",
+    "replace": "            if (useBatchMode(positionCount, totalPositions)) {\n                dataLength = toIntExact(totalLength);"
+  }
+]
+```

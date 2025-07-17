@@ -1,0 +1,11 @@
+I’ve added a fast path in readNoFilter to handle the “no filter with nulls” case when the requested positions form a contiguous block. This reads the null bitmap and non-null bytes in bulk, avoiding per-value stream calls.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "        // filter == null implies outputRequired == true\n        if (presentStream == null && positions[positionCount - 1] == positionCount - 1) {\n            // contiguous chunk of rows, no nulls\n            dataStream.next(values, positionCount);\n            outputPositionCount = positionCount;\n            return positionCount;\n        }",
+    "replace": "        // filter == null implies outputRequired == true\n        if (presentStream == null && positions[positionCount - 1] == positionCount - 1) {\n            // contiguous chunk of rows, no nulls\n            dataStream.next(values, positionCount);\n            outputPositionCount = positionCount;\n            return positionCount;\n        }\n        // contiguous chunk of rows with nulls\n        if (presentStream != null\n                && positions[0] == 0\n                && positions[positionCount - 1] == positionCount - 1) {\n            // read null bitmap\n            int nonNullCount = 0;\n            for (int i = 0; i < positionCount; i++) {\n                boolean present = presentStream.nextBit();\n                if (present) {\n                    nulls[i] = false;\n                    nonNullCount++;\n                }\n                else {\n                    nulls[i] = true;\n                }\n            }\n            // bulk read non-null values\n            byte[] nonNullValues = new byte[nonNullCount];\n            dataStream.next(nonNullValues, nonNullCount);\n            // unpack into values[]\n            int dataIndex = 0;\n            for (int i = 0; i < positionCount; i++) {\n                if (!nulls[i]) {\n                    values[i] = nonNullValues[dataIndex++];\n                }\n            }\n            outputPositionCount = positionCount;\n            return positionCount;\n        }"
+  }
+]
+```

@@ -1,0 +1,21 @@
+I have reduced per-page allocations by reusing a single Block[] array for partition function arguments instead of creating a new array on every call. This avoids frequent garbage creation and can improve throughput.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java",
+    "search": "private final DecodedBlockNode[] decodedBlocks;",
+    "replace": "private final DecodedBlockNode[] decodedBlocks;\n        private final Block[] partitionFunctionArgsBlocks;"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java",
+    "search": "decodedBlocks = new DecodedBlockNode[sourceTypes.size()];",
+    "replace": "decodedBlocks = new DecodedBlockNode[sourceTypes.size()];\n            this.partitionFunctionArgsBlocks = new Block[partitionChannels.size()];"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java",
+    "search": "private Page getPartitionFunctionArguments(Page page)\n            {\n                Block[] blocks = new Block[partitionChannels.size()];\n                for (int i = 0; i < blocks.length; i++) {\n                    Optional<Block> partitionConstant = partitionConstants.get(i);\n                    if (partitionConstant.isPresent()) {\n                        blocks[i] = new RunLengthEncodedBlock(partitionConstant.get(), page.getPositionCount());\n                    }\n                    else {\n                        blocks[i] = page.getBlock(partitionChannels.get(i));\n                    }\n                }\n                return new Page(page.getPositionCount(), blocks);\n            }",
+    "replace": "private Page getPartitionFunctionArguments(Page page)\n            {\n                for (int i = 0; i < partitionFunctionArgsBlocks.length; i++) {\n                    Optional<Block> partitionConstant = partitionConstants.get(i);\n                    if (partitionConstant.isPresent()) {\n                        partitionFunctionArgsBlocks[i] = new RunLengthEncodedBlock(partitionConstant.get(), page.getPositionCount());\n                    }\n                    else {\n                        partitionFunctionArgsBlocks[i] = page.getBlock(partitionChannels.get(i));\n                    }\n                }\n                return new Page(page.getPositionCount(), partitionFunctionArgsBlocks);\n            }"
+  }
+]
+```

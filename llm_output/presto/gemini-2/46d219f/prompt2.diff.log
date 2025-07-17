@@ -1,0 +1,11 @@
+The overall improvement is to optimize the `map_concat` function by handling cases where one of the input maps is empty. By adding checks for empty maps at the beginning of the function, we can avoid unnecessary object allocations and computations, such as creating a `TypedSet` and a `BlockBuilder`, and looping through map entries. Instead, we can directly return the non-empty map, or an empty map if both are empty, which significantly improves performance for these specific cases.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapConcatFunction.java",
+    "search": "    public static Block mapConcat(\n            @TypeParameter(\"K\") Type keyType,\n            @TypeParameter(\"V\") Type valueType,\n            @SqlType(\"map(K,V)\") Block leftMap,\n            @SqlType(\"map(K,V)\") Block rightMap)\n    {\n        TypedSet typedSet = new TypedSet(keyType, rightMap.getPositionCount());",
+    "replace": "    public static Block mapConcat(\n            @TypeParameter(\"K\") Type keyType,\n            @TypeParameter(\"V\") Type valueType,\n            @SqlType(\"map(K,V)\") Block leftMap,\n            @SqlType(\"map(K,V)\") Block rightMap)\n    {\n        if (rightMap.getPositionCount() == 0) {\n            return leftMap;\n        }\n        if (leftMap.getPositionCount() == 0) {\n            return rightMap;\n        }\n\n        TypedSet typedSet = new TypedSet(keyType, rightMap.getPositionCount());"
+  }
+]
+```

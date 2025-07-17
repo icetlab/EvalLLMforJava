@@ -1,0 +1,13 @@
+The performance issue is that `GeneratedPageProjection` does not reserve sufficient memory for `BlockBuilder` instances before projecting rows. The current implementation creates new `BlockBuilder`s based on the capacity of the builders from the previous page, which can be an inaccurate heuristic and is particularly inefficient for the first page processed, leading to unnecessary reallocations.
+
+My improvement addresses this by pre-allocating memory for the `BlockBuilder`s with the exact number of positions to be projected. I will modify the `project` method to use `selectedPositions.size()` to create new `BlockBuilder`s. This ensures that each `BlockBuilder` has enough capacity from the start, avoiding internal array resizing during row projection and thus improving performance. This is achieved by iterating through the `projections` list to get the data type for each output column and creating a `BlockBuilder` of the appropriate size.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java",
+    "search": "    @Override\n    public Work<List<Block>> project(SqlFunctionProperties properties, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions)\n    {\n        blockBuilders = blockBuilders.stream().map(blockBuilder -> blockBuilder.newBlockBuilderLike(null)).collect(toImmutableList());\n        try {\n            return (Work<List<Block>>) pageProjectionWorkFactory.invoke(blockBuilders, properties, page, selectedPositions);\n        }\n        catch (Throwable e) {\n            throw new RuntimeException(e);\n        }\n    }",
+    "replace": "    @Override\n    public Work<List<Block>> project(SqlFunctionProperties properties, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions)\n    {\n        blockBuilders = projections.stream()\n                .map(RowExpression::getType)\n                .map(type -> type.createBlockBuilder(null, selectedPositions.size()))\n                .collect(toImmutableList());\n        try {\n            return (Work<List<Block>>) pageProjectionWorkFactory.invoke(blockBuilders, properties, page, selectedPositions);\n        }\n        catch (Throwable e) {\n            throw new RuntimeException(e);\n        }\n    }"
+  }
+]
+```

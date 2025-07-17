@@ -1,0 +1,13 @@
+The performance issue is that `ST_Envelope` deserializes the full geometry, then manually queries for the envelope's coordinates, and finally constructs a new geometry from those coordinates. This is an inefficient, multi-step process.
+
+My improvement simplifies this by using the `OGCGeometry.envelope()` method. This method provides a more direct and likely optimized way to get the envelope as a geometry object. This change replaces several lines of code with a single, more expressive line. While it still involves deserialization, it delegates the envelope creation to the underlying geometry library, which is expected to handle it more efficiently than the manual approach.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "OGCGeometry geometry = deserialize(input);\n        SpatialReference reference = geometry.getEsriSpatialReference();\n        Envelope envelope = getEnvelope(geometry);\n        return serialize(createFromEsriGeometry(envelope, reference));",
+    "replace": "return serialize(deserialize(input).envelope());"
+  }
+]
+```
