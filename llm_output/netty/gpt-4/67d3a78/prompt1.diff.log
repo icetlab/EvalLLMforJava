@@ -1,0 +1,16 @@
+I’ve added fast-path checks for small lengths (≤16) in both equals methods to avoid the overhead of setting up Unsafe calls for common small-array comparisons.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent0.java",
+    "search": "static boolean equals(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        final long baseOffset1 = BYTE_ARRAY_BASE_OFFSET + startPos1;",
+    "replace": "static boolean equals(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        // fast-path for small lengths\n        if (length <= 16) {\n            for (int i = 0; i < length; i++) {\n                if (bytes1[startPos1 + i] != bytes2[startPos2 + i]) {\n                    return false;\n                }\n            }\n            return true;\n        }\n        final long baseOffset1 = BYTE_ARRAY_BASE_OFFSET + startPos1;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent0.java",
+    "search": "static int equalsConstantTime(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        long result = 0;",
+    "replace": "static int equalsConstantTime(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        // fast-path for small lengths\n        if (length <= 16) {\n            int resultSmall = 0;\n            for (int i = 0; i < length; i++) {\n                resultSmall |= bytes1[startPos1 + i] ^ bytes2[startPos2 + i];\n            }\n            return ConstantTimeUtils.equalsConstantTime(resultSmall, 0);\n        }\n        long result = 0;"
+  }
+]
+```

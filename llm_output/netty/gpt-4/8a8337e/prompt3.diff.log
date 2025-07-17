@@ -1,0 +1,16 @@
+The primary optimization here is to streamline the state transitions on the pooled handles. We replace the full getAndSet with a single compare-and-set in `toAvailable()` and use a lazySet in `toClaimed()` to reduce memory‐barrier overhead.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "void toClaimed() {\n            assert state == STATE_AVAILABLE;\n            state = STATE_CLAIMED;\n        }",
+    "replace": "void toClaimed() {\n            // Use a lazySet to transition without full fence\n            STATE_UPDATER.lazySet(this, STATE_CLAIMED);\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "void toAvailable() {\n            int prev = STATE_UPDATER.getAndSet(this, STATE_AVAILABLE);\n            if (prev == STATE_AVAILABLE) {\n                throw new IllegalStateException(\"Object has been recycled already.\");\n            }\n        }",
+    "replace": "void toAvailable() {\n            // Only succeed if state was CLAIMED; faster single CAS\n            if (!STATE_UPDATER.compareAndSet(this, STATE_CLAIMED, STATE_AVAILABLE)) {\n                throw new IllegalStateException(\"Object has been recycled already.\");\n            }\n        }"
+  }
+]
+```

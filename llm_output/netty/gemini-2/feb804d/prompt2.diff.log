@@ -1,0 +1,25 @@
+To improve performance when scheduling tasks from a different thread, I will eliminate an unnecessary `Runnable` allocation. Currently, scheduling a task from outside the event loop creates a `ScheduledFutureTask` and a separate `Runnable` to enqueue it. My change incorporates the enqueuing logic directly into the `ScheduledFutureTask` itself.
+
+This is achieved by introducing a state-like mechanism using the task's `id` field. A task that has not yet been enqueued will have a sentinel `id` of `-1`. When its `run()` method is invoked for the first time (from outside the event loop), it will recognize this state, add itself to the scheduled task queue, and acquire a proper `id`. Subsequent invocations of `run()` will proceed with the actual task execution, as the `id` will no longer be the sentinel value. This change avoids the allocation of the wrapper `Runnable` on the hot path of task scheduling.
+
+Here are the changes:
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "            final Runnable addToQueue = new Runnable() {\n                @Override\n                public void run() {\n                    scheduledTaskQueue().add(task.setId(nextTaskId++));\n                }\n            };\n            if (beforeScheduledTaskSubmitted(deadlineNanos)) {\n                execute(addToQueue);\n            } else {\n                lazyExecute(addToQueue);",
+    "replace": "            if (beforeScheduledTaskSubmitted(deadlineNanos)) {\n                execute(task);\n            } else {\n                lazyExecute(task);"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    // set once when added to priority queue\n    private long id;",
+    "replace": "    // set once when added to priority queue\n    private long id = -1;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    @Override\n    public void run() {\n        assert executor().inEventLoop();\n        try {\n            if (periodNanos == 0) {",
+    "replace": "    @Override\n    public void run() {\n        assert executor().inEventLoop();\n        if (id == -1) {\n            AbstractScheduledEventExecutor exec = (AbstractScheduledEventExecutor) executor();\n            exec.scheduledTaskQueue().add(setId(exec.nextTaskId++));\n            return;\n        }\n        try {\n            if (periodNanos == 0) {"
+  }
+]
+```

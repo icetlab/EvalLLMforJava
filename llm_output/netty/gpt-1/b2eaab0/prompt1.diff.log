@@ -1,0 +1,16 @@
+I have unrolled the loops in `equalsSafe` and `isZeroSafe` to compare eight bytes at a time, reducing iteration overhead while preserving behavior (including handling of non-positive lengths). This should improve performance in the safe (no‐unsafe) path without affecting existing functionality or tests.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "private static boolean equalsSafe(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        final int end = startPos1 + length;\n        for (; startPos1 < end; ++startPos1, ++startPos2) {\n            if (bytes1[startPos1] != bytes2[startPos2]) {\n                return false;\n            }\n        }\n        return true;\n    }",
+    "replace": "private static boolean equalsSafe(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        if (length <= 0) {\n            return true;\n        }\n        int pos1 = startPos1;\n        int pos2 = startPos2;\n        int end = pos1 + length;\n        int limit = end - 7;\n        // Unroll 8-byte comparisons\n        while (pos1 < limit) {\n            if (bytes1[pos1]   != bytes2[pos2]   ||\n                bytes1[pos1+1] != bytes2[pos2+1] ||\n                bytes1[pos1+2] != bytes2[pos2+2] ||\n                bytes1[pos1+3] != bytes2[pos2+3] ||\n                bytes1[pos1+4] != bytes2[pos2+4] ||\n                bytes1[pos1+5] != bytes2[pos2+5] ||\n                bytes1[pos1+6] != bytes2[pos2+6] ||\n                bytes1[pos1+7] != bytes2[pos2+7]) {\n                return false;\n            }\n            pos1 += 8;\n            pos2 += 8;\n        }\n        // Tail comparison\n        while (pos1 < end) {\n            if (bytes1[pos1++] != bytes2[pos2++]) {\n                return false;\n            }\n        }\n        return true;\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "private static boolean isZeroSafe(byte[] bytes, int startPos, int length) {\n        final int end = startPos + length;\n        for (; startPos < end; ++startPos) {\n            if (bytes[startPos] != 0) {\n                return false;\n            }\n        }\n        return true;\n    }",
+    "replace": "private static boolean isZeroSafe(byte[] bytes, int startPos, int length) {\n        if (length <= 0) {\n            return true;\n        }\n        int pos = startPos;\n        int end = pos + length;\n        int limit = end - 7;\n        // Unroll 8-byte zero checks\n        while (pos < limit) {\n            if (bytes[pos]   != 0 ||\n                bytes[pos+1] != 0 ||\n                bytes[pos+2] != 0 ||\n                bytes[pos+3] != 0 ||\n                bytes[pos+4] != 0 ||\n                bytes[pos+5] != 0 ||\n                bytes[pos+6] != 0 ||\n                bytes[pos+7] != 0) {\n                return false;\n            }\n            pos += 8;\n        }\n        // Tail check\n        while (pos < end) {\n            if (bytes[pos++] != 0) {\n                return false;\n            }\n        }\n        return true;\n    }"
+  }
+]
+```

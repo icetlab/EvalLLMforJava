@@ -1,0 +1,11 @@
+I have optimized the `release(...)` path so that same‐thread recycling uses the cheaper `unguardedToAvailable()` (lazySet) instead of the full atomic `toAvailable()`, reducing atomic traffic in the hot local‐recycle case, while preserving cross‐thread safety and correctness. 
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "void release(DefaultHandle<T> handle, boolean guarded) {\n            if (guarded) {\n                handle.toAvailable();\n            } else {\n                handle.unguardedToAvailable();\n            }\n            Thread owner = this.owner;\n            if (owner != null && Thread.currentThread() == owner && batch.size() < chunkSize) {",
+    "replace": "void release(DefaultHandle<T> handle, boolean guarded) {\n            Thread o = this.owner;\n            // Use unguarded (lazySet) for same-thread to cut down on full atomics\n            if (o != null && Thread.currentThread() == o) {\n                handle.unguardedToAvailable();\n            } else if (guarded) {\n                handle.toAvailable();\n            } else {\n                handle.unguardedToAvailable();\n            }\n            if (o != null && Thread.currentThread() == o && batch.size() < chunkSize) {"
+  }
+]
+```

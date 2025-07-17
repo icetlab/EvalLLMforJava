@@ -1,0 +1,27 @@
+The overall performance improvement strategy focuses on optimizing UTF-8 string handling, which is a common and performance-sensitive operation.
+
+First, I've identified `try-catch` blocks within tight loops in the `writeUtf8` and `utf8Bytes` methods. These blocks handle surrogate pair processing at the end of a `CharSequence`. Exception handling, even when an exception is not thrown, can hinder JIT compiler optimizations. I've replaced these `try-catch` blocks with explicit boundary checks, which are more efficient and achieve the same logic.
+
+Second, the `isUtf8` validation method has been enhanced with a fast-path for ASCII characters. For input that is predominantly ASCII, the method can now quickly determine validity without entering the more complex multi-byte character validation logic. This is achieved by using the existing `forEachByte` with `FIND_NON_ASCII` processor to quickly scan for the first non-ASCII character before proceeding with the detailed validation from that point.
+
+These changes improve performance by reducing overhead in critical loops and adding efficient fast-paths for common cases, all while preserving the original functionality and correctness.
+
+```json
+[
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "                final char c2;\n                try {\n                    // Surrogate Pair consumes 2 characters. Optimistically try to get the next character to avoid\n                    // duplicate bounds checking with charAt. If an IndexOutOfBoundsException is thrown we will\n                    // re-throw a more informative exception describing the problem.\n                    c2 = seq.charAt(++i);\n                } catch (IndexOutOfBoundsException ignored) {\n                    buffer._setByte(writerIndex++, WRITE_UTF_UNKNOWN);\n                    break;\n                }\n                if (!Character.isLowSurrogate(c2)) {",
+    "replace": "                if (i >= len - 1) {\n                    buffer._setByte(writerIndex++, WRITE_UTF_UNKNOWN);\n                    break;\n                }\n                final char c2 = seq.charAt(++i);\n                if (!Character.isLowSurrogate(c2)) {"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "                final char c2;\n                try {\n                    // Surrogate Pair consumes 2 characters. Optimistically try to get the next character to avoid\n                    // duplicate bounds checking with charAt.\n                    c2 = seq.charAt(++i);\n                } catch (IndexOutOfBoundsException ignored) {\n                    encodedLength++;\n                    // WRITE_UTF_UNKNOWN\n                    break;\n                }\n                if (!Character.isLowSurrogate(c2)) {",
+    "replace": "                if (i >= length - 1) {\n                    encodedLength++;\n                    // WRITE_UTF_UNKNOWN\n                    break;\n                }\n                final char c2 = seq.charAt(++i);\n                if (!Character.isLowSurrogate(c2)) {"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "    private static boolean isUtf8(ByteBuf buf, int index, int length) {\n        final int endIndex = index + length;\n        while (index < endIndex) {",
+    "replace": "    private static boolean isUtf8(ByteBuf buf, int index, int length) {\n        final int endIndex = index + length;\n\n        int nonAsciiIndex = buf.forEachByte(index, length, FIND_NON_ASCII);\n        if (nonAsciiIndex == -1) {\n            return true;\n        }\n\n        index = nonAsciiIndex;\n        while (index < endIndex) {"
+  }
+]
+```

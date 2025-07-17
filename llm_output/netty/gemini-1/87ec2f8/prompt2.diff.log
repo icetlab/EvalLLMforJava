@@ -1,0 +1,27 @@
+The current implementation of `ByteBuf.toString(Charset)` relies on `ByteBufUtil.decodeString`, which uses a `CharsetDecoder` and intermediate `CharBuffer`s. This process involves multiple steps and memory copies, especially for composite buffers, leading to suboptimal performance.
+
+To improve this, I will refactor `ByteBufUtil.decodeString` to directly leverage the optimized `new String(byte[], ...)` constructors.
+1.  For `ByteBuf` instances that have a backing byte array, we can create the `String` directly from this array without any intermediate copies.
+2.  For other `ByteBuf` types, such as direct or composite buffers, we will copy the bytes into a temporary `byte[]` and then create the `String`. This approach is simpler and benefits from JVM optimizations for string creation from byte arrays.
+
+This change also allows for the removal of related, now-unused, components like the thread-local `CharBuffer` cache (`CHAR_BUFFERS`) and its associated configuration (`MAX_CHAR_BUFFER_SIZE`), simplifying the `ByteBufUtil` class.
+
+```json
+[
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "    private static final FastThreadLocal<CharBuffer> CHAR_BUFFERS = new FastThreadLocal<CharBuffer>() {\n        @Override\n        protected CharBuffer initialValue() throws Exception {\n            return CharBuffer.allocate(1024);\n        }\n    };\n\n    private static final byte WRITE_UTF_UNKNOWN = (byte) '?';\n    private static final int MAX_CHAR_BUFFER_SIZE;",
+    "replace": "    private static final byte WRITE_UTF_UNKNOWN = (byte) '?';"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "        MAX_CHAR_BUFFER_SIZE = SystemPropertyUtil.getInt(\"io.netty.maxThreadLocalCharBufferSize\", 16 * 1024);\n        logger.debug(\"-Dio.netty.maxThreadLocalCharBufferSize: {}\", MAX_CHAR_BUFFER_SIZE);",
+    "replace": ""
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "    static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {\n        if (len == 0) {\n            return StringUtil.EMPTY_STRING;\n        }\n        final CharsetDecoder decoder = CharsetUtil.decoder(charset);\n        final int maxLength = (int) ((double) len * decoder.maxCharsPerByte());\n        CharBuffer dst = CHAR_BUFFERS.get();\n        if (dst.length() < maxLength) {\n            dst = CharBuffer.allocate(maxLength);\n            if (maxLength <= MAX_CHAR_BUFFER_SIZE) {\n                CHAR_BUFFERS.set(dst);\n            }\n        } else {\n            dst.clear();\n        }\n        if (src.nioBufferCount() == 1) {\n            decodeString(decoder, src.nioBuffer(readerIndex, len), dst);\n        } else {\n            // We use a heap buffer as CharsetDecoder is most likely able to use a fast-path if src and dst buffers\n            // are both backed by a byte array.\n            ByteBuf buffer = src.alloc().heapBuffer(len);\n            try {\n                buffer.writeBytes(src, readerIndex, len);\n                // Use internalNioBuffer(...) to reduce object creation.\n                decodeString(decoder, buffer.internalNioBuffer(buffer.readerIndex(), len), dst);\n            } finally {\n                // Release the temporary buffer again.\n                buffer.release();\n            }\n        }\n        return dst.flip().toString();\n    }\n\n    private static void decodeString(CharsetDecoder decoder, ByteBuffer src, CharBuffer dst) {\n        try {\n            CoderResult cr = decoder.decode(src, dst, true);\n            if (!cr.isUnderflow()) {\n                cr.throwException();\n            }\n            cr = decoder.flush(dst);\n            if (!cr.isUnderflow()) {\n                cr.throwException();\n            }\n        } catch (CharacterCodingException x) {\n            throw new IllegalStateException(x);\n        }\n    }",
+    "replace": "    static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {\n        if (len == 0) {\n            return StringUtil.EMPTY_STRING;\n        }\n        if (src.hasArray()) {\n            return new String(src.array(), src.arrayOffset() + readerIndex, len, charset);\n        }\n\n        final byte[] array = new byte[len];\n        src.getBytes(readerIndex, array);\n        return new String(array, charset);\n    }"
+  }
+]
+```

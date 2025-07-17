@@ -1,0 +1,11 @@
+I have optimized `decodeString` to avoid allocating and copying into a temporary `ByteBuf` for multi-buffer cases. Instead, it iterates over the underlying `ByteBuffer[]` (`nioBuffers`) and decodes them in-place, which should significantly reduce GC pressure and improve throughput for composite buffers.
+
+```json
+[
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "if (src.nioBufferCount() == 1) {\n            decodeString(decoder, src.nioBuffer(readerIndex, len), dst);\n        } else {\n            // We use a heap buffer as CharsetDecoder is most likely able to use a fast-path if src and dst buffers\n            // are both backed by a byte array.\n            ByteBuf buffer = src.alloc().heapBuffer(len);\n            try {\n                buffer.writeBytes(src, readerIndex, len);\n                // Use internalNioBuffer(...) to reduce object creation.\n                decodeString(decoder, buffer.internalNioBuffer(buffer.readerIndex(), len), dst);\n            } finally {\n                // Release the temporary buffer again.\n                buffer.release();\n            }\n        }",
+    "replace": "/* Decode across all underlying NIO buffers without an extra ByteBuf copy */\n        {\n            java.nio.ByteBuffer[] buffers = src.nioBuffers(readerIndex, len);\n            try {\n                for (int i = 0; i < buffers.length; i++) {\n                    java.nio.ByteBuffer bb = buffers[i];\n                    CoderResult cr = decoder.decode(bb, dst, i == buffers.length - 1);\n                    if (!cr.isUnderflow()) {\n                        cr.throwException();\n                    }\n                }\n                CoderResult cr = decoder.flush(dst);\n                if (!cr.isUnderflow()) {\n                    cr.throwException();\n                }\n            } catch (CharacterCodingException x) {\n                throw new IllegalStateException(x);\n            }\n        }"
+  }
+]
+```

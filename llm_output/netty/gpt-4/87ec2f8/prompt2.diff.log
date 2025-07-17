@@ -1,0 +1,11 @@
+I’ve added a fast-path in `decodeString` to directly construct a `String` from the underlying byte array when the `ByteBuf` is array-backed, avoiding the extra decoding and buffer copies for heap buffers.
+
+```json
+[
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "if (len == 0) {\n            return StringUtil.EMPTY_STRING;\n        }",
+    "replace": "if (len == 0) {\n            return StringUtil.EMPTY_STRING;\n        }\n        if (src.hasArray()) {\n            byte[] array = src.array();\n            int offset = src.arrayOffset() + readerIndex;\n            return new String(array, offset, len, charset);\n        }"
+  }
+]
+```

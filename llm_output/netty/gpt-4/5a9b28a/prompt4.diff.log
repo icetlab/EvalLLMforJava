@@ -1,0 +1,11 @@
+The change swaps out the `pollFirst()` call on the single‐threaded `ArrayDeque` batch in favor of `pollLast()`, turning the per‐thread handle buffer into a simple LIFO stack. This avoids repeatedly advancing the head pointer and tends to be faster in practice while preserving correctness for object pooling.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "if (batch.isEmpty()) {\n                handles.drain(this, chunkSize);\n            }\n            DefaultHandle<T> handle = batch.pollFirst();",
+    "replace": "if (batch.isEmpty()) {\n                handles.drain(this, chunkSize);\n            }\n            // Use LIFO pop to avoid the overhead of pollFirst()\n            DefaultHandle<T> handle = batch.pollLast();"
+  }
+]
+```

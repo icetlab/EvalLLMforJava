@@ -1,0 +1,20 @@
+My overall improvement strategy is to introduce targeted optimizations for common cases within `ByteBufUtil`.
+
+First, I will optimize `writeUtf8(ByteBuf, CharSequence)` by adding a fast-path for `AsciiString`. Since ASCII is a valid subset of UTF-8, when an `AsciiString` is provided, we can perform a direct byte copy from its backing array. This avoids the overhead of character-by-character iteration and encoding logic, which is particularly beneficial as `AsciiString` is frequently used within Netty for performance-sensitive operations like handling HTTP headers.
+
+Second, I will enhance `isText(ByteBuf, int, int, Charset)` by replacing `charset.equals()` with a direct identity check (`==`) for `CharsetUtil.UTF_8` and `CharsetUtil.US_ASCII`. Since `Charset` objects for standard charsets are singletons, this is a safe micro-optimization that avoids the overhead of the `equals` method call, making these checks slightly more efficient. The specialized `isUtf8` and `isAscii` methods are only correct for the standard charset implementations, so an identity check is more precise.
+
+```json
+[
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "    public static int writeUtf8(ByteBuf buf, CharSequence seq) {\n        return reserveAndWriteUtf8(buf, seq, utf8MaxBytes(seq));\n    }",
+    "replace": "    public static int writeUtf8(ByteBuf buf, CharSequence seq) {\n        if (seq instanceof AsciiString) {\n            AsciiString asciiString = (AsciiString) seq;\n            buf.writeBytes(asciiString.array(), asciiString.arrayOffset(), asciiString.length());\n            return asciiString.length();\n        }\n        return reserveAndWriteUtf8(buf, seq, utf8MaxBytes(seq));\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "        if (charset.equals(CharsetUtil.UTF_8)) {\n            return isUtf8(buf, index, length);\n        } else if (charset.equals(CharsetUtil.US_ASCII)) {\n            return isAscii(buf, index, length);\n        } else {",
+    "replace": "        if (charset == CharsetUtil.UTF_8) {\n            return isUtf8(buf, index, length);\n        } else if (charset == CharsetUtil.US_ASCII) {\n            return isAscii(buf, index, length);\n        } else {"
+  }
+]
+```

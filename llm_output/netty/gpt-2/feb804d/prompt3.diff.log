@@ -1,0 +1,26 @@
+The changes below replace several anonymous inner classes with lambdas and simplify the comparator, reducing object allocations and indirection for scheduling tasks.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "private static final Comparator<ScheduledFutureTask<?>> SCHEDULED_FUTURE_TASK_COMPARATOR =\n        new Comparator<ScheduledFutureTask<?>>() {\n            @Override\n            public int compare(ScheduledFutureTask<?> o1, ScheduledFutureTask<?> o2) {\n                return o1.compareTo(o2);\n            }\n        };",
+    "replace": "private static final Comparator<ScheduledFutureTask<?>> SCHEDULED_FUTURE_TASK_COMPARATOR =\n        (o1, o2) -> o1.compareTo(o2);"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "static final Runnable WAKEUP_TASK = new Runnable() {\n       @Override\n       public void run() { } // Do nothing\n    };",
+    "replace": "static final Runnable WAKEUP_TASK = () -> {};"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "final Runnable addToQueue = new Runnable() {\n                @Override\n                public void run() {\n                    scheduledTaskQueue().add(task.setId(nextTaskId++));\n                }\n            };",
+    "replace": "final Runnable addToQueue = () -> scheduledTaskQueue().add(task.setId(nextTaskId++));"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "lazyExecute(new Runnable() {\n                @Override\n                public void run() {\n                    scheduledTaskQueue().removeTyped(task);\n                }\n            });",
+    "replace": "lazyExecute(() -> scheduledTaskQueue().removeTyped(task));"
+  }
+]
+```

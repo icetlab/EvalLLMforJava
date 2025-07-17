@@ -1,0 +1,16 @@
+The primary improvement is loop unrolling in the `equals` and `equalsConstantTime` methods, processing two 8-byte words per iteration instead of one. This halves the number of loop iterations and reduces overhead, improving overall performance without changing semantics or affecting the existing tests.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent0.java",
+    "search": "final long end = baseOffset1 + remainingBytes;\n        for (long i = baseOffset1 - 8 + length, j = baseOffset2 - 8 + length; i >= end; i -= 8, j -= 8) {\n            if (UNSAFE.getLong(bytes1, i) != UNSAFE.getLong(bytes2, j)) {\n                return false;\n            }\n        }",
+    "replace": "final long end = baseOffset1 + remainingBytes;\n\n        long i = baseOffset1 - 8 + length;\n        long j = baseOffset2 - 8 + length;\n        // process 16 bytes per iteration\n        while (i - 8 >= end) {\n            if (UNSAFE.getLong(bytes1, i) != UNSAFE.getLong(bytes2, j) ||\n                UNSAFE.getLong(bytes1, i - 8) != UNSAFE.getLong(bytes2, j - 8)) {\n                return false;\n            }\n            i -= 16;\n            j -= 16;\n        }\n        // process remaining 8 bytes if any\n        if (i >= end) {\n            if (UNSAFE.getLong(bytes1, i) != UNSAFE.getLong(bytes2, j)) {\n                return false;\n            }\n            i -= 8;\n            j -= 8;\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent0.java",
+    "search": "final long end = baseOffset1 + remainingBytes;\n        for (long i = baseOffset1 - 8 + length, j = baseOffset2 - 8 + length; i >= end; i -= 8, j -= 8) {\n            result |= UNSAFE.getLong(bytes1, i) ^ UNSAFE.getLong(bytes2, j);\n        }",
+    "replace": "final long end = baseOffset1 + remainingBytes;\n\n        long i = baseOffset1 - 8 + length;\n        long j = baseOffset2 - 8 + length;\n        // process 16 bytes per iteration\n        while (i - 8 >= end) {\n            result |= UNSAFE.getLong(bytes1, i) ^ UNSAFE.getLong(bytes2, j) |\n                      UNSAFE.getLong(bytes1, i - 8) ^ UNSAFE.getLong(bytes2, j - 8);\n            i -= 16;\n            j -= 16;\n        }\n        // process remaining 8 bytes if any\n        if (i >= end) {\n            result |= UNSAFE.getLong(bytes1, i) ^ UNSAFE.getLong(bytes2, j);\n            i -= 8;\n            j -= 8;\n        }"
+  }
+]
+```

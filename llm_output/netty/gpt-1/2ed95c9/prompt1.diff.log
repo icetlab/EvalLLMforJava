@@ -1,0 +1,21 @@
+I’ve added a precomputed nested CharSequenceMap to enable O(1) lookup for header name+value combinations, replacing the linear scan in getIndexInsensitive. This should significantly speed up exact header field matches.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "private static final CharSequenceMap<Integer> STATIC_INDEX_BY_NAME = createMap();",
+    "replace": "private static final CharSequenceMap<Integer> STATIC_INDEX_BY_NAME = createMap();\n\n    private static final CharSequenceMap<CharSequenceMap<Integer>> STATIC_INDEX_BY_NAME_VALUE = createValueMap();"
+  },
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "private static final int MAX_SAME_NAME_FIELD_INDEX = maxSameNameFieldIndex();",
+    "replace": "private static final int MAX_SAME_NAME_FIELD_INDEX = maxSameNameFieldIndex();\n\n    private static CharSequenceMap<CharSequenceMap<Integer>> createValueMap() {\n        int length = STATIC_TABLE.size();\n        @SuppressWarnings(\"unchecked\")\n        CharSequenceMap<CharSequenceMap<Integer>> ret = new CharSequenceMap<>(true,\n                UnsupportedValueConverter.<CharSequenceMap<Integer>>instance(), length);\n        for (int index = 1; index <= length; index++) {\n            HpackHeaderField entry = getEntry(index);\n            CharSequence name = entry.name;\n            CharSequenceMap<Integer> inner = ret.get(name);\n            if (inner == null) {\n                inner = new CharSequenceMap<>(true, UnsupportedValueConverter.<Integer>instance(), 2);\n                ret.set(name, inner);\n            }\n            inner.set(entry.value, index);\n        }\n        return ret;\n    }"
+  },
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "static int getIndexInsensitive(CharSequence name, CharSequence value) {\n        int index = getIndex(name);\n        if (index == NOT_FOUND) {\n            return NOT_FOUND;\n        }\n\n        // Compare values for the first name match\n        HpackHeaderField entry = getEntry(index);\n        if (equalsVariableTime(value, entry.value)) {\n            return index;\n        }\n\n        // Note this assumes all entries for a given header field are sequential.\n        index++;\n        while (index <= MAX_SAME_NAME_FIELD_INDEX) {\n            entry = getEntry(index);\n            if (!equalsVariableTime(name, entry.name)) {\n                // As far as fields with the same name are placed in the table sequentially\n                // and INDEX_BY_NAME returns index of the fist position, - it's safe to\n                // exit immediately.\n                return NOT_FOUND;\n            }\n            if (equalsVariableTime(value, entry.value)) {\n                return index;\n            }\n            index++;\n        }\n\n        return NOT_FOUND;\n    }",
+    "replace": "static int getIndexInsensitive(CharSequence name, CharSequence value) {\n        // Fast lookup by name and value\n        CharSequenceMap<Integer> values = STATIC_INDEX_BY_NAME_VALUE.get(name);\n        if (values == null) {\n            return NOT_FOUND;\n        }\n        Integer index = values.get(value);\n        return index == null ? NOT_FOUND : index;\n    }"
+  }
+]
+```

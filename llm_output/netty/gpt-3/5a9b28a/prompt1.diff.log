@@ -1,0 +1,21 @@
+I’ve inlined the J9 JVM check into a cached flag to avoid repeated calls, and optimized the handle state transition to use a single CAS instead of a get-and-set plus lazySet. These small changes reduce several volatile operations and reflection/lookups on hot paths.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "private static final class LocalPool<T> implements MessagePassingQueue.Consumer<DefaultHandle<T>> {\n        private final int ratioInterval;",
+    "replace": "private static final class LocalPool<T> implements MessagePassingQueue.Consumer<DefaultHandle<T>> {\n        private static final boolean IS_J9 = PlatformDependent.isJ9Jvm();\n        private final int ratioInterval;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "private static boolean isTerminated(Thread owner) {\n            // Do not use `Thread.getState()` in J9 JVM because it's known to have a performance issue.\n            // See: https://github.com/netty/netty/issues/13347#issuecomment-1518537895\n            return PlatformDependent.isJ9Jvm() ? !owner.isAlive() : owner.getState() == Thread.State.TERMINATED;\n        }",
+    "replace": "private static boolean isTerminated(Thread owner) {\n            return IS_J9 ? !owner.isAlive() : owner.getState() == Thread.State.TERMINATED;\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "void toAvailable() {\n            int prev = STATE_UPDATER.getAndSet(this, STATE_AVAILABLE);\n            if (prev == STATE_AVAILABLE) {\n                throw new IllegalStateException(\"Object has been recycled already.\");\n            }\n        }",
+    "replace": "void toAvailable() {\n            if (!STATE_UPDATER.compareAndSet(this, STATE_CLAIMED, STATE_AVAILABLE)) {\n                throw new IllegalStateException(\"Object has been recycled already.\");\n            }\n        }"
+  }
+]
+```

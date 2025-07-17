@@ -1,0 +1,29 @@
+My overall improvement strategy is to optimize hexadecimal character processing within the `getIPv6ByName` method, which is the target of the provided benchmark. The original implementation uses conditional logic (`if`/`else if`) to validate and convert hex characters. This can be inefficient inside a tight loop that processes IP address strings.
+
+To improve performance, I will introduce a lookup table (`DECODE_HEX_NIBBLE_TABLE`) to replace these conditional checks with a faster array lookup. This table will be pre-initialized in a static block to hold the integer value for each hex character, and -1 for non-hex characters.
+
+This approach has two main benefits:
+1.  `isValidHexChar` becomes a simple and fast table lookup, avoiding multiple comparisons.
+2.  The conversion of a hex character to its numeric value in `getIPv6ByName` (originally done by `StringUtil.decodeHexNibble`) is replaced by a direct array access, eliminating method call overhead and internal branching.
+
+These changes are localized and will improve performance for both IPv6 address validation and parsing, while preserving the original functionality and correctness.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/NetUtil.java",
+    "search": "    private static final InternalLogger logger = InternalLoggerFactory.getInstance(NetUtil.class);\n\n    static {",
+    "replace": "    private static final InternalLogger logger = InternalLoggerFactory.getInstance(NetUtil.class);\n\n    private static final byte[] DECODE_HEX_NIBBLE_TABLE = new byte[256];\n\n    static {\n        for (int i = 0; i < DECODE_HEX_NIBBLE_TABLE.length; i++) {\n            DECODE_HEX_NIBBLE_TABLE[i] = -1;\n        }\n        for (int i = '0'; i <= '9'; i++) {\n            DECODE_HEX_NIBBLE_TABLE[i] = (byte) (i - '0');\n        }\n        for (int i = 'a'; i <= 'f'; i++) {\n            DECODE_HEX_NIBBLE_TABLE[i] = (byte) (i - 'a' + 10);\n        }\n        for (int i = 'A'; i <= 'F'; i++) {\n            DECODE_HEX_NIBBLE_TABLE[i] = (byte) (i - 'A' + 10);\n        }\n    }\n\n    static {"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/NetUtil.java",
+    "search": "    private static boolean isValidHexChar(char c) {\n        return c >= '0' && c <= '9' || c >= 'A' && c <= 'F' || c >= 'a' && c <= 'f';\n    }",
+    "replace": "    private static boolean isValidHexChar(char c) {\n        return c < DECODE_HEX_NIBBLE_TABLE.length && DECODE_HEX_NIBBLE_TABLE[c] >= 0;\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/NetUtil.java",
+    "search": "                // The most significant byte will be encountered first, and reside in the right most\n                // position of the following integer\n                value += StringUtil.decodeHexNibble(c) << ((i - begin) << 2);\n                break;",
+    "replace": "                // The most significant byte will be encountered first, and reside in the right most\n                // position of the following integer\n                value += DECODE_HEX_NIBBLE_TABLE[c] << ((i - begin) << 2);\n                break;"
+  }
+]
+```

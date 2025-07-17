@@ -1,0 +1,22 @@
+My overall improvement strategy focuses on optimizing hot paths within the `Recycler` to reduce overhead.
+
+First, I've simplified the `isTerminated` check to always use `Thread.isAlive()`. This method is generally faster than `Thread.getState()` across various JVMs, not just on J9 where `getState()` is known to have performance issues. This change reduces the cost of checking if a thread has terminated.
+
+Second, I've refactored the `release` method in the `LocalPool` class. The original implementation performed a redundant `isTerminated` check when an object was recycled on its owner thread with a full local batch. The new logic separates same-thread and foreign-thread recycling paths, eliminating this unnecessary check and making the code's intent clearer.
+
+These changes preserve the existing functionality and are aimed at improving the performance of object recycling, especially in multi-threaded scenarios.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "        private static boolean isTerminated(Thread owner) {\n            // Do not use `Thread.getState()` in J9 JVM because it's known to have a performance issue.\n            // See: https://github.com/netty/netty/issues/13347#issuecomment-1518537895\n            return PlatformDependent.isJ9Jvm() ? !owner.isAlive() : owner.getState() == Thread.State.TERMINATED;\n        }",
+    "replace": "        private static boolean isTerminated(Thread owner) {\n            // Do not use `Thread.getState()` in J9 JVM because it's known to have a performance issue.\n            // See: https://github.com/netty/netty/issues/13347#issuecomment-1518537895\n            return !owner.isAlive();\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "        void release(DefaultHandle<T> handle, boolean guarded) {\n            if (guarded) {\n                handle.toAvailable();\n            } else {\n                handle.unguardedToAvailable();\n            }\n            Thread owner = this.owner;\n            if (owner != null && Thread.currentThread() == owner && batch.size() < chunkSize) {\n                accept(handle);\n            } else if (owner != null && isTerminated(owner)) {\n                this.owner = null;\n                pooledHandles = null;\n            } else {\n                MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n                if (handles != null) {\n                    handles.relaxedOffer(handle);\n                }\n            }\n        }",
+    "replace": "        void release(DefaultHandle<T> handle, boolean guarded) {\n            if (guarded) {\n                handle.toAvailable();\n            } else {\n                handle.unguardedToAvailable();\n            }\n            Thread owner = this.owner;\n            if (owner == Thread.currentThread()) {\n                if (batch.size() < chunkSize) {\n                    accept(handle);\n                    return;\n                }\n                // Batch is full, offer to queue.\n            } else {\n                if (owner != null && isTerminated(owner)) {\n                    this.owner = null;\n                    pooledHandles = null;\n                    return;\n                }\n                // Foreign thread, or ownerless pool.\n            }\n\n            MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n            if (handles != null) {\n                handles.relaxedOffer(handle);\n            }\n        }"
+  }
+]
+```

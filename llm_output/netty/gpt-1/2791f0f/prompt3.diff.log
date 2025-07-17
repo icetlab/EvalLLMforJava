@@ -1,0 +1,16 @@
+These changes remove the unnecessary comparator indirection—letting the queue use the tasks’ natural ordering—and pre-size the array in cancelScheduledTasks to avoid a zero-length allocation on each call.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "scheduledTaskQueue = new DefaultPriorityQueue<ScheduledFutureTask<?>>(\n                    SCHEDULED_FUTURE_TASK_COMPARATOR,",
+    "replace": "scheduledTaskQueue = new DefaultPriorityQueue<ScheduledFutureTask<?>>(\n                    null, // use natural ordering, no comparator,"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "scheduledTaskQueue.toArray(new ScheduledFutureTask<?>[0])",
+    "replace": "scheduledTaskQueue.toArray(new ScheduledFutureTask<?>[scheduledTaskQueue.size()])"
+  }
+]
+```

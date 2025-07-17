@@ -1,0 +1,16 @@
+The primary performance improvement here replaces the costly System.arraycopy calls in the hot‐path hexDump loops with simple direct array lookups and assignments, eliminating method call overhead and reducing GC churn.
+
+```json
+[
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "for (; srcIdx < endIndex; srcIdx ++, dstIdx += 2) {\n              System.arraycopy(\n                  HEXDUMP_TABLE, buffer.getUnsignedByte(srcIdx) << 1,\n                  buf, dstIdx, 2);\n            }",
+    "replace": "for (; srcIdx < endIndex; srcIdx ++, dstIdx += 2) {\n              int v = buffer.getUnsignedByte(srcIdx) << 1;\n              buf[dstIdx]     = HEXDUMP_TABLE[v];\n              buf[dstIdx + 1] = HEXDUMP_TABLE[v + 1];\n            }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "for (; srcIdx < endIndex; srcIdx ++, dstIdx += 2) {\n                System.arraycopy(\n                    HEXDUMP_TABLE, (array[srcIdx] & 0xFF) << 1,\n                    buf, dstIdx, 2);\n            }",
+    "replace": "for (; srcIdx < endIndex; srcIdx ++, dstIdx += 2) {\n                int v = (array[srcIdx] & 0xFF) << 1;\n                buf[dstIdx]     = HEXDUMP_TABLE[v];\n                buf[dstIdx + 1] = HEXDUMP_TABLE[v + 1];\n            }"
+  }
+]
+```

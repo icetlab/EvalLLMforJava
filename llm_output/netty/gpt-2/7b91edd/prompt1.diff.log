@@ -1,0 +1,16 @@
+I’ve replaced the verbose StringBuilder-based `intToIpAddress` with a lightweight `char[]` buffer and custom `appendDecimal` routine to minimize allocations and speed up integer-to-text conversion, and added the `appendDecimal` helper method.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/NetUtil.java",
+    "search": "public static String intToIpAddress(int i) {\n        StringBuilder buf = new StringBuilder(15);\n        buf.append(i >> 24 & 0xff);\n        buf.append('.');\n        buf.append(i >> 16 & 0xff);\n        buf.append('.');\n        buf.append(i >> 8 & 0xff);\n        buf.append('.');\n        buf.append(i & 0xff);\n        return buf.toString();",
+    "replace": "public static String intToIpAddress(int i) {\n        char[] buf = new char[15];\n        int pos = 0;\n        pos = appendDecimal((i >>> 24) & 0xff, buf, pos);\n        buf[pos++] = '.';\n        pos = appendDecimal((i >>> 16) & 0xff, buf, pos);\n        buf[pos++] = '.';\n        pos = appendDecimal((i >>> 8) & 0xff, buf, pos);\n        buf[pos++] = '.';\n        pos = appendDecimal(i & 0xff, buf, pos);\n        return new String(buf, 0, pos);"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/NetUtil.java",
+    "search": "private NetUtil() {\n        // Unused\n    }",
+    "replace": "private NetUtil() {\n        // Unused\n    }\n\n    /**\n     * Append a decimal value (0-255) to a character buffer.\n     * @param value integer value to append\n     * @param buf character buffer\n     * @param pos starting position\n     * @return updated position after appending\n     */\n    private static int appendDecimal(int value, char[] buf, int pos) {\n        if (value < 10) {\n            buf[pos++] = (char) ('0' + value);\n        } else if (value < 100) {\n            int tens = value / 10;\n            int ones = value - tens * 10;\n            buf[pos++] = (char) ('0' + tens);\n            buf[pos++] = (char) ('0' + ones);\n        } else {\n            int hundreds = value / 100;\n            int rem = value - hundreds * 100;\n            int tens = rem / 10;\n            int ones = rem - tens * 10;\n            buf[pos++] = (char) ('0' + hundreds);\n            buf[pos++] = (char) ('0' + tens);\n            buf[pos++] = (char) ('0' + ones);\n        }\n        return pos;\n    }"
+  }
+]
+```

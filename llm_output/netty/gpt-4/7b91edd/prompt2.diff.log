@@ -1,0 +1,16 @@
+I’ve optimized the main IPv6 parsing loop by caching the input characters into a primitive char array up front—this reduces the overhead of repeated CharSequence.charAt calls inside the hot loop. All behavior remains identical and existing tests should pass unchanged.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/NetUtil.java",
+    "search": "final int ipLength = ip.length();\n        int compressBegin = 0;\n        int compressLength = 0;",
+    "replace": "final int ipLength = ip.length();\n        // Performance: cache characters for faster access\n        final char[] chars = new char[ipLength];\n        for (int ci = 0; ci < ipLength; ci++) {\n            chars[ci] = ip.charAt(ci);\n        }\n        int compressBegin = 0;\n        int compressLength = 0;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/NetUtil.java",
+    "search": "for (; i < ipLength; ++i) {\n            final char c = ip.charAt(i);",
+    "replace": "for (; i < ipLength; ++i) {\n            final char c = chars[i];"
+  }
+]
+```

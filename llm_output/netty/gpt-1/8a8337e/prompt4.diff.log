@@ -1,0 +1,36 @@
+We add a fast-path stack for same-thread releases to avoid the overhead of the thread‐safe MPSC queue when releasing and claiming objects on the owning thread.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "private int ratioCounter;",
+    "replace": "private int ratioCounter;\n        private final long ownerThreadId;\n        @SuppressWarnings(\"unchecked\")\n        private final DefaultHandle<T>[] fastStack;\n        private int fastStackSize;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "LocalPool(int maxCapacity, int ratioInterval, int chunkSize) {\n            this.ratioInterval = ratioInterval;\n            if (BLOCKING_POOL) {\n                pooledHandles = new BlockingMessageQueue<DefaultHandle<T>>(maxCapacity);\n            } else {\n                pooledHandles = (MessagePassingQueue<DefaultHandle<T>>) newMpscQueue(chunkSize, maxCapacity);\n            }\n            ratioCounter = ratioInterval; // Start at interval so the first one will be recycled.\n        }",
+    "replace": "LocalPool(int maxCapacity, int ratioInterval, int chunkSize) {\n            this.ratioInterval = ratioInterval;\n            if (BLOCKING_POOL) {\n                pooledHandles = new BlockingMessageQueue<DefaultHandle<T>>(maxCapacity);\n            } else {\n                pooledHandles = (MessagePassingQueue<DefaultHandle<T>>) newMpscQueue(chunkSize, maxCapacity);\n            }\n            ratioCounter = ratioInterval; // Start at interval so the first one will be recycled.\n            ownerThreadId = Thread.currentThread().getId();\n            fastStack = (DefaultHandle<T>[]) new DefaultHandle[maxCapacity];\n            fastStackSize = 0;\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "DefaultHandle<T> claim() {\n            MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n            if (handles == null) {\n                return null;\n            }\n            DefaultHandle<T> handle = handles.relaxedPoll();\n            if (null != handle) {\n                handle.toClaimed();\n            }\n            return handle;\n        }",
+    "replace": "DefaultHandle<T> claim() {\n            if (Thread.currentThread().getId() == ownerThreadId) {\n                if (fastStackSize > 0) {\n                    DefaultHandle<T> handle = fastStack[--fastStackSize];\n                    fastStack[fastStackSize] = null;\n                    handle.toClaimed();\n                    return handle;\n                }\n            }\n            MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n            if (handles == null) {\n                return null;\n            }\n            DefaultHandle<T> handle = handles.relaxedPoll();\n            if (null != handle) {\n                handle.toClaimed();\n            }\n            return handle;\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "void release(DefaultHandle<T> handle) {\n            handle.toAvailable();\n            MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n            if (handles != null) {\n                handles.relaxedOffer(handle);\n            }\n        }",
+    "replace": "void release(DefaultHandle<T> handle) {\n            handle.toAvailable();\n            MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n            if (Thread.currentThread().getId() == ownerThreadId) {\n                if (fastStackSize < fastStack.length) {\n                    fastStack[fastStackSize++] = handle;\n                } else if (handles != null) {\n                    handles.relaxedOffer(handle);\n                }\n            } else {\n                if (handles != null) {\n                    handles.relaxedOffer(handle);\n                }\n            }\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "private static final class LocalPool<T> {",
+    "replace": "private static final class LocalPool<T> {\n        // existing fields...\n        \n        // report total pooled size (fast stack + shared queue)\n        int size() {\n            MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n            int s = handles != null ? handles.size() : 0;\n            return s + fastStackSize;\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "final int threadLocalSize() {\n        LocalPool<T> localPool = threadLocal.getIfExists();\n        return localPool == null ? 0 : localPool.pooledHandles.size();\n    }",
+    "replace": "final int threadLocalSize() {\n        LocalPool<T> localPool = threadLocal.getIfExists();\n        return localPool == null ? 0 : localPool.size();\n    }"
+  }
+]
+```

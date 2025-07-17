@@ -1,0 +1,41 @@
+I’ve replaced the global AtomicLong used for task IDs with a per-executor AtomicLong to reduce cross-thread contention, moving ID generation into each `AbstractScheduledEventExecutor` instance and updating `ScheduledFutureTask` to use it.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "import java.util.concurrent.TimeUnit;",
+    "replace": "import java.util.concurrent.TimeUnit;\nimport java.util.concurrent.atomic.AtomicLong;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "    PriorityQueue<ScheduledFutureTask<?>> scheduledTaskQueue;",
+    "replace": "    PriorityQueue<ScheduledFutureTask<?>> scheduledTaskQueue;\n\n    private final AtomicLong taskIdGenerator = new AtomicLong();\n\n    long nextTaskId() {\n        return taskIdGenerator.getAndIncrement();\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "import java.util.concurrent.atomic.AtomicLong;",
+    "replace": ""
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    private static final AtomicLong nextTaskId = new AtomicLong();",
+    "replace": ""
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    private final long id = nextTaskId.getAndIncrement();",
+    "replace": "    private final long id;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "        super(executor, callable);\n        if (period == 0) {",
+    "replace": "        super(executor, callable);\n        this.id = executor.nextTaskId();\n        if (period == 0) {"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "        super(executor, callable);\n        deadlineNanos = nanoTime;",
+    "replace": "        super(executor, callable);\n        this.id = executor.nextTaskId();\n        deadlineNanos = nanoTime;"
+  }
+]
+```

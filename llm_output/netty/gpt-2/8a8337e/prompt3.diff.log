@@ -1,0 +1,16 @@
+I have inlined and simplified the hot‐path in get() to reduce unnecessary variable usage and branching, and replaced the getAndSet in toAvailable() with a compareAndSet to eliminate an extra atomic load/store. These changes preserve all existing functionality and should give a modest performance gain on both allocation and recycle paths.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "    @SuppressWarnings(\"unchecked\")\n    public final T get() {\n        if (maxCapacityPerThread == 0) {\n            return newObject((Handle<T>) NOOP_HANDLE);\n        }\n        LocalPool<T> localPool = threadLocal.get();\n        DefaultHandle<T> handle = localPool.claim();\n        T obj;\n        if (handle == null) {\n            handle = localPool.newHandle();\n            if (handle != null) {\n                obj = newObject(handle);\n                handle.set(obj);\n            } else {\n                obj = newObject((Handle<T>) NOOP_HANDLE);\n            }\n        } else {\n            obj = handle.get();\n        }\n\n        return obj;\n    }",
+    "replace": "    @SuppressWarnings(\"unchecked\")\n    public final T get() {\n        if (maxCapacityPerThread == 0) {\n            return newObject((Handle<T>) NOOP_HANDLE);\n        }\n        LocalPool<T> localPool = threadLocal.get();\n        DefaultHandle<T> handle = localPool.claim();\n        if (handle == null) {\n            handle = localPool.newHandle();\n            if (handle == null) {\n                return newObject((Handle<T>) NOOP_HANDLE);\n            }\n            T obj = newObject(handle);\n            handle.set(obj);\n            return obj;\n        }\n        return handle.get();\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "        void toAvailable() {\n            int prev = STATE_UPDATER.getAndSet(this, STATE_AVAILABLE);\n            if (prev == STATE_AVAILABLE) {\n                throw new IllegalStateException(\"Object has been recycled already.\");\n            }\n        }",
+    "replace": "        void toAvailable() {\n            if (!STATE_UPDATER.compareAndSet(this, STATE_CLAIMED, STATE_AVAILABLE)) {\n                throw new IllegalStateException(\"Object has been recycled already.\");\n            }\n        }"
+  }
+]
+```

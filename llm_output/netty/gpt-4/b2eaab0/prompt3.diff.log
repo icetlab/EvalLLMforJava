@@ -1,0 +1,46 @@
+I have introduced a cached flag to eliminate repeated runtime checks for unsafe availability and unaligned access, streamlining array operations, and optimized `hashCodeAscii(CharSequence)` by caching the length and avoiding repeated method calls. These changes should improve performance without altering functionality.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "public final class PlatformDependent {\n\n    private static final InternalLogger logger = InternalLoggerFactory.getInstance(PlatformDependent.class);",
+    "replace": "public final class PlatformDependent {\n\n    private static final InternalLogger logger = InternalLoggerFactory.getInstance(PlatformDependent.class);\n    // Cache unsafe usage to avoid repeated method calls\n    private static final boolean USE_UNSAFE = hasUnsafe() && unalignedAccess();"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "public static boolean equals(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        return !hasUnsafe() || !unalignedAccess() ?\n                  equalsSafe(bytes1, startPos1, bytes2, startPos2, length) :\n                  PlatformDependent0.equals(bytes1, startPos1, bytes2, startPos2, length);\n    }",
+    "replace": "public static boolean equals(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        return USE_UNSAFE ?\n                  PlatformDependent0.equals(bytes1, startPos1, bytes2, startPos2, length) :\n                  equalsSafe(bytes1, startPos1, bytes2, startPos2, length);\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "public static boolean isZero(byte[] bytes, int startPos, int length) {\n        return !hasUnsafe() || !unalignedAccess() ?\n                isZeroSafe(bytes, startPos, length) :\n                PlatformDependent0.isZero(bytes, startPos, length);\n    }",
+    "replace": "public static boolean isZero(byte[] bytes, int startPos, int length) {\n        return USE_UNSAFE ?\n                PlatformDependent0.isZero(bytes, startPos, length) :\n                isZeroSafe(bytes, startPos, length);\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "public static int equalsConstantTime(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        return !hasUnsafe() || !unalignedAccess() ?\n                  ConstantTimeUtils.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length) :\n                  PlatformDependent0.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);\n    }",
+    "replace": "public static int equalsConstantTime(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        return USE_UNSAFE ?\n                  PlatformDependent0.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length) :\n                  ConstantTimeUtils.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "public static int hashCodeAscii(byte[] bytes, int startPos, int length) {\n        return !hasUnsafe() || !unalignedAccess() ?\n                hashCodeAsciiSafe(bytes, startPos, length) :\n                PlatformDependent0.hashCodeAscii(bytes, startPos, length);\n    }",
+    "replace": "public static int hashCodeAscii(byte[] bytes, int startPos, int length) {\n        return USE_UNSAFE ?\n                PlatformDependent0.hashCodeAscii(bytes, startPos, length) :\n                hashCodeAsciiSafe(bytes, startPos, length);\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "public static int hashCodeAscii(CharSequence bytes) {\n        int hash = HASH_CODE_ASCII_SEED;\n        final int remainingBytes = bytes.length() & 7;\n        // Benchmarking shows that by just naively looping for inputs 8~31 bytes long we incur a relatively large",
+    "replace": "public static int hashCodeAscii(CharSequence bytes) {\n        int hash = HASH_CODE_ASCII_SEED;\n        int len = bytes.length();\n        final int remainingBytes = len & 7;\n        // Benchmarking shows that by just naively looping for inputs 8~31 bytes long we incur a relatively large"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "switch (bytes.length())",
+    "replace": "switch (len)"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "for (int i = bytes.length() - 8; i >= remainingBytes; i -= 8) {",
+    "replace": "for (int i = len - 8; i >= remainingBytes; i -= 8) {"
+  }
+]
+```

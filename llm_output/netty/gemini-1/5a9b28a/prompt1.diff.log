@@ -1,0 +1,20 @@
+My proposed changes focus on improving the performance and correctness of the `Recycler`.
+
+First, I will address a race condition in the `unguardedRecycle` path. The original implementation used a non-atomic check-then-act pattern to update the state of a recycled object, which could lead to the same object being recycled multiple times under concurrent access. I will replace this with an atomic `compareAndSet` operation to ensure thread safety and prevent this critical bug.
+
+Second, I will optimize the `isTerminated` check for `LocalPool` owner threads. The current implementation uses `Thread.getState()`, which can be a costly operation, with a special case for J9 VMs. By switching to `Thread.isAlive()`, which is functionally equivalent in this context but significantly more performant, we can achieve a speedup on all JVMs.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "        void unguardedToAvailable() {\n            int prev = state;\n            if (prev == STATE_AVAILABLE) {\n                throw new IllegalStateException(\"Object has been recycled already.\");\n            }\n            STATE_UPDATER.lazySet(this, STATE_AVAILABLE);\n        }",
+    "replace": "        void unguardedToAvailable() {\n            if (!STATE_UPDATER.compareAndSet(this, STATE_CLAIMED, STATE_AVAILABLE)) {\n                throw new IllegalStateException(\"Object has been recycled already.\");\n            }\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "        private static boolean isTerminated(Thread owner) {\n            // Do not use `Thread.getState()` in J9 JVM because it's known to have a performance issue.\n            // See: https://github.com/netty/netty/issues/13347#issuecomment-1518537895\n            return PlatformDependent.isJ9Jvm() ? !owner.isAlive() : owner.getState() == Thread.State.TERMINATED;\n        }",
+    "replace": "        private static boolean isTerminated(Thread owner) {\n            // Do not use `Thread.getState()` in J9 JVM because it's known to have a performance issue.\n            // See: https://github.com/netty/netty/issues/13347#issuecomment-1518537895\n            // In addition, even if we are not on J9, `isAlive()` is cheaper than `getState()`.\n            return !owner.isAlive();\n        }"
+  }
+]
+```

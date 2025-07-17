@@ -1,0 +1,26 @@
+I’ve adjusted the search patterns to match the exact indentation in the original files and broken the changes into four independent atomic edits.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "    protected AbstractScheduledEventExecutor() {\n    }",
+    "replace": "    protected AbstractScheduledEventExecutor() {\n        scheduledTaskQueue = new DefaultPriorityQueue<ScheduledFutureTask<?>>(  \n                SCHEDULED_FUTURE_TASK_COMPARATOR,\n                11);\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "    protected AbstractScheduledEventExecutor(EventExecutorGroup parent) {\n        super(parent);\n    }",
+    "replace": "    protected AbstractScheduledEventExecutor(EventExecutorGroup parent) {\n        super(parent);\n        scheduledTaskQueue = new DefaultPriorityQueue<ScheduledFutureTask<?>>(  \n                SCHEDULED_FUTURE_TASK_COMPARATOR,\n                11);\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "    protected final long nextScheduledTaskNano() {\n        ScheduledFutureTask<?> scheduledTask = peekScheduledTask();\n        return scheduledTask != null ? Math.max(0, scheduledTask.deadlineNanos() - nanoTime()) : -1;\n    }",
+    "replace": "    protected final long nextScheduledTaskNano() {\n        ScheduledFutureTask<?> scheduledTask = peekScheduledTask();\n        if (scheduledTask == null) {\n            return -1;\n        }\n        long delay = scheduledTask.deadlineNanos() - nanoTime();\n        return delay <= 0 ? 0 : delay;\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    static long deadlineToDelayNanos(long deadlineNanos) {\n        return Math.max(0, deadlineNanos - nanoTime());\n    }",
+    "replace": "    static long deadlineToDelayNanos(long deadlineNanos) {\n        long diff = deadlineNanos - nanoTime();\n        return diff <= 0 ? 0 : diff;\n    }"
+  }
+]
+```

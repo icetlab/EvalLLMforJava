@@ -1,0 +1,21 @@
+I’ve added a cached JVM‐check flag and simplified key internal branches to reduce repeated expensive calls and branch complexity in the pool logic.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "private static final class LocalPool<T> implements MessagePassingQueue.Consumer<DefaultHandle<T>> {\n        private final int ratioInterval;",
+    "replace": "private static final class LocalPool<T> implements MessagePassingQueue.Consumer<DefaultHandle<T>> {\n        // cache JVM type to avoid repeated PlatformDependent.isJ9Jvm() calls\n        private static final boolean IS_J9 = PlatformDependent.isJ9Jvm();\n        private final int ratioInterval;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "private static boolean isTerminated(Thread owner) {\n            // Do not use `Thread.getState()` in J9 JVM because it's known to have a performance issue.\n            // See: https://github.com/netty/netty/issues/13347#issuecomment-1518537895\n            return PlatformDependent.isJ9Jvm() ? !owner.isAlive() : owner.getState() == Thread.State.TERMINATED;\n        }",
+    "replace": "private static boolean isTerminated(Thread owner) {\n            // Do not use `Thread.getState()` in J9 JVM because it's known to have a performance issue.\n            // See: https://github.com/netty/netty/issues/13347#issuecomment-1518537895\n            return IS_J9 ? !owner.isAlive() : owner.getState() == Thread.State.TERMINATED;\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "void release(DefaultHandle<T> handle, boolean guarded) {\n            if (guarded) {\n                handle.toAvailable();\n            } else {\n                handle.unguardedToAvailable();\n            }\n            Thread owner = this.owner;\n            if (owner != null && Thread.currentThread() == owner && batch.size() < chunkSize) {\n                accept(handle);\n            } else if (owner != null && isTerminated(owner)) {\n                this.owner = null;\n                pooledHandles = null;\n            } else {\n                MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n                if (handles != null) {\n                    handles.relaxedOffer(handle);\n                }\n            }\n        }",
+    "replace": "void release(DefaultHandle<T> handle, boolean guarded) {\n    if (guarded) {\n        handle.toAvailable();\n    } else {\n        handle.unguardedToAvailable();\n    }\n    Thread localOwner = this.owner;\n    if (localOwner != null) {\n        if (Thread.currentThread() == localOwner && batch.size() < chunkSize) {\n            accept(handle);\n            return;\n        }\n        if (isTerminated(localOwner)) {\n            this.owner = null;\n            pooledHandles = null;\n            return;\n        }\n    }\n    MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n    if (handles != null) {\n        handles.relaxedOffer(handle);\n    }\n}"
+  }
+]
+```
