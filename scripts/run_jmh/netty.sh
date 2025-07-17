@@ -56,7 +56,7 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
     echo "Processing commit: $commit_hash"
 
     if [[ "$MODE" == -llm* ]]; then
-        PATCH_DIR="$SCRIPT_DIR/EvalLLMforJava/llm_output/netty/${LLM_TYPE}/${id}"
+        PATCH_DIR="$SCRIPT_DIR/EvalLLMforJava/llm_output/netty/${LLM_TYPE}/${id}/"
 
         if [ ! -d "$PATCH_DIR" ]; then
             echo "No patches found for commit $id under $PATCH_DIR"
@@ -183,11 +183,11 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
         # benchmark
         # Define JSON output file
         if [ "$MODE" = "-dev" ]; then
-            JSON_DIR="$SCRIPT_DIR/jmh/dev"
+            JSON_DIR="$SCRIPT_DIR/jmh/dev/"
         else
-            JSON_DIR="$SCRIPT_DIR/jmh/org"
+            JSON_DIR="$SCRIPT_DIR/jmh/org/"
         fi
-        JSON_FILE="$JSON_DIR/${id}_${jmh_case}.json"
+        JSON_FILE="$JSON_DIR${id}_${jmh_case}.json"
         # Skip if JSON file already exists
         if [ -f "$JSON_FILE" ]; then
             echo "JSON file already exists: $JSON_FILE, skipping."
@@ -200,11 +200,11 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
         echo "Running JMH benchmark: $jmh_case"
         cd microbench || { echo "microbench directory not found"; exit 1; }
         # -wi 10 -i 50 -f 1 -r 1s -w 1s
-        ../mvnw -DskipTests=false -Dtest="$jmh_case" -DwarmupIterations=5 -DmeasureIterations=15 -Dforks=1 -DperfReportDir=$PATCH_DIR test
+        ../mvnw -DskipTests=false -Dtest="$jmh_case" -DwarmupIterations=5 -DmeasureIterations=15 -Dforks=1 -DperfReportDir=$JSON_DIR test
         wait
 
         # Rename the JMH result file
-        mv "$PATCH_DIR/${jmh_case}.json" "$JSON_FILE"
+        mv "$JSON_DIR/${jmh_case}.json" "$JSON_FILE"
 
         cd ..
     fi
