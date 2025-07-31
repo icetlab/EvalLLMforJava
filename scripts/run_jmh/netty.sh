@@ -143,8 +143,8 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
 
     else
         # Reset repository to specific commit
-        git reset --hard "$commit_hash"
         git clean -fd
+        git reset --hard "$commit_hash"
 
         # Restore only the necessary source files in org mode
         if [ "$MODE" = "-org" ]; then

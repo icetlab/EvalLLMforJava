@@ -95,6 +95,7 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
 
     else
         # Reset repository to specific commit
+        git clean -fd
         git reset --hard "$commit_hash"
 
         if [ "$MODE" = "-org" ]; then
@@ -129,7 +130,11 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
             JSON_DIR="$SCRIPT_DIR/jmh/org"
         fi
         JSON_FILE="$JSON_DIR/${id}_${jmh_case}.json"
-
+        # Skip if JSON file already exists
+        if [ -f "$JSON_FILE" ]; then
+            echo "JSON file already exists: $JSON_FILE, skipping."
+            continue
+        fi
         # Ensure output directory exists using the absolute path
         mkdir -p "$JSON_DIR"
 
@@ -141,6 +146,7 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
             JMH_OPTS="-wi 10 -i 50 -f 1 -r 1s -w 1s"
         fi
         # JMH_OPTS="-bm avgt -wi 10 -i 50 -f 1 -r 1s -w 1s"
-        ./jmh-benchmarks/jmh.sh $JMH_OPTS "$jmh_case" -rf json -rff "$JSON_FILE" < /dev/null
+
+        ./jmh-benchmarks/jmh.sh ".*${jmh_case}.*" $JMH_OPTS -rf json -rff "$JSON_FILE" < /dev/null
     fi
 done
