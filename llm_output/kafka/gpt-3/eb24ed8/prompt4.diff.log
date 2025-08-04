@@ -1,16 +1,16 @@
-I’ve added Java-level buffering around the Zstd streams to batch up small reads/writes into larger chunks, reducing JNI overhead and internal buffer churn.
+The following changes correct the indentation in the ZSTD try/catch blocks and properly buffer reads and writes, aligning with the existing style and satisfying Checkstyle:
 
 ```json
 [
   {
     "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
-    "search": "public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {\n            try {\n                return (OutputStream) ZstdConstructors.OUTPUT.invoke(buffer);\n            } catch (Throwable e) {",
-    "replace": "public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {\n            try {\n                OutputStream zstdOut = (OutputStream) ZstdConstructors.OUTPUT.invoke(buffer);\n                // Buffer writes to reduce JNI calls\n                return new BufferedOutputStream(zstdOut, 16 * 1024);\n            } catch (Throwable e) {"
+    "search": "            try {\n                return (OutputStream) ZstdConstructors.OUTPUT.invoke(buffer);\n            } catch (Throwable e) {\n                throw new KafkaException(e);\n            }",
+    "replace": "            try {\n                // buffer uncompressed writes to reduce JNI context switches\n                OutputStream zstdOut = (OutputStream) ZstdConstructors.OUTPUT.invoke(buffer);\n                return new BufferedOutputStream(zstdOut, 16 * 1024);\n            } catch (Throwable e) {\n                throw new KafkaException(e);\n            }"
   },
   {
     "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
-    "search": "public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {\n            try {\n                return (InputStream) ZstdConstructors.INPUT.invoke(new ByteBufferInputStream(buffer));\n            } catch (Throwable e) {",
-    "replace": "public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {\n            try {\n                InputStream zstdIn = (InputStream) ZstdConstructors.INPUT.invoke(new ByteBufferInputStream(buffer));\n                // Buffer reads to reduce JNI calls\n                return new BufferedInputStream(zstdIn, 16 * 1024);\n            } catch (Throwable e) {"
+    "search": "            try {\n                return (InputStream) ZstdConstructors.INPUT.invoke(new ByteBufferInputStream(buffer));\n            } catch (Throwable e) {\n                throw new KafkaException(e);\n            }",
+    "replace": "            try {\n                // buffer compressed reads before native decompression\n                InputStream compressedIn = new BufferedInputStream(new ByteBufferInputStream(buffer), 8 * 1024);\n                InputStream zstdIn = (InputStream) ZstdConstructors.INPUT.invoke(compressedIn);\n                // buffer decompressed output for Java-side efficiency\n                return new BufferedInputStream(zstdIn, 16 * 1024);\n            } catch (Throwable e) {\n                throw new KafkaException(e);\n            }"
   }
 ]
 ```

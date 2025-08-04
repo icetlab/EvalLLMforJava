@@ -1,26 +1,36 @@
-I have optimized field inclusion/exclusion checks by converting the lists to hash sets for O(1) lookups, which should significantly improve performance when handling large numbers of fields.
+I’ve optimized membership checks by converting the include/exclude lists into HashSets for O(1) lookups and streamlined the rename methods to use getOrDefault. Also added necessary imports for Set and HashSet.
 
 ```json
 [
   {
     "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
     "search": "import java.util.Map;",
-    "replace": "import java.util.Map;\nimport java.util.Set;\nimport java.util.HashSet;"
+    "replace": "import java.util.Map;\nimport java.util.Set;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "import java.util.HashMap;",
+    "replace": "import java.util.HashMap;\nimport java.util.HashSet;"
   },
   {
     "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
     "search": "private List<String> exclude;\n    private List<String> include;",
-    "replace": "private List<String> exclude;\n    private Set<String> excludeSet;\n    private List<String> include;\n    private Set<String> includeSet;"
+    "replace": "private Set<String> exclude;\n    private Set<String> include;"
   },
   {
     "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
-    "search": "reverseRenames = invert(renames);\n\n        schemaUpdateCache = new SynchronizedCache<>(new LRUCache<>(16));",
-    "replace": "reverseRenames = invert(renames);\n        // convert include/exclude lists to sets for faster lookup\n        excludeSet = new HashSet<>(exclude);\n        includeSet = new HashSet<>(include);\n\n        schemaUpdateCache = new SynchronizedCache<>(new LRUCache<>(16));"
+    "search": "exclude = config.getList(ConfigName.EXCLUDE);\n        include = config.getList(ConfigName.INCLUDE);",
+    "replace": "exclude = new HashSet<>(config.getList(ConfigName.EXCLUDE));\n        include = new HashSet<>(config.getList(ConfigName.INCLUDE));"
   },
   {
     "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
-    "search": "boolean filter(String fieldName) {\n        return !exclude.contains(fieldName) && (include.isEmpty() || include.contains(fieldName));\n    }",
-    "replace": "boolean filter(String fieldName) {\n        return !excludeSet.contains(fieldName) && (includeSet.isEmpty() || includeSet.contains(fieldName));\n    }"
+    "search": "String renamed(String fieldName) {\n        final String mapping = renames.get(fieldName);\n        return mapping == null ? fieldName : mapping;\n    }",
+    "replace": "String renamed(String fieldName) {\n        return renames.getOrDefault(fieldName, fieldName);\n    }"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "String reverseRenamed(String fieldName) {\n        final String mapping = reverseRenames.get(fieldName);\n        return mapping == null ? fieldName : mapping;\n    }",
+    "replace": "String reverseRenamed(String fieldName) {\n        return reverseRenames.getOrDefault(fieldName, fieldName);\n    }"
   }
 ]
 ```

@@ -1,4 +1,4 @@
-I have optimized field filtering by converting include/exclude lists to hash sets for O(1) lookups and improved rename parsing to avoid regex overhead using indexOf/substrings. Additionally, I added necessary imports for the new types.
+I’ve converted the include/exclude lists to Sets for O(1) containment checks, adding the new fields, initializing them in configure(), updating filter() to use the Sets, and importing the necessary classes.
 
 ```json
 [
@@ -10,17 +10,17 @@ I have optimized field filtering by converting include/exclude lists to hash set
   {
     "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
     "search": "private List<String> exclude;\n    private List<String> include;",
-    "replace": "private Set<String> exclude;\n    private Set<String> include;"
+    "replace": "private List<String> exclude;\n    private List<String> include;\n    private Set<String> excludeSet;\n    private Set<String> includeSet;"
   },
   {
     "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
-    "search": "exclude = config.getList(ConfigName.EXCLUDE);\n        include = config.getList(ConfigName.INCLUDE);",
-    "replace": "exclude = new HashSet<>(config.getList(ConfigName.EXCLUDE));\n        include = new HashSet<>(config.getList(ConfigName.INCLUDE));"
+    "search": "schemaUpdateCache = new SynchronizedCache<>(new LRUCache<>(16));",
+    "replace": "schemaUpdateCache = new SynchronizedCache<>(new LRUCache<>(16));\n        excludeSet = new HashSet<>(exclude);\n        includeSet = new HashSet<>(include);"
   },
   {
     "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
-    "search": "static Map<String, String> parseRenameMappings(List<String> mappings) {\n        final Map<String, String> m = new HashMap<>();\n        for (String mapping : mappings) {\n            final String[] parts = mapping.split(\":\");\n            if (parts.length != 2) {\n                throw new ConfigException(ConfigName.RENAME, mappings, \"Invalid rename mapping: \" + mapping);\n            }\n            m.put(parts[0], parts[1]);\n        }\n        return m;\n    }",
-    "replace": "static Map<String, String> parseRenameMappings(List<String> mappings) {\n        final Map<String, String> m = new HashMap<>();\n        for (String mapping : mappings) {\n            int idx = mapping.indexOf(':');\n            if (idx <= 0 || idx == mapping.length() - 1 || mapping.indexOf(':', idx + 1) != -1) {\n                throw new ConfigException(ConfigName.RENAME, mappings, \"Invalid rename mapping: \" + mapping);\n            }\n            String key = mapping.substring(0, idx);\n            String value = mapping.substring(idx + 1);\n            m.put(key, value);\n        }\n        return m;\n    }"
+    "search": "boolean filter(String fieldName) {\n        return !exclude.contains(fieldName) && (include.isEmpty() || include.contains(fieldName));\n    }",
+    "replace": "boolean filter(String fieldName) {\n        return !excludeSet.contains(fieldName) && (includeSet.isEmpty() || includeSet.contains(fieldName));\n    }"
   }
 ]
 ```

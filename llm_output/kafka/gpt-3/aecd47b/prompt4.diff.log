@@ -1,16 +1,16 @@
-I’ve enhanced the `Checksums.update` method to detect and invoke a Java 9+ optimized `Checksum.update(ByteBuffer)` implementation via reflection when available, falling back to the existing per-byte loop otherwise. This enables zero-copy checksumming for direct or read-only buffers on Java 9+, improving throughput for large buffers.
+I’ve added a cached reflection handle to Java 9+’s optimized CRC32C `update(ByteBuffer)` method and dispatch to it for direct buffers when available, falling back to the existing byte‐by‐byte loop otherwise. This preserves functionality and buffer position, while enabling the JVM’s native acceleration for CRC32C on direct `ByteBuffer`s.
 
 ```json
 [
   {
     "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
-    "search": "import java.util.zip.Checksum;",
-    "replace": "import java.util.zip.Checksum;\nimport java.lang.reflect.Method;\nimport java.lang.reflect.InvocationTargetException;"
+    "search": "private Checksums() {\n    }",
+    "replace": "private Checksums() {\n    }\n\n    private static final java.lang.reflect.Method UPDATE_BYTEBUFFER_METHOD;\n\n    static {\n        java.lang.reflect.Method m = null;\n        try {\n            Class<?> c = Class.forName(\"java.util.zip.CRC32C\");\n            m = c.getMethod(\"update\", java.nio.ByteBuffer.class);\n        } catch (Exception e) {\n            // No optimized CRC32C available\n        }\n        UPDATE_BYTEBUFFER_METHOD = m;\n    }"
   },
   {
     "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
     "search": "public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }",
-    "replace": "public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int start = buffer.position() + offset;\n            // Use Java 9+ Checksum.update(ByteBuffer) if available\n            try {\n                Method updateMethod = checksum.getClass().getMethod(\"update\", ByteBuffer.class);\n                ByteBuffer duplicate = buffer.duplicate();\n                duplicate.position(start).limit(start + length);\n                updateMethod.invoke(checksum, duplicate);\n                return;\n            } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {\n                // fallback to byte-by-byte update\n            }\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }"
+    "replace": "public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else if (UPDATE_BYTEBUFFER_METHOD != null && checksum.getClass() == UPDATE_BYTEBUFFER_METHOD.getDeclaringClass()) {\n            ByteBuffer dup = buffer.duplicate();\n            dup.position(buffer.position() + offset);\n            dup.limit(buffer.position() + offset + length);\n            try {\n                UPDATE_BYTEBUFFER_METHOD.invoke(checksum, dup);\n            } catch (Exception e) {\n                int start = buffer.position() + offset;\n                for (int i = start; i < start + length; i++)\n                    checksum.update(buffer.get(i));\n            }\n        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }"
   }
 ]
 ```

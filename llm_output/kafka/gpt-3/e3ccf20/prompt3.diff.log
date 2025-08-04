@@ -1,11 +1,16 @@
-I’ve fixed the `acls` method to remove the duplicate `val aclBindings` definition and structured the fast-path for the `ANY` filter using an `if/else` rather than early `return`, restoring valid Scala syntax and preventing the compilation errors.
+I’ve replaced the remaining `trace` calls in `updateResourceAcls` with `authorizerLogger.trace` so that logging works after removing the `Logging` trait.
 
 ```json
 [
   {
     "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
-    "search": "  override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n    inReadLock(lock) {\n      val aclBindings = new util.ArrayList[AclBinding]()\n      unorderedAcls.foreach { case (resource, versionedAcls) =>\n        versionedAcls.acls.foreach { acl =>\n          val binding = new AclBinding(resource, acl.ace)\n          if (filter.matches(binding))\n            aclBindings.add(binding)\n        }\n      }\n      aclBindings\n    }\n  }",
-    "replace": "  override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n    inReadLock(lock) {\n      val aclBindings = new util.ArrayList[AclBinding]()\n      if (filter eq AclBindingFilter.ANY) {\n        // Fast-path: no per-binding filter check\n        unorderedAcls.foreach { case (resource, versionedAcls) =>\n          versionedAcls.acls.foreach { acl =>\n            aclBindings.add(new AclBinding(resource, acl.ace))\n          }\n        }\n      } else {\n        // Filtered iteration\n        unorderedAcls.foreach { case (resource, versionedAcls) =>\n          versionedAcls.acls.foreach { acl =>\n            val binding = new AclBinding(resource, acl.ace)\n            if (filter.matches(binding))\n              aclBindings.add(binding)\n          }\n        }\n      }\n      aclBindings\n    }\n  }"
+    "search": "trace(s\"Deleting path for $resource because it had no ACLs remaining\")",
+    "replace": "authorizerLogger.trace(s\"Deleting path for $resource because it had no ACLs remaining\")"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "trace(s\"Failed to update ACLs for $resource. Used version ${currentVersionedAcls.zkVersion}. Reading data and retrying update.\")",
+    "replace": "authorizerLogger.trace(s\"Failed to update ACLs for $resource. Used version ${currentVersionedAcls.zkVersion}. Reading data and retrying update.\")"
   }
 ]
 ```

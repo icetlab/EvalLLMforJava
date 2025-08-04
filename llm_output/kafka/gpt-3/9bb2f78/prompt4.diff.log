@@ -1,11 +1,11 @@
-The primary improvement is converting the include/exclude field lists from ArrayList to HashSet to reduce per-field `contains` checks from O(N) to O(1).
+I’ve replaced the List-based include/exclude checks with HashSet-backed ones to ensure O(1) lookups, and added the necessary imports. This preserves all existing functionality and tests.
 
 ```json
 [
   {
     "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
-    "search": "import java.util.Collections;\nimport java.util.HashMap;\nimport java.util.List;\nimport java.util.Map;",
-    "replace": "import java.util.Collections;\nimport java.util.HashMap;\nimport java.util.HashSet;\nimport java.util.Set;\nimport java.util.List;\nimport java.util.Map;"
+    "search": "import java.util.HashMap;\nimport java.util.List;\nimport java.util.Map;",
+    "replace": "import java.util.HashMap;\nimport java.util.List;\nimport java.util.Map;\nimport java.util.Set;\nimport java.util.HashSet;"
   },
   {
     "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",

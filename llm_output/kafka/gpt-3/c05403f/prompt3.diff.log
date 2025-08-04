@@ -1,16 +1,16 @@
-I’ve replaced the looping sizeOfUnsignedVarint and sizeOfVarlong methods with branch-free bit‐based computations using Integer.numberOfLeadingZeros and Long.numberOfLeadingZeros to eliminate the loop and improve performance. 
+Overall, these changes replace the per-byte loop in `sizeOfUnsignedVarint` and `sizeOfVarlong` with branch-based checks using bit shifts. This yields a constant-bound sequence of comparisons rather than a variable-length loop, improving performance in hot code paths while preserving exact behavior.
 
 ```json
 [
   {
     "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
-    "search": "public static int sizeOfUnsignedVarint(int value) {\n    int bytes = 1;\n    while ((value & 0xffffff80) != 0L) {\n        bytes += 1;\n        value >>>= 7;\n    }\n    return bytes;\n}",
-    "replace": "public static int sizeOfUnsignedVarint(int value) {\n    // faster computation using bit operations\n    int bitCount = (value == 0) ? 1 : (32 - Integer.numberOfLeadingZeros(value));\n    int bytes = (bitCount + 6) / 7;\n    return bytes;\n}"
+    "search": "public static int sizeOfUnsignedVarint(int value) {\n        int bytes = 1;\n        while ((value & 0xffffff80) != 0L) {\n            bytes += 1;\n            value >>>= 7;\n        }\n        return bytes;\n    }",
+    "replace": "public static int sizeOfUnsignedVarint(int value) {\n        if ((value >>> 7) == 0) {\n            return 1;\n        } else if ((value >>> 14) == 0) {\n            return 2;\n        } else if ((value >>> 21) == 0) {\n            return 3;\n        } else if ((value >>> 28) == 0) {\n            return 4;\n        } else {\n            return 5;\n        }\n    }"
   },
   {
     "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
-    "search": "public static int sizeOfVarlong(long value) {\n    long v = (value << 1) ^ (value >> 63);\n    int bytes = 1;\n    while ((v & 0xffffffffffffff80L) != 0L) {\n        bytes += 1;\n        v >>>= 7;\n    }\n    return bytes;\n}",
-    "replace": "public static int sizeOfVarlong(long value) {\n    // faster computation using bit operations\n    long v = (value << 1) ^ (value >> 63);\n    int bitCount = (v == 0L) ? 1 : (64 - Long.numberOfLeadingZeros(v));\n    int bytes = (bitCount + 6) / 7;\n    return bytes;\n}"
+    "search": "public static int sizeOfVarlong(long value) {\n        long v = (value << 1) ^ (value >> 63);\n        int bytes = 1;\n        while ((v & 0xffffffffffffff80L) != 0L) {\n            bytes += 1;\n            v >>>= 7;\n        }\n        return bytes;\n    }",
+    "replace": "public static int sizeOfVarlong(long value) {\n        long v = (value << 1) ^ (value >> 63);\n        if ((v >>> 7) == 0) {\n            return 1;\n        } else if ((v >>> 14) == 0) {\n            return 2;\n        } else if ((v >>> 21) == 0) {\n            return 3;\n        } else if ((v >>> 28) == 0) {\n            return 4;\n        } else if ((v >>> 35) == 0) {\n            return 5;\n        } else if ((v >>> 42) == 0) {\n            return 6;\n        } else if ((v >>> 49) == 0) {\n            return 7;\n        } else if ((v >>> 56) == 0) {\n            return 8;\n        } else if ((v >>> 63) == 0) {\n            return 9;\n        } else {\n            return 10;\n        }\n    }"
   }
 ]
 ```

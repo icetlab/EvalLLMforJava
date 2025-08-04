@@ -1,16 +1,16 @@
-The loop-based implementations of sizeOfUnsignedVarint and sizeOfVarlong have been replaced with bit-twiddling formulas using leading-zero counts to compute the needed byte lengths in constant time, reducing branching and improving performance.
+I’ve replaced the iterative loops in sizeOfUnsignedVarint and sizeOfVarlong with branch-based bitmask checks to eliminate looping and improve performance.
 
 ```json
 [
   {
     "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
-    "search": "public static int sizeOfUnsignedVarint(int value) {\n        int bytes = 1;\n        while ((value & 0xffffff80) != 0L) {\n            bytes += 1;\n            value >>>= 7;\n        }\n        return bytes;\n    }",
-    "replace": "public static int sizeOfUnsignedVarint(int value) {\n        if (value == 0) {\n            return 1;\n        }\n        int highestBit = 32 - Integer.numberOfLeadingZeros(value);\n        int bytes = (highestBit + 6) / 7;\n        return bytes;\n    }"
+    "search": "int bytes = 1;\n        while ((value & 0xffffff80) != 0L) {\n            bytes += 1;\n            value >>>= 7;\n        }\n        return bytes;",
+    "replace": "if ((value & ~0x7F) == 0) {\n            return 1;\n        } else if ((value & ~0x3FFF) == 0) {\n            return 2;\n        } else if ((value & ~0x1FFFFF) == 0) {\n            return 3;\n        } else if ((value & ~0xFFFFFFF) == 0) {\n            return 4;\n        } else {\n            return 5;\n        }"
   },
   {
     "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
-    "search": "public static int sizeOfVarlong(long value) {\n        long v = (value << 1) ^ (value >> 63);\n        int bytes = 1;\n        while ((v & 0xffffffffffffff80L) != 0L) {\n            bytes += 1;\n            v >>>= 7;\n        }\n        return bytes;\n    }",
-    "replace": "public static int sizeOfVarlong(long value) {\n        long v = (value << 1) ^ (value >> 63);\n        if (v == 0L) {\n            return 1;\n        }\n        int highestBit = 64 - Long.numberOfLeadingZeros(v);\n        return (highestBit + 6) / 7;\n    }"
+    "search": "long v = (value << 1) ^ (value >> 63);\n        int bytes = 1;\n        while ((v & 0xffffffffffffff80L) != 0L) {\n            bytes += 1;\n            v >>>= 7;\n        }\n        return bytes;",
+    "replace": "long v = (value << 1) ^ (value >> 63);\n        if ((v & ~0x7FL) == 0) {\n            return 1;\n        } else if ((v & ~0x3FFFL) == 0) {\n            return 2;\n        } else if ((v & ~0x1FFFFFL) == 0) {\n            return 3;\n        } else if ((v & ~0xFFFFFFFL) == 0) {\n            return 4;\n        } else if ((v & ~0x7FFFFFFFFL) == 0) {\n            return 5;\n        } else if ((v & ~0x3FFFFFFFFFFFL) == 0) {\n            return 6;\n        } else if ((v & ~0x1FFFFFFFFFFFFFL) == 0) {\n            return 7;\n        } else if ((v & ~0xFFFFFFFFFFFFFFL) == 0) {\n            return 8;\n        } else if ((v & ~0x7FFFFFFFFFFFFFFFL) == 0) {\n            return 9;\n        } else {\n            return 10;\n        }"
   }
 ]
 ```

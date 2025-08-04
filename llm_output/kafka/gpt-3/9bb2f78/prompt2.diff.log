@@ -1,11 +1,11 @@
-I’ve updated the `exclude` and `include` collections from `List` to `Set` and initialize them as `HashSet` instances to achieve O(1) containment checks.  
+I’ve optimized the include/exclude lookups by converting the lists to HashSets, reducing contains checks from O(N) to O(1).
 
 ```json
 [
   {
     "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
-    "search": "import java.util.HashMap;\nimport java.util.List;\nimport java.util.Map;",
-    "replace": "import java.util.HashMap;\nimport java.util.List;\nimport java.util.Map;\nimport java.util.Set;\nimport java.util.HashSet;"
+    "search": "import java.util.List;\nimport java.util.Map;",
+    "replace": "import java.util.List;\nimport java.util.Set;\nimport java.util.HashSet;\nimport java.util.Map;"
   },
   {
     "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
