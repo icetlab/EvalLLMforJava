@@ -1,0 +1,16 @@
+I have cached the `records.batches.asScala` sequence into a local `batches` variable in the two hot-path methods to avoid repeated conversions and improve iteration performance.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogValidator.scala",
+    "search": "val initialOffset = offsetCounter.value\n\n    val firstBatch = getFirstBatchAndMaybeValidateNoMoreBatches(records, NoCompressionCodec)\n\n    for (batch <- records.batches.asScala) {",
+    "replace": "val initialOffset = offsetCounter.value\n\n    val batches = records.batches.asScala\n    val firstBatch = getFirstBatchAndMaybeValidateNoMoreBatches(records, NoCompressionCodec)\n\n    for (batch <- batches) {"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogValidator.scala",
+    "search": "val firstBatch = getFirstBatchAndMaybeValidateNoMoreBatches(records, NoCompressionCodec)\n\n    for (batch <- records.batches.asScala) {",
+    "replace": "val batches = records.batches.asScala\n    val firstBatch = getFirstBatchAndMaybeValidateNoMoreBatches(records, NoCompressionCodec)\n\n    for (batch <- batches) {"
+  }
+]
+```

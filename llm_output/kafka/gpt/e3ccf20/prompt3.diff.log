@@ -1,0 +1,16 @@
+I’ve replaced the remaining `trace` calls in `updateResourceAcls` with `authorizerLogger.trace` so that logging works after removing the `Logging` trait.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "trace(s\"Deleting path for $resource because it had no ACLs remaining\")",
+    "replace": "authorizerLogger.trace(s\"Deleting path for $resource because it had no ACLs remaining\")"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "trace(s\"Failed to update ACLs for $resource. Used version ${currentVersionedAcls.zkVersion}. Reading data and retrying update.\")",
+    "replace": "authorizerLogger.trace(s\"Failed to update ACLs for $resource. Used version ${currentVersionedAcls.zkVersion}. Reading data and retrying update.\")"
+  }
+]
+```

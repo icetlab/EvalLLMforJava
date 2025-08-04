@@ -1,0 +1,21 @@
+I’ve added a properly named `UPDATE_BYTE_BUFFER_METHOD` constant to hold Java 9+’s `Checksum.update(ByteBuffer)` method when available, inserted reflection-based initialization for it, and updated the non-array branch to use the optimized path first, falling back to byte-by-byte. All changes are broken into independent, atomic patches.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "import java.util.zip.Checksum;\n",
+    "replace": "import java.util.zip.Checksum;\nimport java.lang.reflect.Method;\nimport java.lang.reflect.InvocationTargetException;\n"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "    private Checksums() {\n    }",
+    "replace": "    private Checksums() {\n    }\n\n    private static final Method UPDATE_BYTE_BUFFER_METHOD;\n\n    static {\n        Method method = null;\n        try {\n            method = Checksum.class.getMethod(\"update\", ByteBuffer.class);\n        } catch (NoSuchMethodException e) {\n            // method not available\n        }\n        UPDATE_BYTE_BUFFER_METHOD = method;\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }",
+    "replace": "        } else {\n            if (UPDATE_BYTE_BUFFER_METHOD != null) {\n                try {\n                    ByteBuffer duplicate = buffer.duplicate();\n                    duplicate.position(buffer.position() + offset);\n                    duplicate.limit(buffer.position() + offset + length);\n                    UPDATE_BYTE_BUFFER_METHOD.invoke(checksum, duplicate);\n                    return;\n                } catch (IllegalAccessException | InvocationTargetException e) {\n                    // fallback to byte-by-byte\n                }\n            }\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++) {\n                checksum.update(buffer.get(i));\n            }\n        }"
+  }
+]
+```

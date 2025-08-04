@@ -1,0 +1,26 @@
+I’ve converted the include/exclude lists to Sets for O(1) containment checks, adding the new fields, initializing them in configure(), updating filter() to use the Sets, and importing the necessary classes.
+
+```json
+[
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "import java.util.Map;",
+    "replace": "import java.util.Map;\nimport java.util.Set;\nimport java.util.HashSet;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "private List<String> exclude;\n    private List<String> include;",
+    "replace": "private List<String> exclude;\n    private List<String> include;\n    private Set<String> excludeSet;\n    private Set<String> includeSet;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "schemaUpdateCache = new SynchronizedCache<>(new LRUCache<>(16));",
+    "replace": "schemaUpdateCache = new SynchronizedCache<>(new LRUCache<>(16));\n        excludeSet = new HashSet<>(exclude);\n        includeSet = new HashSet<>(include);"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "boolean filter(String fieldName) {\n        return !exclude.contains(fieldName) && (include.isEmpty() || include.contains(fieldName));\n    }",
+    "replace": "boolean filter(String fieldName) {\n        return !excludeSet.contains(fieldName) && (includeSet.isEmpty() || includeSet.contains(fieldName));\n    }"
+  }
+]
+```
