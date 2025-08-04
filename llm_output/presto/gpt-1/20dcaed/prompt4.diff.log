@@ -1,26 +1,26 @@
-I’ve replaced the full geometry deserialization in the min/max functions with the lightweight `deserializeEnvelope` call, and updated their signatures to return nullable `Double`, eliminating the heavy OGCGeometry construction when only the bounding box is needed.
+I’ve updated the four envelope‐based functions to avoid full geometry deserialization and use the lightweight `deserializeEnvelope` path. Each now returns `@SqlNullable Double`, checks for a null envelope, and directly extracts the min/max values.
 
 ```json
 [
   {
     "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
     "search": "public static double stXMax(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        OGCGeometry geometry = deserialize(input);\n        Envelope envelope = getEnvelope(geometry);\n        return envelope.getXMax();\n    }",
-    "replace": "@SqlNullable\n    @Description(\"Returns X maxima of a bounding box of a Geometry\")\n    @ScalarFunction(\"ST_XMax\")\n    @SqlType(DOUBLE)\n    public static Double stXMax(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        Envelope envelope = deserializeEnvelope(input);\n        if (envelope == null) {\n            return null;\n        }\n        return envelope.getXMax();\n    }"
+    "replace": "@SqlNullable\npublic static Double stXMax(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        Envelope envelope = deserializeEnvelope(input);\n        if (envelope == null) {\n            return null;\n        }\n        return envelope.getXMax();\n    }"
   },
   {
     "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
     "search": "public static double stYMax(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        OGCGeometry geometry = deserialize(input);\n        Envelope envelope = getEnvelope(geometry);\n        return envelope.getYMax();\n    }",
-    "replace": "@SqlNullable\n    @Description(\"Returns Y maxima of a bounding box of a Geometry\")\n    @ScalarFunction(\"ST_YMax\")\n    @SqlType(DOUBLE)\n    public static Double stYMax(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        Envelope envelope = deserializeEnvelope(input);\n        if (envelope == null) {\n            return null;\n        }\n        return envelope.getYMax();\n    }"
+    "replace": "@SqlNullable\npublic static Double stYMax(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        Envelope envelope = deserializeEnvelope(input);\n        if (envelope == null) {\n            return null;\n        }\n        return envelope.getYMax();\n    }"
   },
   {
     "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
     "search": "public static double stXMin(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        OGCGeometry geometry = deserialize(input);\n        Envelope envelope = getEnvelope(geometry);\n        return envelope.getXMin();\n    }",
-    "replace": "@SqlNullable\n    @Description(\"Returns X minima of a bounding box of a Geometry\")\n    @ScalarFunction(\"ST_XMin\")\n    @SqlType(DOUBLE)\n    public static Double stXMin(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        Envelope envelope = deserializeEnvelope(input);\n        if (envelope == null) {\n            return null;\n        }\n        return envelope.getXMin();\n    }"
+    "replace": "@SqlNullable\npublic static Double stXMin(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        Envelope envelope = deserializeEnvelope(input);\n        if (envelope == null) {\n            return null;\n        }\n        return envelope.getXMin();\n    }"
   },
   {
     "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
     "search": "public static double stYMin(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        OGCGeometry geometry = deserialize(input);\n        Envelope envelope = getEnvelope(geometry);\n        return envelope.getYMin();\n    }",
-    "replace": "@SqlNullable\n    @Description(\"Returns Y minima of a bounding box of a Geometry\")\n    @ScalarFunction(\"ST_YMin\")\n    @SqlType(DOUBLE)\n    public static Double stYMin(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        Envelope envelope = deserializeEnvelope(input);\n        if (envelope == null) {\n            return null;\n        }\n        return envelope.getYMin();\n    }"
+    "replace": "@SqlNullable\npublic static Double stYMin(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        Envelope envelope = deserializeEnvelope(input);\n        if (envelope == null) {\n            return null;\n        }\n        return envelope.getYMin();\n    }"
   }
 ]
 ```

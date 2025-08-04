@@ -1,20 +1,15 @@
-My proposed improvement for `ArrayDistinctFunction` focuses on two optimizations within the `distinct` method.
+The `array_distinct` function builds a new array containing only the unique elements from the input array. The original implementation constructs a new `Block` in all cases.
 
-First, I'll introduce a fast path for arrays with fewer than two elements. Such arrays are inherently distinct, so we can return them immediately, avoiding the overhead of creating a `TypedSet` and `BlockBuilder`.
+My improvement optimizes for the common scenario where the input array already consists of distinct elements. In this case, the original code would unnecessarily construct a new `Block` that is identical to the input, involving a potentially expensive data copy.
 
-Second, I'll optimize the main loop that identifies unique elements. The current implementation first checks for an element's presence in a `TypedSet` with `contains()` and then, if absent, adds it with `add()`. I will combine these two steps by using the boolean return value of `TypedSet.add()`, which indicates if the element was newly inserted. This change halves the number of hash lookups required, significantly improving performance for larger arrays.
+The proposed change adds a check after processing all elements. If the number of unique elements found is equal to the number of elements in the original array, it indicates that there were no duplicates. Instead of building a new `Block`, the function will return the original input `Block` directly, avoiding the overhead of the `build()` operation and data copy. This optimization improves performance for arrays with all or mostly distinct elements, at the negligible cost of an integer comparison.
 
 ```json
 [
   {
     "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java",
-    "search": "if (array.getPositionCount() == 0) {\n            return array;\n        }",
-    "replace": "if (array.getPositionCount() < 2) {\n            return array;\n        }"
-  },
-  {
-    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java",
-    "search": "if (!typedSet.contains(array, i)) {\n                typedSet.add(array, i);\n                type.appendTo(array, i, distinctElementBlockBuilder);\n            }",
-    "replace": "if (typedSet.add(array, i)) {\n                type.appendTo(array, i, distinctElementBlockBuilder);\n            }"
+    "search": "        return distinctElementBlockBuilder.build();",
+    "replace": "        if (distinctElementBlockBuilder.getPositionCount() == array.getPositionCount()) {\n            return array;\n        }\n        return distinctElementBlockBuilder.build();"
   }
 ]
 ```

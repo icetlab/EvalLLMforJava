@@ -1,21 +1,11 @@
-The changes introduce fast paths for arrays of length 0, 1, and 2 to avoid the overhead of building a TypedSet and scanning, and reuse the precomputed length for the general case.
+The change adds fast‐paths for arrays of length 1 (no work) and length 2 (single comparison and minimal block building), falling back to the general algorithm otherwise.
 
 ```json
 [
   {
     "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java",
-    "search": "        if (array.getPositionCount() == 0) {\n            return array;\n        }",
-    "replace": "        int count = array.getPositionCount();\n        if (count == 0) {\n            return array;\n        }\n        if (count == 1) {\n            return array;\n        }\n        if (count == 2) {\n            if (type.equalTo(array, 0, array, 1)) {\n                BlockBuilder builder = type.createBlockBuilder(new BlockBuilderStatus(), 1);\n                type.appendTo(array, 0, builder);\n                return builder.build();\n            } else {\n                return array;\n            }\n        }"
-  },
-  {
-    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java",
-    "search": "        TypedSet typedSet = new TypedSet(type, array.getPositionCount());",
-    "replace": "        TypedSet typedSet = new TypedSet(type, count);"
-  },
-  {
-    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java",
-    "search": "        BlockBuilder distinctElementBlockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), array.getPositionCount());",
-    "replace": "        BlockBuilder distinctElementBlockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), count);"
+    "search": "if (array.getPositionCount() == 0) {\n            return array;\n        }",
+    "replace": "if (array.getPositionCount() == 0) {\n            return array;\n        }\n        if (array.getPositionCount() == 1) {\n            return array;\n        }\n        if (array.getPositionCount() == 2) {\n            // optimized for two elements\n            if (type.equalTo(array, 0, array, 1)) {\n                BlockBuilder builder = type.createBlockBuilder(new BlockBuilderStatus(), 1);\n                type.appendTo(array, 0, builder);\n                return builder.build();\n            }\n            return array;\n        }"
   }
 ]
 ```
