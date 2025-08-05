@@ -1,0 +1,11 @@
+I’ve refactored `LocalPool.claim()` to perform a single `batch.pollFirst()` before draining and only retry if the first poll yields `null`, eliminating the extra `batch.isEmpty()` check and reducing method calls.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "DefaultHandle<T> claim() {\n            MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n            if (handles == null) {\n                return null;\n            }\n            if (batch.isEmpty()) {\n                handles.drain(this, chunkSize);\n            }\n            DefaultHandle<T> handle = batch.pollFirst();\n            if (null != handle) {\n                handle.toClaimed();\n            }\n            return handle;\n        }",
+    "replace": "DefaultHandle<T> claim() {\n            MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n            if (handles == null) {\n                return null;\n            }\n            // Try to take an element without draining first\n            DefaultHandle<T> handle = batch.pollFirst();\n            if (handle == null) {\n                // Only drain when empty, then retry once\n                handles.drain(this, chunkSize);\n                handle = batch.pollFirst();\n            }\n            if (handle != null) {\n                handle.toClaimed();\n            }\n            return handle;\n        }"
+  }
+]
+```

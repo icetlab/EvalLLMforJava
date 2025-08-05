@@ -1,4 +1,4 @@
-I’ve replaced the dynamic map lookup in getIndex(...) with a Java string-switch over the known static header names. This leverages the compiler’s optimized jump tables (a form of perfect hashing) for constant-time lookup and eliminates map overhead.
+I’ve simplified the change to only replace the existing `getIndex` method with the perfect‐hash `switch` version. This avoids brittle multi‐line removals elsewhere and keeps the patch atomic.
 
 ```json
 [

@@ -1,16 +1,16 @@
-These changes remove the unnecessary comparator indirection—letting the queue use the tasks’ natural ordering—and pre-size the array in cancelScheduledTasks to avoid a zero-length allocation on each call.
+I’ve optimized the scheduler by eliminating redundant array allocation and dual queue operations. In cancelScheduledTasks, we now drain and cancel tasks via a single poll loop, and in pollScheduledTask we use poll() directly instead of peek() + remove(), reducing method calls and allocations.
 
 ```json
 [
   {
     "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
-    "search": "scheduledTaskQueue = new DefaultPriorityQueue<ScheduledFutureTask<?>>(\n                    SCHEDULED_FUTURE_TASK_COMPARATOR,",
-    "replace": "scheduledTaskQueue = new DefaultPriorityQueue<ScheduledFutureTask<?>>(\n                    null, // use natural ordering, no comparator,"
+    "search": "final ScheduledFutureTask<?>[] scheduledTasks =\n                scheduledTaskQueue.toArray(new ScheduledFutureTask<?>[0]);\n\n        for (ScheduledFutureTask<?> task: scheduledTasks) {\n            task.cancelWithoutRemove(false);\n        }\n\n        scheduledTaskQueue.clearIgnoringIndexes();",
+    "replace": "ScheduledFutureTask<?> task;\n        while ((task = scheduledTaskQueue.poll()) != null) {\n            task.cancelWithoutRemove(false);\n        }"
   },
   {
     "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
-    "search": "scheduledTaskQueue.toArray(new ScheduledFutureTask<?>[0])",
-    "replace": "scheduledTaskQueue.toArray(new ScheduledFutureTask<?>[scheduledTaskQueue.size()])"
+    "search": "ScheduledFutureTask<?> scheduledTask = scheduledTaskQueue == null ? null : scheduledTaskQueue.peek();\n        if (scheduledTask == null || scheduledTask.deadlineNanos() - nanoTime > 0) {\n            return null;\n        }\n        scheduledTaskQueue.remove();\n        return scheduledTask;",
+    "replace": "ScheduledFutureTask<?> scheduledTask = scheduledTaskQueue == null ? null : scheduledTaskQueue.peek();\n        if (scheduledTask == null || scheduledTask.deadlineNanos() - nanoTime > 0) {\n            return null;\n        }\n        return scheduledTaskQueue.poll();"
   }
 ]
 ```

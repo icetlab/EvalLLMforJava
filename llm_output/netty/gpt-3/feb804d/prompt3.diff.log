@@ -1,26 +1,26 @@
-I’ve adjusted the search patterns to match the exact indentation in the original files and broken the changes into four independent atomic edits.
+I’ve broken the original large edits into smaller, more targeted replacements to ensure each “search” snippet can be reliably located. All changes are in `AbstractScheduledEventExecutor.java` and preserve existing functionality while improving performance.
 
 ```json
 [
   {
     "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
-    "search": "    protected AbstractScheduledEventExecutor() {\n    }",
-    "replace": "    protected AbstractScheduledEventExecutor() {\n        scheduledTaskQueue = new DefaultPriorityQueue<ScheduledFutureTask<?>>(  \n                SCHEDULED_FUTURE_TASK_COMPARATOR,\n                11);\n    }"
+    "search": "// Use same initial capacity as java.util.PriorityQueue\n                    11);",
+    "replace": "// Use same initial capacity as java.util.PriorityQueue\n                    256);"
   },
   {
     "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
-    "search": "    protected AbstractScheduledEventExecutor(EventExecutorGroup parent) {\n        super(parent);\n    }",
-    "replace": "    protected AbstractScheduledEventExecutor(EventExecutorGroup parent) {\n        super(parent);\n        scheduledTaskQueue = new DefaultPriorityQueue<ScheduledFutureTask<?>>(  \n                SCHEDULED_FUTURE_TASK_COMPARATOR,\n                11);\n    }"
+    "search": "scheduledTaskQueue.toArray(new ScheduledFutureTask<?>[0])",
+    "replace": "scheduledTaskQueue.toArray(new ScheduledFutureTask<?>[scheduledTaskQueue.size()])"
   },
   {
     "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
-    "search": "    protected final long nextScheduledTaskNano() {\n        ScheduledFutureTask<?> scheduledTask = peekScheduledTask();\n        return scheduledTask != null ? Math.max(0, scheduledTask.deadlineNanos() - nanoTime()) : -1;\n    }",
-    "replace": "    protected final long nextScheduledTaskNano() {\n        ScheduledFutureTask<?> scheduledTask = peekScheduledTask();\n        if (scheduledTask == null) {\n            return -1;\n        }\n        long delay = scheduledTask.deadlineNanos() - nanoTime();\n        return delay <= 0 ? 0 : delay;\n    }"
+    "search": "if (isNullOrEmpty(scheduledTaskQueue))",
+    "replace": "if (scheduledTaskQueue == null || scheduledTaskQueue.isEmpty())"
   },
   {
-    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
-    "search": "    static long deadlineToDelayNanos(long deadlineNanos) {\n        return Math.max(0, deadlineNanos - nanoTime());\n    }",
-    "replace": "    static long deadlineToDelayNanos(long deadlineNanos) {\n        long diff = deadlineNanos - nanoTime();\n        return diff <= 0 ? 0 : diff;\n    }"
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "scheduledTask.deadlineNanos() - nanoTime > 0",
+    "replace": "scheduledTask.deadlineNanos() > nanoTime"
   }
 ]
 ```
