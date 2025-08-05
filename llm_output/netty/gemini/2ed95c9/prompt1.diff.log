@@ -1,0 +1,16 @@
+My overall improvement is to optimize the class initialization of `HpackStaticTable`. The `maxSameNameFieldIndex()` method is executed only once when the class is loaded to compute a value that is constant as long as the static table itself doesn't change. By pre-calculating this value and hardcoding it, we can avoid the computation cost during class loading and remove the now-unnecessary method. This makes the initialization slightly faster and the class simpler.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "    private static final int MAX_SAME_NAME_FIELD_INDEX = maxSameNameFieldIndex();",
+    "replace": "    private static final int MAX_SAME_NAME_FIELD_INDEX = 14;"
+  },
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "    /**\n     * Returns the last position in the array that contains multiple\n     * fields with the same name. Starting from this position, all\n     * names are unique. Similar to {@link #getIndexInsensitive(CharSequence, CharSequence)} method\n     * assumes all entries for a given header field are sequential\n     */\n    private static int maxSameNameFieldIndex() {\n        final int length = STATIC_TABLE.size();\n        HpackHeaderField cursor = getEntry(length);\n        for (int index = length - 1; index > 0; index--) {\n            HpackHeaderField entry = getEntry(index);\n            if (equalsVariableTime(entry.name, cursor.name)) {\n                return index + 1;\n            } else {\n                cursor = entry;\n            }\n        }\n        return length;\n    }",
+    "replace": ""
+  }
+]
+```

@@ -1,0 +1,28 @@
+The performance of reference counting can be improved under high contention by replacing `compareAndSet` with `weakCompareAndSet`. The current implementation uses a `compareAndSet` (CAS) operation within a spin loop. While correct, this can be inefficient on some hardware when many threads are contending for the same reference count, as `compareAndSet` often maps to a heavy, locked CPU instruction.
+
+`weakCompareAndSet` is a lighter-weight alternative that can fail spuriously but is generally faster under contention on certain architectures. Since the reference counting logic is already inside a retry loop, these spurious failures are handled correctly by re-reading the count and trying the update again. This change can lead to better throughput and lower CPU usage in highly concurrent scenarios by reducing contention-related overhead.
+
+```json
+[
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java",
+    "search": "            if (refCntUpdater.compareAndSet(this, refCnt, nextCnt)) {\n                break;\n            }",
+    "replace": "            if (refCntUpdater.weakCompareAndSet(this, refCnt, nextCnt)) {\n                break;\n            }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java",
+    "search": "            if (refCntUpdater.compareAndSet(this, refCnt, refCnt - decrement)) {\n                if (refCnt == decrement) {\n                    deallocate();\n                    return true;\n                }\n                return false;\n            }",
+    "replace": "            if (refCntUpdater.weakCompareAndSet(this, refCnt, refCnt - decrement)) {\n                if (refCnt == decrement) {\n                    deallocate();\n                    return true;\n                }\n                return false;\n            }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/AbstractReferenceCounted.java",
+    "search": "            if (refCntUpdater.compareAndSet(this, refCnt, nextCnt)) {\n                break;\n            }",
+    "replace": "            if (refCntUpdater.weakCompareAndSet(this, refCnt, nextCnt)) {\n                break;\n            }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/AbstractReferenceCounted.java",
+    "search": "            if (refCntUpdater.compareAndSet(this, refCnt, refCnt - decrement)) {\n                if (refCnt == decrement) {\n                    deallocate();\n                    return true;\n                }\n                return false;\n            }",
+    "replace": "            if (refCntUpdater.weakCompareAndSet(this, refCnt, refCnt - decrement)) {\n                if (refCnt == decrement) {\n                    deallocate();\n                    return true;\n                }\n                return false;\n            }"
+  }
+]
+```

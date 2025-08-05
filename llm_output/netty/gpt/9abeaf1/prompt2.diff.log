@@ -1,0 +1,16 @@
+I simplified the wakeup path by removing the expensive CAS in `wakeup(...)`—we now always signal via `eventFdWrite` and lazily set the flag—and also eliminate the redundant wakeup in the select loop. These changes preserve functionality while reducing atomic overhead.
+
+```json
+[
+  {
+    "filepath": "../netty/transport-native-epoll/src/main/java/io/netty/channel/epoll/EpollEventLoop.java",
+    "search": "@Override\n    protected void wakeup(boolean inEventLoop) {\n        if (!inEventLoop && WAKEN_UP_UPDATER.compareAndSet(this, 0, 1)) {\n            // write to the evfd which will then wake-up epoll_wait(...)\n            Native.eventFdWrite(eventFd.intValue(), 1L);\n        }\n    }",
+    "replace": "@Override\n    protected void wakeup(boolean inEventLoop) {\n        if (!inEventLoop) {\n            // always signal epoll and lazily set the wake-up flag\n            Native.eventFdWrite(eventFd.intValue(), 1L);\n            WAKEN_UP_UPDATER.lazySet(this, 1);\n        }\n    }"
+  },
+  {
+    "filepath": "../netty/transport-native-epoll/src/main/java/io/netty/channel/epoll/EpollEventLoop.java",
+    "search": "                        if (wakenUp == 1) {\n                            Native.eventFdWrite(eventFd.intValue(), 1L);\n                        }",
+    "replace": ""
+  }
+]
+```

@@ -1,0 +1,15 @@
+My improvement strategy focuses on optimizing the `HpackStaticTable.getIndexInsensitive` method, which is a key performance hotspot identified by the provided benchmark.
+
+The original implementation iterates through the static table to find a matching header name and value. However, even after finding the first entry for a given header name, it continues to scan the rest of the table if the value doesn't match. This is inefficient because entries with the same header name are grouped together sequentially in the static table.
+
+My change corrects this by first looking up the initial index for the header name. It then iterates only through the subsequent entries that have the same header name. To make this check efficient, it uses reference equality (`==`) on the header name, which is safe because all identical header names in the static table are represented by the same cached `AsciiString` object. This change significantly reduces unnecessary comparisons and iterations, especially for headers that exist in the table but with a non-matching value, or for headers that have multiple values in the table.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "    static int getIndexInsensitive(CharSequence name, CharSequence value) {\n        int index = getIndex(name);\n        if (index == -1) {\n            return -1;\n        }\n\n        // Note this assumes all entries for a given header field are sequential.\n        while (index <= length) {\n            HpackHeaderField entry = getEntry(index);\n            if (equalsVariableTime(name, entry.name) && equalsVariableTime(value, entry.value)) {\n                return index;\n            }\n            index++;\n        }\n\n        return -1;\n    }",
+    "replace": "    static int getIndexInsensitive(CharSequence name, CharSequence value) {\n        int index = getIndex(name);\n        if (index == -1) {\n            return -1;\n        }\n\n        HpackHeaderField entry = getEntry(index);\n        if (equalsVariableTime(value, entry.value)) {\n            return index;\n        }\n\n        // Note this assumes all entries for a given header field are sequential,\n        // and all names for the same header are the same object.\n        CharSequence entryName = entry.name;\n        for (index++; index <= length; index++) {\n            entry = getEntry(index);\n            if (entry.name != entryName) {\n                break;\n            }\n            if (equalsVariableTime(value, entry.value)) {\n                return index;\n            }\n        }\n\n        return -1;\n    }"
+  }
+]
+```

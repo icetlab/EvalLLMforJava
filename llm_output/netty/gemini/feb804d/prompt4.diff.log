@@ -1,0 +1,34 @@
+The performance issue is that scheduling a task from outside an `EventExecutor` thread causes at least two object allocations: one for the `ScheduledFutureTask` and another for a `Runnable` that enqueues this task. The allocation for the `Runnable` is unnecessary and can be avoided.
+
+My approach is to make the `ScheduledFutureTask` itself perform the enqueuing logic. This is achieved by introducing a `needsSchedule` flag to the `ScheduledFutureTask`.
+
+1.  When a task is scheduled from an external thread, I'll set the `needsSchedule` flag on the `ScheduledFutureTask` instance and submit the task itself to the `EventExecutor`.
+2.  The `run()` method of `ScheduledFutureTask` is modified to check this flag. If set, instead of executing the user's code, it will add itself to the `EventExecutor`'s scheduled task queue.
+3.  This change eliminates the need for an intermediate `Runnable` wrapper, thus reducing object allocation and garbage collection pressure, especially when many tasks are scheduled from other threads.
+
+This optimization is implemented across `AbstractScheduledEventExecutor` and `ScheduledFutureTask` without altering `PromiseTask`, ensuring the change is localized to scheduling logic.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "        } else {\n            final long deadlineNanos = task.deadlineNanos();\n            final Runnable addToQueue = new Runnable() {\n                @Override\n                public void run() {\n                    scheduledTaskQueue().add(task.setId(nextTaskId++));\n                }\n            };\n            if (beforeScheduledTaskSubmitted(deadlineNanos)) {\n                execute(addToQueue);\n            } else {\n                lazyExecute(addToQueue);\n                // Second hook after scheduling to facilitate race-avoidance\n                if (afterScheduledTaskSubmitted(deadlineNanos)) {\n                    execute(WAKEUP_TASK);\n                }\n            }\n        }",
+    "replace": "        } else {\n            final long deadlineNanos = task.deadlineNanos();\n            if (beforeScheduledTaskSubmitted(deadlineNanos)) {\n                execute(task.setScheduled());\n            } else {\n                lazyExecute(task.setScheduled());\n                // Second hook after scheduling to facilitate race-avoidance\n                if (afterScheduledTaskSubmitted(deadlineNanos)) {\n                    execute(WAKEUP_TASK);\n                }\n            }\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    private int queueIndex = INDEX_NOT_IN_QUEUE;",
+    "replace": "    private int queueIndex = INDEX_NOT_IN_QUEUE;\n\n    private boolean needsSchedule;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    ScheduledFutureTask<V> setId(long id) {\n        this.id = id;\n        return this;\n    }",
+    "replace": "    ScheduledFutureTask<V> setId(long id) {\n        this.id = id;\n        return this;\n    }\n\n    ScheduledFutureTask<V> setScheduled() {\n        needsSchedule = true;\n        return this;\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    @Override\n    public void run() {\n        assert executor().inEventLoop();\n        try {\n            if (periodNanos == 0) {\n                if (setUncancellableInternal()) {\n                    V result = runTask();\n                    setSuccessInternal(result);\n                }\n            } else {\n                // check if is done as it may was cancelled\n                if (!isCancelled()) {\n                    runTask();\n                    if (!executor().isShutdown()) {\n                        if (periodNanos > 0) {\n                            deadlineNanos += periodNanos;\n                        } else {\n                            deadlineNanos = nanoTime() - periodNanos;\n                        }\n                        if (!isCancelled()) {\n                            // scheduledTaskQueue can never be null as we lazy init it before submit the task!\n                            Queue<ScheduledFutureTask<?>> scheduledTaskQueue =\n                                    ((AbstractScheduledEventExecutor) executor()).scheduledTaskQueue;\n                            assert scheduledTaskQueue != null;\n                            scheduledTaskQueue.add(this);\n                        }\n                    }\n                }\n            }\n        } catch (Throwable cause) {\n            setFailureInternal(cause);\n        }\n    }",
+    "replace": "    @Override\n    public void run() {\n        assert executor().inEventLoop();\n        if (needsSchedule) {\n            needsSchedule = false;\n            if (!isCancelled()) {\n                AbstractScheduledEventExecutor exec = (AbstractScheduledEventExecutor) executor();\n                exec.scheduledTaskQueue().add(this.setId(exec.nextTaskId++));\n            }\n            return;\n        }\n        try {\n            if (periodNanos == 0) {\n                if (setUncancellableInternal()) {\n                    V result = runTask();\n                    setSuccessInternal(result);\n                }\n            } else {\n                // check if is done as it may was cancelled\n                if (!isCancelled()) {\n                    runTask();\n                    if (!executor().isShutdown()) {\n                        if (periodNanos > 0) {\n                            deadlineNanos += periodNanos;\n                        } else {\n                            deadlineNanos = nanoTime() - periodNanos;\n                        }\n                        if (!isCancelled()) {\n                            // scheduledTaskQueue can never be null as we lazy init it before submit the task!\n                            Queue<ScheduledFutureTask<?>> scheduledTaskQueue =\n                                    ((AbstractScheduledEventExecutor) executor()).scheduledTaskQueue;\n                            assert scheduledTaskQueue != null;\n                            scheduledTaskQueue.add(this);\n                        }\n                    }\n                }\n            }\n        } catch (Throwable cause) {\n            setFailureInternal(cause);\n        }\n    }"
+  }
+]
+```

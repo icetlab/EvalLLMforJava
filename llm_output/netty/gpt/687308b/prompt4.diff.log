@@ -1,0 +1,16 @@
+I have added a fast-path in encodeComponent to detect when a component contains only unreserved characters and can be appended in one go, reducing per-character overhead. A new helper method isSimple(CharSequence) was introduced for this check.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java",
+    "search": "private void encodeComponent(CharSequence s) {\n        if (charset == null) {\n            encodeUtf8Component(s);\n        } else {\n            encodeNonUtf8Component(s);\n        }\n    }",
+    "replace": "private void encodeComponent(CharSequence s) {\n        if (isSimple(s)) {\n            uriBuilder.append(s);\n            return;\n        }\n        if (charset == null) {\n            encodeUtf8Component(s);\n        } else {\n            encodeNonUtf8Component(s);\n        }\n    }"
+  },
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java",
+    "search": "private static boolean dontNeedEncoding(char ch) {\n        return ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9'\n                || ch == '-' || ch == '_' || ch == '.' || ch == '*';\n    }",
+    "replace": "private static boolean dontNeedEncoding(char ch) {\n        return ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9'\n                || ch == '-' || ch == '_' || ch == '.' || ch == '*';\n    }\n\n    private static boolean isSimple(CharSequence s) {\n        for (int i = 0, len = s.length(); i < len; i++) {\n            if (!dontNeedEncoding(s.charAt(i))) {\n                return false;\n            }\n        }\n        return true;\n    }"
+  }
+]
+```

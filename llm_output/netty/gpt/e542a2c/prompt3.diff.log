@@ -1,0 +1,26 @@
+I have inlined and simplified the exception message formatting in hot bounds‐checking paths to avoid the cost of String.format, replacing it with direct string concatenation. This reduces overhead when exceptions are thrown.
+
+```json
+[
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "private static void checkIndexBounds(final int readerIndex, final int writerIndex, final int capacity) {\n        if (readerIndex < 0 || readerIndex > writerIndex || writerIndex > capacity) {\n            throw new IndexOutOfBoundsException(String.format(\n                    \"readerIndex: %d, writerIndex: %d (expected: 0 <= readerIndex <= writerIndex <= capacity(%d))\",\n                    readerIndex, writerIndex, capacity));\n        }\n    }",
+    "replace": "private static void checkIndexBounds(final int readerIndex, final int writerIndex, final int capacity) {\n        if (readerIndex < 0 || readerIndex > writerIndex || writerIndex > capacity) {\n            throw new IndexOutOfBoundsException(\n                \"readerIndex: \" + readerIndex +\n                \", writerIndex: \" + writerIndex +\n                \" (expected: 0 <= readerIndex <= writerIndex <= capacity(\" + capacity + \"))\"\n            );\n        }\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "private static void checkRangeBounds(final int index, final int fieldLength, final int capacity) {\n        if (isOutOfBounds(index, fieldLength, capacity)) {\n            throw new IndexOutOfBoundsException(String.format(\n                    \"index: %d, length: %d (expected: range(0, %d))\", index, fieldLength, capacity));\n        }\n    }",
+    "replace": "private static void checkRangeBounds(final int index, final int fieldLength, final int capacity) {\n        if (isOutOfBounds(index, fieldLength, capacity)) {\n            throw new IndexOutOfBoundsException(\n                \"index: \" + index +\n                \", length: \" + fieldLength +\n                \" (expected: range(0, \" + capacity + \"))\"\n            );\n        }\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "private void checkReadableBytes0(int minimumReadableBytes) {\n        ensureAccessible();\n        if (checkBounds) {\n            if (readerIndex > writerIndex - minimumReadableBytes) {\n                throw new IndexOutOfBoundsException(String.format(\n                        \"readerIndex(%d) + length(%d) exceeds writerIndex(%d): %s\",\n                        readerIndex, minimumReadableBytes, writerIndex, this));\n            }\n        }\n    }",
+    "replace": "private void checkReadableBytes0(int minimumReadableBytes) {\n        ensureAccessible();\n        if (checkBounds) {\n            if (readerIndex > writerIndex - minimumReadableBytes) {\n                throw new IndexOutOfBoundsException(\n                    \"readerIndex(\" + readerIndex +\n                    \") + length(\" + minimumReadableBytes +\n                    \") exceeds writerIndex(\" + writerIndex + \"): \" + this\n                );\n            }\n        }\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "if (checkBounds) {\n            if (minWritableBytes > maxCapacity - writerIndex) {\n                throw new IndexOutOfBoundsException(String.format(\n                        \"writerIndex(%d) + minWritableBytes(%d) exceeds maxCapacity(%d): %s\",\n                        writerIndex, minWritableBytes, maxCapacity, this));\n            }\n        }",
+    "replace": "if (checkBounds) {\n            if (minWritableBytes > maxCapacity - writerIndex) {\n                throw new IndexOutOfBoundsException(\n                    \"writerIndex(\" + writerIndex +\n                    \") + minWritableBytes(\" + minWritableBytes +\n                    \") exceeds maxCapacity(\" + maxCapacity + \"): \" + this\n                );\n            }\n        }"
+  }
+]
+```

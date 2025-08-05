@@ -1,0 +1,16 @@
+I’ve added reusable ThreadLocal buffers for `ByteBuffer` and `CharBuffer` to avoid allocating new buffers on each percent-decoding, reducing GC pressure and improving throughput in hot decoding paths.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java",
+    "search": "private static final int DEFAULT_MAX_PARAMS = 1024;",
+    "replace": "private static final int DEFAULT_MAX_PARAMS = 1024;\n\n    // Reusable buffers for decoding to reduce allocations\n    private static final ThreadLocal<ByteBuffer> DECODER_BYTEBUF = ThreadLocal.withInitial(() -> ByteBuffer.allocate(1024));\n    private static final ThreadLocal<CharBuffer> DECODER_CHARBUF = ThreadLocal.withInitial(() -> CharBuffer.allocate(1024));"
+  },
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java",
+    "search": "int decodedCapacity = (toExcluded - firstEscaped) / 3;\n        ByteBuffer byteBuf = ByteBuffer.allocate(decodedCapacity);\n        CharBuffer charBuf = CharBuffer.allocate(decodedCapacity);",
+    "replace": "int decodedCapacity = (toExcluded - firstEscaped) / 3;\n        // Reuse buffers from ThreadLocal to reduce allocations\n        ByteBuffer byteBuf = DECODER_BYTEBUF.get();\n        if (byteBuf.capacity() < decodedCapacity) {\n            byteBuf = ByteBuffer.allocate(decodedCapacity);\n            DECODER_BYTEBUF.set(byteBuf);\n        }\n        CharBuffer charBuf = DECODER_CHARBUF.get();\n        if (charBuf.capacity() < decodedCapacity) {\n            charBuf = CharBuffer.allocate(decodedCapacity);\n            DECODER_CHARBUF.set(charBuf);\n        }"
+  }
+]
+```

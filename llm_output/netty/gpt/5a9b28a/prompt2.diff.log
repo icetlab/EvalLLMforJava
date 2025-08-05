@@ -1,0 +1,11 @@
+I’ve replaced calls to ArrayDeque.pollFirst() with the more efficient poll() method.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "DefaultHandle<T> handle = batch.pollFirst();",
+    "replace": "DefaultHandle<T> handle = batch.poll();"
+  }
+]
+```

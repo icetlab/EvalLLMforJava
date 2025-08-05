@@ -1,0 +1,11 @@
+The primary improvement here is to simplify the exception handling in `DefaultHttp2HeadersEncoder.encodeHeaders` by collapsing the two `catch` clauses into one. This reduces bytecode size and can help the JIT generate tighter machine code, with no change in observable behavior or test outcomes.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/DefaultHttp2HeadersEncoder.java",
+    "search": "        try {\n            // If there was a change in the table size, serialize the output from the hpackEncoder\n            // resulting from that change.\n            if (tableSizeChangeOutput.isReadable()) {\n                buffer.writeBytes(tableSizeChangeOutput);\n                tableSizeChangeOutput.clear();\n            }\n\n            hpackEncoder.encodeHeaders(streamId, buffer, headers, sensitivityDetector);\n        } catch (Http2Exception e) {\n            throw e;\n        } catch (Throwable t) {\n            throw connectionError(COMPRESSION_ERROR, t, \"Failed encoding headers block: %s\", t.getMessage());\n        }",
+    "replace": "        try {\n            // If there was a change in the table size, serialize the output from the hpackEncoder\n            // resulting from that change.\n            if (tableSizeChangeOutput.isReadable()) {\n                buffer.writeBytes(tableSizeChangeOutput);\n                tableSizeChangeOutput.clear();\n            }\n\n            hpackEncoder.encodeHeaders(streamId, buffer, headers, sensitivityDetector);\n        } catch (Throwable t) {\n            if (t instanceof Http2Exception) {\n                throw (Http2Exception) t;\n            }\n            throw connectionError(COMPRESSION_ERROR, t, \"Failed encoding headers block: %s\", t.getMessage());\n        }"
+  }
+]
+```

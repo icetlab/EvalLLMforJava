@@ -1,0 +1,37 @@
+To improve performance when scheduling tasks from a different thread, I will eliminate an unnecessary `Runnable` allocation. The current implementation creates a new `Runnable` to wrap the action of adding a `ScheduledFutureTask` to the priority queue.
+
+My optimization incorporates this logic directly into the `ScheduledFutureTask` itself. Here's how:
+
+1.  **In `AbstractScheduledEventExecutor`**: I'll modify the `schedule` method. Instead of creating a new `Runnable` to add the task to the queue, it will now directly pass the `ScheduledFutureTask` to the executor.
+
+2.  **In `ScheduledFutureTask`**:
+    *   I'll introduce a new boolean field, `enqueued`, to track if the task has been added to the scheduled task queue.
+    *   I'll override `priorityQueueIndex(...)` to set the `enqueued` flag to `true` when the task is added to the queue.
+    *   I'll update the `run()` method. It will now first check the `enqueued` flag. If `false`, it will add itself to the scheduled task queue (this is the path for tasks scheduled from external threads). If `true`, it will proceed with its normal execution logic.
+
+This approach avoids the extra object allocation for the wrapper `Runnable` on a hot path, reducing garbage collection pressure, while preserving all existing functionality.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "final long deadlineNanos = task.deadlineNanos();\n            final Runnable addToQueue = new Runnable() {\n                @Override\n                public void run() {\n                    scheduledTaskQueue().add(task.setId(nextTaskId++));\n                }\n            };\n            if (beforeScheduledTaskSubmitted(deadlineNanos)) {\n                execute(addToQueue);\n            } else {\n                lazyExecute(addToQueue);\n                // Second hook after scheduling to facilitate race-avoidance\n                if (afterScheduledTaskSubmitted(deadlineNanos)) {\n                    execute(WAKEUP_TASK);\n                }\n            }",
+    "replace": "final long deadlineNanos = task.deadlineNanos();\n            if (beforeScheduledTaskSubmitted(deadlineNanos)) {\n                execute(task);\n            } else {\n                lazyExecute(task);\n                // Second hook after scheduling to facilitate race-avoidance\n                if (afterScheduledTaskSubmitted(deadlineNanos)) {\n                    execute(WAKEUP_TASK);\n                }\n            }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "private final long periodNanos;\n\n    private int queueIndex = INDEX_NOT_IN_QUEUE;",
+    "replace": "private final long periodNanos;\n\n    private int queueIndex = INDEX_NOT_IN_QUEUE;\n\n    private boolean enqueued;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "@Override\n    public void run() {\n        assert executor().inEventLoop();\n        try {\n            if (periodNanos == 0) {\n                if (setUncancellableInternal()) {\n                    V result = runTask();\n                    setSuccessInternal(result);\n                }\n            } else {\n                // check if is done as it may was cancelled\n                if (!isCancelled()) {\n                    runTask();\n                    if (!executor().isShutdown()) {\n                        if (periodNanos > 0) {\n                            deadlineNanos += periodNanos;\n                        } else {\n                            deadlineNanos = nanoTime() - periodNanos;\n                        }\n                        if (!isCancelled()) {\n                            // scheduledTaskQueue can never be null as we lazy init it before submit the task!\n                            Queue<ScheduledFutureTask<?>> scheduledTaskQueue =\n                                    ((AbstractScheduledEventExecutor) executor()).scheduledTaskQueue;\n                            assert scheduledTaskQueue != null;\n                            scheduledTaskQueue.add(this);\n                        }\n                    }\n                }\n            }\n        } catch (Throwable cause) {\n            setFailureInternal(cause);\n        }\n    }",
+    "replace": "@Override\n    public void run() {\n        assert executor().inEventLoop();\n        if (!enqueued) {\n            AbstractScheduledEventExecutor exec = (AbstractScheduledEventExecutor) executor();\n            exec.scheduledTaskQueue().add(setId(exec.nextTaskId++));\n            return;\n        }\n        try {\n            if (periodNanos == 0) {\n                if (setUncancellableInternal()) {\n                    V result = runTask();\n                    setSuccessInternal(result);\n                }\n            } else {\n                // check if is done as it may was cancelled\n                if (!isCancelled()) {\n                    runTask();\n                    if (!executor().isShutdown()) {\n                        if (periodNanos > 0) {\n                            deadlineNanos += periodNanos;\n                        } else {\n                            deadlineNanos = nanoTime() - periodNanos;\n                        }\n                        if (!isCancelled()) {\n                            // scheduledTaskQueue can never be null as we lazy init it before submit the task!\n                            Queue<ScheduledFutureTask<?>> scheduledTaskQueue =\n                                    ((AbstractScheduledEventExecutor) executor()).scheduledTaskQueue;\n                            assert scheduledTaskQueue != null;\n                            scheduledTaskQueue.add(this);\n                        }\n                    }\n                }\n            }\n        } catch (Throwable cause) {\n            setFailureInternal(cause);\n        }\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "@Override\n    public void priorityQueueIndex(DefaultPriorityQueue<?> queue, int i) {\n        queueIndex = i;\n    }",
+    "replace": "@Override\n    public void priorityQueueIndex(DefaultPriorityQueue<?> queue, int i) {\n        queueIndex = i;\n        if (i != INDEX_NOT_IN_QUEUE) {\n            enqueued = true;\n        }\n    }"
+  }
+]
+```

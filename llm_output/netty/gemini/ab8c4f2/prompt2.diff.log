@@ -1,0 +1,11 @@
+This change improves the performance of searching for a header field in the HPACK static table. The static table is organized such that entries with the same header name are sequential. The original implementation performed a linear scan that continued even after all possible matches for a given name had been checked. The improved version short-circuits this scan by breaking the loop as soon as an entry with a non-matching name is found, which is possible due to the sequential ordering.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "        // Note this assumes all entries for a given header field are sequential.\n        while (index <= length) {\n            HpackHeaderField entry = getEntry(index);\n            if (equalsVariableTime(name, entry.name) && equalsVariableTime(value, entry.value)) {\n                return index;\n            }\n            index++;\n        }",
+    "replace": "        // Note this assumes all entries for a given header field are sequential.\n        while (index <= length) {\n            HpackHeaderField entry = getEntry(index);\n            if (!equalsVariableTime(name, entry.name)) {\n                break;\n            }\n            if (equalsVariableTime(value, entry.value)) {\n                return index;\n            }\n            index++;\n        }"
+  }
+]
+```

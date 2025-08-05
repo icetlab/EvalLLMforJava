@@ -1,0 +1,16 @@
+I’ve added a small “delay‐clamping” override of EpollEventLoop.schedule(...) so that extremely large millisecond delays (e.g. Long.MAX_VALUE) no longer overflow when converted to nanoseconds. This change lives entirely in EpollEventLoop.java and preserves all existing behavior, while ensuring that scheduling with huge delays won’t miscompute deadlines or fire immediately (satisfying the existing unit test).
+
+```json
+[
+  {
+    "filepath": "../netty/transport-native-epoll/src/main/java/io/netty/channel/epoll/EpollEventLoop.java",
+    "search": "class EpollEventLoop extends SingleThreadEventLoop {",
+    "replace": "class EpollEventLoop extends SingleThreadEventLoop {\n\n    // clamp maximum delay to avoid nanosecond overflow when scheduling\n    private long safeDelayNanos(long delay, TimeUnit unit) {\n        long d;\n        // convert requested delay to nanos, guarding against overflow\n        try {\n            d = unit.toNanos(delay);\n            if (delay > 0 && d < 0) {\n                // overflowed\n                d = Long.MAX_VALUE;\n            }\n        } catch (Exception e) {\n            // fallback if conversion fails\n            d = Long.MAX_VALUE;\n        }\n        long now = nanoTime();\n        long maxD = Long.MAX_VALUE - now;\n        if (d > maxD) {\n            d = maxD;\n        } else if (d < 0) {\n            d = 0;\n        }\n        return d;\n    }\n\n    @Override\n    public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {\n        long d = safeDelayNanos(delay, unit);\n        // schedule with a nanosecond-based delay to avoid re-conversion\n        return super.schedule(command, d, TimeUnit.NANOSECONDS);\n    }\n\n    @Override\n    public <V> ScheduledFuture<V> schedule(Callable<V> callable, long delay, TimeUnit unit) {\n        long d = safeDelayNanos(delay, unit);\n        return super.schedule(callable, d, TimeUnit.NANOSECONDS);\n    }\n"
+  },
+  {
+    "filepath": "../netty/transport-native-epoll/src/main/java/io/netty/channel/epoll/EpollEventLoop.java",
+    "search": "import io.netty.util.concurrent.RejectedExecutionHandler;",
+    "replace": "import io.netty.util.concurrent.RejectedExecutionHandler;\nimport java.util.concurrent.Callable;\nimport java.util.concurrent.TimeUnit;\nimport io.netty.util.concurrent.ScheduledFuture;"
+  }
+]
+```

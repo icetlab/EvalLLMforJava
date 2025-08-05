@@ -1,0 +1,47 @@
+My improvement strategy focuses on several micro-optimizations within `AbstractScheduledEventExecutor` and `ScheduledFutureTask`. The key changes are:
+
+1.  **Refactoring for Performance and Readability**:
+    *   In `AbstractScheduledEventExecutor`, the anonymous `Comparator` class for `ScheduledFutureTask` is replaced with a more efficient and modern method reference (`ScheduledFutureTask::compareTo`). This can reduce startup overhead and may allow for better JIT compiler optimizations.
+    *   The `cancelScheduledTasks` method is updated to pre-size the array for `toArray`, avoiding an internal reallocation and reflection-based array creation within the `DefaultPriorityQueue`, which is beneficial when clearing many tasks.
+    *   Code is deduplicated in `pollScheduledTask` by reusing `peekScheduledTask`, improving maintainability.
+
+2.  **Reducing Casting Overhead in `ScheduledFutureTask`**:
+    *   The `executor()` method in `ScheduledFutureTask` is overridden to return the more specific `AbstractScheduledEventExecutor` type.
+    *   This covariant override allows for the removal of now-redundant casts in the `run()` and `cancel()` methods, resulting in cleaner code and eliminating the overhead of `checkcast` bytecode instructions in these frequently executed paths.
+
+While the core issue of repeated `System.nanoTime()` calls during bulk scheduling is difficult to address without broader changes to the executor framework, these targeted improvements will enhance performance by reducing object allocations, streamlining code execution paths, and improving overall code quality.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "    private static final Comparator<ScheduledFutureTask<?>> SCHEDULED_FUTURE_TASK_COMPARATOR =\n            new Comparator<ScheduledFutureTask<?>>() {\n                @Override\n                public int compare(ScheduledFutureTask<?> o1, ScheduledFutureTask<?> o2) {\n                    return o1.compareTo(o2);\n                }\n            };",
+    "replace": "    private static final Comparator<ScheduledFutureTask<?>> SCHEDULED_FUTURE_TASK_COMPARATOR =\n            ScheduledFutureTask::compareTo;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "        final ScheduledFutureTask<?>[] scheduledTasks =\n                scheduledTaskQueue.toArray(new ScheduledFutureTask<?>[0]);",
+    "replace": "        final ScheduledFutureTask<?>[] scheduledTasks =\n                scheduledTaskQueue.toArray(new ScheduledFutureTask[scheduledTaskQueue.size()]);"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "        Queue<ScheduledFutureTask<?>> scheduledTaskQueue = this.scheduledTaskQueue;\n        ScheduledFutureTask<?> scheduledTask = scheduledTaskQueue == null ? null : scheduledTaskQueue.peek();",
+    "replace": "        ScheduledFutureTask<?> scheduledTask = peekScheduledTask();"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    @Override\n    protected EventExecutor executor() {\n        return super.executor();\n    }",
+    "replace": "    @Override\n    protected AbstractScheduledEventExecutor executor() {\n        return (AbstractScheduledEventExecutor) super.executor();\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "                            // scheduledTaskQueue can never be null as we lazy init it before submit the task!\n                            Queue<ScheduledFutureTask<?>> scheduledTaskQueue =\n                                    ((AbstractScheduledEventExecutor) executor()).scheduledTaskQueue;",
+    "replace": "                            // scheduledTaskQueue can never be null as we lazy init it before submit the task!\n                            Queue<ScheduledFutureTask<?>> scheduledTaskQueue = executor().scheduledTaskQueue;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "        if (canceled) {\n            ((AbstractScheduledEventExecutor) executor()).removeScheduled(this);\n        }",
+    "replace": "        if (canceled) {\n            executor().removeScheduled(this);\n        }"
+  }
+]
+```

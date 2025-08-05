@@ -1,0 +1,11 @@
+The overall improvement is to refactor the conditional logic within the `LocalPool.release` method. The original implementation used a complex `if-else if-else` chain. The new implementation simplifies this by first checking for the common same-thread recycling case and returning early if the local batch has capacity. It then checks for the terminated thread case and also returns early. All other cases (cross-thread recycling or same-thread with a full local batch) fall through to a single shared code path that offers the handle to the MPSC queue. This refactoring improves readability and may lead to better performance by making the control flow easier for the JIT compiler to optimize, particularly for the hot path of same-thread recycling.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "            Thread owner = this.owner;\n            if (owner != null && Thread.currentThread() == owner && batch.size() < chunkSize) {\n                accept(handle);\n            } else if (owner != null && isTerminated(owner)) {\n                this.owner = null;\n                pooledHandles = null;\n            } else {\n                MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n                if (handles != null) {\n                    handles.relaxedOffer(handle);\n                }\n            }",
+    "replace": "            Thread owner = this.owner;\n            if (owner == Thread.currentThread()) {\n                if (batch.size() < chunkSize) {\n                    accept(handle);\n                    return;\n                }\n            } else if (owner != null && isTerminated(owner)) {\n                this.owner = null;\n                pooledHandles = null;\n                return;\n            }\n\n            MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n            if (handles != null) {\n                handles.relaxedOffer(handle);\n            }"
+  }
+]
+```

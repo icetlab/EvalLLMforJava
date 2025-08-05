@@ -1,0 +1,24 @@
+I’ve optimized query parsing by:
+1. Limiting the scan to just the raw query string instead of the full URI.
+2. Replacing the manual character loop in `findPathEndIndex` with `String.indexOf`.
+3. Pre-sizing the `LinkedHashMap` for parameters based on the maximum expected count.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java",
+    "search": "if (params == null) {\n            params = decodeParams(uri, pathEndIdx(), charset, maxParams, semicolonIsNormalChar);\n        }",
+    "replace": "if (params == null) {\n            String rawQuery = rawQuery();\n            params = decodeParams(rawQuery, 0, charset, maxParams, semicolonIsNormalChar);\n        }"
+  },
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java",
+    "search": "private static int findPathEndIndex(String uri) {\n        int len = uri.length();\n        for (int i = 0; i < len; i++) {\n            char c = uri.charAt(i);\n            if (c == '?' || c == '#') {\n                return i;\n            }\n        }\n        return len;\n    }",
+    "replace": "private static int findPathEndIndex(String uri) {\n        int q = uri.indexOf('?');\n        int h = uri.indexOf('#');\n        if (q == -1) {\n            return h == -1 ? uri.length() : h;\n        }\n        if (h == -1) {\n            return q;\n        }\n        return Math.min(q, h);\n    }"
+  },
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java",
+    "search": "Map<String, List<String>> params = new LinkedHashMap<String, List<String>>();",
+    "replace": "Map<String, List<String>> params = new LinkedHashMap<String, List<String>>(Math.min(paramsLimit, 16));"
+  }
+]
+```

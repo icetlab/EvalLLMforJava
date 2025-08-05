@@ -1,0 +1,33 @@
+The current implementation of `ByteBufUtil.decodeString` involves unnecessary memory copies and complex logic using `CharsetDecoder` and a thread-local `CharBuffer`. This is particularly inefficient for composite buffers, which are copied to a temporary heap buffer before decoding.
+
+My improvement simplifies this process by leveraging the highly optimized `new String(byte[], ...)` constructor.
+
+1.  For `ByteBuf` instances that expose a single NIO `ByteBuffer` with a backing array (like heap buffers), I create the `String` directly from the buffer's array without any intermediate copies. This is the fastest path.
+2.  For other buffer types, such as direct or composite buffers, I fall back to copying the bytes into a new `byte[]` and then creating the `String`. While this still involves a copy, it's more efficient than the original implementation, which could involve multiple copies (e.g., to a temporary heap buffer, then to a `CharBuffer`, and finally into a `String`).
+
+This change also allows for the removal of the now-unused `CHAR_BUFFERS` thread-local and its related configuration, simplifying the `ByteBufUtil` class.
+
+```json
+[
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "    private static final InternalLogger logger = InternalLoggerFactory.getInstance(ByteBufUtil.class);\n    private static final FastThreadLocal<CharBuffer> CHAR_BUFFERS = new FastThreadLocal<CharBuffer>() {\n        @Override\n        protected CharBuffer initialValue() throws Exception {\n            return CharBuffer.allocate(1024);\n        }\n    };",
+    "replace": "    private static final InternalLogger logger = InternalLoggerFactory.getInstance(ByteBufUtil.class);"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "    private static final byte WRITE_UTF_UNKNOWN = (byte) '?';\n    private static final int MAX_CHAR_BUFFER_SIZE;",
+    "replace": "    private static final byte WRITE_UTF_UNKNOWN = (byte) '?';"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "        THREAD_LOCAL_BUFFER_SIZE = SystemPropertyUtil.getInt(\"io.netty.threadLocalDirectBufferSize\", 0);\n        logger.debug(\"-Dio.netty.threadLocalDirectBufferSize: {}\", THREAD_LOCAL_BUFFER_SIZE);\n\n        MAX_CHAR_BUFFER_SIZE = SystemPropertyUtil.getInt(\"io.netty.maxThreadLocalCharBufferSize\", 16 * 1024);\n        logger.debug(\"-Dio.netty.maxThreadLocalCharBufferSize: {}\", MAX_CHAR_BUFFER_SIZE);",
+    "replace": "        THREAD_LOCAL_BUFFER_SIZE = SystemPropertyUtil.getInt(\"io.netty.threadLocalDirectBufferSize\", 0);\n        logger.debug(\"-Dio.netty.threadLocalDirectBufferSize: {}\", THREAD_LOCAL_BUFFER_SIZE);"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "    static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {\n        if (len == 0) {\n            return StringUtil.EMPTY_STRING;\n        }\n        final CharsetDecoder decoder = CharsetUtil.decoder(charset);\n        final int maxLength = (int) ((double) len * decoder.maxCharsPerByte());\n        CharBuffer dst = CHAR_BUFFERS.get();\n        if (dst.length() < maxLength) {\n            dst = CharBuffer.allocate(maxLength);\n            if (maxLength <= MAX_CHAR_BUFFER_SIZE) {\n                CHAR_BUFFERS.set(dst);\n            }\n        } else {\n            dst.clear();\n        }\n        if (src.nioBufferCount() == 1) {\n            decodeString(decoder, src.nioBuffer(readerIndex, len), dst);\n        } else {\n            // We use a heap buffer as CharsetDecoder is most likely able to use a fast-path if src and dst buffers\n            // are both backed by a byte array.\n            ByteBuf buffer = src.alloc().heapBuffer(len);\n            try {\n                buffer.writeBytes(src, readerIndex, len);\n                // Use internalNioBuffer(...) to reduce object creation.\n                decodeString(decoder, buffer.internalNioBuffer(buffer.readerIndex(), len), dst);\n            } finally {\n                // Release the temporary buffer again.\n                buffer.release();\n            }\n        }\n        return dst.flip().toString();\n    }\n\n    private static void decodeString(CharsetDecoder decoder, ByteBuffer src, CharBuffer dst) {\n        try {\n            CoderResult cr = decoder.decode(src, dst, true);\n            if (!cr.isUnderflow()) {\n                cr.throwException();\n            }\n            cr = decoder.flush(dst);\n            if (!cr.isUnderflow()) {\n                cr.throwException();\n            }\n        } catch (CharacterCodingException x) {\n            throw new IllegalStateException(x);\n        }\n    }",
+    "replace": "    static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {\n        if (len == 0) {\n            return StringUtil.EMPTY_STRING;\n        }\n        if (src.nioBufferCount() == 1) {\n            ByteBuffer nioBuffer = src.nioBuffer(readerIndex, len);\n            if (nioBuffer.hasArray()) {\n                return new String(nioBuffer.array(), nioBuffer.arrayOffset() + nioBuffer.position(),\n                                  nioBuffer.remaining(), charset);\n            }\n        }\n        byte[] bytes = new byte[len];\n        src.getBytes(readerIndex, bytes);\n        return new String(bytes, 0, len, charset);\n    }"
+  }
+]
+```

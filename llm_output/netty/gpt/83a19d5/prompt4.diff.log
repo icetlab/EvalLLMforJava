@@ -1,0 +1,26 @@
+I’ve added fast-paths for the very common increment/decrement of one using AtomicIntegerFieldUpdater.getAndAdd to reduce CAS loops, while preserving full safety and falling back to the original loops for other values or error cases.
+
+```json
+[
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java",
+    "search": "private ByteBuf retain0(int increment) {\n        for (;;) {",
+    "replace": "private ByteBuf retain0(int increment) {\n        // fast-path for single retain\n        if (increment == 1) {\n            int prev = refCntUpdater.getAndAdd(this, 1);\n            if (prev > 0) {\n                return this;\n            }\n            // undo and error on invalid state\n            refCntUpdater.getAndAdd(this, -1);\n            throw new IllegalReferenceCountException(prev, 1);\n        }\n        for (;;) {"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java",
+    "search": "private boolean release0(int decrement) {\n        for (;;) {",
+    "replace": "private boolean release0(int decrement) {\n        // fast-path for single release\n        if (decrement == 1) {\n            int prev = refCntUpdater.getAndAdd(this, -1);\n            if (prev > 1) {\n                return false;\n            }\n            if (prev == 1) {\n                deallocate();\n                return true;\n            }\n            // undo and error on invalid state\n            refCntUpdater.getAndAdd(this, 1);\n            throw new IllegalReferenceCountException(prev, -1);\n        }\n        for (;;) {"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/AbstractReferenceCounted.java",
+    "search": "private ReferenceCounted retain0(int increment) {\n        for (;;) {",
+    "replace": "private ReferenceCounted retain0(int increment) {\n        // fast-path for single retain\n        if (increment == 1) {\n            int prev = refCntUpdater.getAndAdd(this, 1);\n            if (prev > 0) {\n                return this;\n            }\n            // undo and error on invalid state\n            refCntUpdater.getAndAdd(this, -1);\n            throw new IllegalReferenceCountException(prev, 1);\n        }\n        for (;;) {"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/AbstractReferenceCounted.java",
+    "search": "private boolean release0(int decrement) {\n        for (;;) {",
+    "replace": "private boolean release0(int decrement) {\n        // fast-path for single release\n        if (decrement == 1) {\n            int prev = refCntUpdater.getAndAdd(this, -1);\n            if (prev > 1) {\n                return false;\n            }\n            if (prev == 1) {\n                deallocate();\n                return true;\n            }\n            // undo and error on invalid state\n            refCntUpdater.getAndAdd(this, 1);\n            throw new IllegalReferenceCountException(prev, -decrement);\n        }\n        for (;;) {"
+  }
+]
+```

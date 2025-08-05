@@ -1,0 +1,16 @@
+The intent is to add a fast‐path in both `encodeNonUtf8Component` and `encodeUtf8Component` so that when the input consists entirely of characters that do not need encoding, we append the whole sequence at once and skip the per‐char encoding loops.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java",
+    "search": "private void encodeNonUtf8Component(CharSequence s) {\n        //Don't allocate memory until needed",
+    "replace": "private void encodeNonUtf8Component(CharSequence s) {\n        // Fast‐path: if no characters need encoding, append entire component\n        int len = s.length();\n        boolean needEncode = false;\n        for (int i = 0; i < len; i++) {\n            if (!dontNeedEncoding(s.charAt(i))) {\n                needEncode = true;\n                break;\n            }\n        }\n        if (!needEncode) {\n            uriBuilder.append(s);\n            return;\n        }\n        //Don't allocate memory until needed"
+  },
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java",
+    "search": "private void encodeUtf8Component(CharSequence s) {\n        for (int i = 0, len = s.length(); i < len; i++) {",
+    "replace": "private void encodeUtf8Component(CharSequence s) {\n        // Fast‐path: if all chars are ASCII unreserved, append entire component\n        int n = s.length();\n        boolean needEncode = false;\n        for (int i = 0; i < n; i++) {\n            char c = s.charAt(i);\n            if (c >= 0x80 || !dontNeedEncoding(c)) {\n                needEncode = true;\n                break;\n            }\n        }\n        if (!needEncode) {\n            uriBuilder.append(s);\n            return;\n        }\n        for (int i = 0, len = s.length(); i < len; i++) {"
+  }
+]
+```

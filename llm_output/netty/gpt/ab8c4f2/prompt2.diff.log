@@ -1,0 +1,11 @@
+I’ve optimized the static table lookup to stop scanning once the header name no longer matches, avoiding unnecessary comparisons past the matching name group.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "while (index <= length) {\n            HpackHeaderField entry = getEntry(index);\n            if (equalsVariableTime(name, entry.name) && equalsVariableTime(value, entry.value)) {\n                return index;\n            }\n            index++;\n        }",
+    "replace": "while (index <= length) {\n            HpackHeaderField entry = getEntry(index);\n            // Stop scanning when header name no longer matches\n            if (!equalsVariableTime(name, entry.name)) {\n                break;\n            }\n            if (equalsVariableTime(value, entry.value)) {\n                return index;\n            }\n            index++;\n        }"
+  }
+]
+```

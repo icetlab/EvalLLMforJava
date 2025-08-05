@@ -1,0 +1,13 @@
+My primary optimization focuses on the `decodeComponent` method within `QueryStringDecoder`. The original implementation would allocate a `CharsetDecoder`, `ByteBuffer`, and `CharBuffer` whenever a URL component contained characters needing decoding, such as `+` or `%`. However, for components that only contain `+` and no `%`-escaped sequences, these buffer allocations are unnecessary.
+
+My change defers the allocation of these objects until a `%` character is actually encountered. This lazy initialization avoids needless object creation and memory pressure for a common use case, thereby improving performance. Additionally, the buffer capacity calculation has been refined to be more precise, allocating slightly less memory when buffers are needed.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java",
+    "search": "        if (firstEscaped == -1) {\n            return s.substring(from, toExcluded);\n        }\n\n        CharsetDecoder decoder = CharsetUtil.decoder(charset);\n\n        // Each encoded byte takes 3 characters (e.g. \"%20\")\n        int decodedCapacity = (toExcluded - firstEscaped) / 3;\n        ByteBuffer byteBuf = ByteBuffer.allocate(decodedCapacity);\n        CharBuffer charBuf = CharBuffer.allocate(decodedCapacity);\n\n        StringBuilder strBuf = new StringBuilder(len);\n        strBuf.append(s, from, firstEscaped);\n\n        for (int i = firstEscaped; i < toExcluded; i++) {\n            char c = s.charAt(i);\n            if (c != '%') {\n                strBuf.append(c != '+' || isPath? c : SPACE);\n                continue;\n            }\n\n            byteBuf.clear();",
+    "replace": "        if (firstEscaped == -1) {\n            return s.substring(from, toExcluded);\n        }\n\n        StringBuilder strBuf = new StringBuilder(len);\n        strBuf.append(s, from, firstEscaped);\n\n        CharsetDecoder decoder = null;\n        ByteBuffer byteBuf = null;\n        CharBuffer charBuf = null;\n\n        for (int i = firstEscaped; i < toExcluded; i++) {\n            char c = s.charAt(i);\n            if (c != '%') {\n                strBuf.append(c != '+' || isPath? c : SPACE);\n                continue;\n            }\n\n            if (decoder == null) {\n                // Each encoded byte takes 3 characters (e.g. \"%20\")\n                int decodedCapacity = (toExcluded - i) / 3;\n                byteBuf = ByteBuffer.allocate(decodedCapacity);\n                charBuf = CharBuffer.allocate(decodedCapacity);\n                decoder = CharsetUtil.decoder(charset);\n            }\n\n            byteBuf.clear();"
+  }
+]
+```
