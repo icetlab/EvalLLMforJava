@@ -93,8 +93,9 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
                     mvn -N io.takari:maven:wrapper
                 fi
 
-                # # Build
-                # submodule=$(echo "$source_code" | cut -d'/' -f1)
+                # Build
+                submodule=$(echo "$source_code" | cut -d'/' -f1)
+                ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true
                 # if ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true; then
                 #     echo "Build succeeded for patch: $patch_rel_path"
 
@@ -170,8 +171,8 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
 
         # Non-LLM normal flow
         # # Compile and run unit test before benchmarking
-        # submodule=$(echo "$source_code" | cut -d'/' -f1)
-        # ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true
+        submodule=$(echo "$source_code" | cut -d'/' -f1)
+        ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true
 
         # for test_path in $unittest; do
         #     test_submodule=$(echo "$test_path" | cut -d'/' -f1)
