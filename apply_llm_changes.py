@@ -118,3 +118,51 @@ def apply_diff(repo_name, commit_id, llm_log):
     except subprocess.CalledProcessError as e:
         print(f"Error getting diff patch: {e}")
         return None
+
+def batch_generate_diff(base_dir: str, repo_name: str, model_name: str):
+    """
+    Traverse llm_output/<repo_name>/<model_name> and parse each *.diff.log to generate *.diff.
+    Skips if the corresponding *.diff already exists.
+    """
+    model_dir = os.path.join(base_dir, repo_name, model_name)
+    if not os.path.isdir(model_dir):
+        print(f"Model directory {model_dir} does not exist.")
+        return
+
+    for commit_id in os.listdir(model_dir):
+        commit_path = os.path.join(model_dir, commit_id)
+        if not os.path.isdir(commit_path):
+            continue
+
+        for filename in os.listdir(commit_path):
+            if filename.endswith(".diff.log"):
+                diff_log_path = os.path.join(commit_path, filename)
+                diff_file_name = filename.replace(".diff.log", ".diff")
+                diff_file_path = os.path.join(commit_path, diff_file_name)
+
+                # Skip if .diff already exists
+                if os.path.exists(diff_file_path):
+                    print(f"Skipped {diff_file_path}, already exists.")
+                    continue
+
+                print(f"Processing {diff_log_path} ...")
+
+                # Read LLM log
+                with open(diff_log_path, 'r', encoding='utf-8') as f:
+                    llm_log = f.read()
+
+                # Apply diff
+                patch_result = apply_diff(repo_name, commit_id, llm_log)
+
+                if patch_result and not patch_result.startswith("[Format Error]"):
+                    with open(diff_file_path, 'w', encoding='utf-8') as f:
+                        f.write(patch_result)
+                    print(f"Generated {diff_file_path}")
+                else:
+                    print(f"Failed to generate diff for {diff_log_path}: {patch_result}")
+
+if __name__ == "__main__":
+    repo_name = "netty"
+    base_dir = "llm_output"
+    for model_name in os.listdir(os.path.join(base_dir, repo_name)):
+        batch_generate_diff(base_dir, repo_name, model_name)
