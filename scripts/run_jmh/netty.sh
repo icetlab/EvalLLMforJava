@@ -4,7 +4,7 @@
 usage() {
     echo "Usage:"
     echo "  $0 [-org|-dev] <csv_file>"
-    echo "  $0 -llm {gpt|gemini} <csv_file>"
+    echo "  $0 -llm <csv_file>"
     exit 1
 }
 
@@ -15,23 +15,13 @@ if [ "$#" -eq 1 ]; then
 elif [ "$#" -eq 2 ]; then
     MODE="$1"
     CSV_FILE="$2"
-elif [ "$#" -eq 3 ] && [ "$1" = "-llm" ]; then
-    MODE="-llm $2"
-    CSV_FILE="$3"
 else
     usage
 fi
 
 # Validate mode
-if [ "$MODE" != "-org" ] && \
-   [ "$MODE" != "-dev" ] && \
-   [[ "$MODE" != -llm* ]]; then
+if [ "$MODE" != "-org" ] && [ "$MODE" != "-dev" ] && [ "$MODE" != "-llm" ]; then
     usage
-fi
-
-if [[ "$MODE" == -llm* ]]; then
-    LLM_TYPE=$(echo "$MODE" | cut -d' ' -f2)
-    echo "LLM_TYPE: $LLM_TYPE"
 fi
 
 SCRIPT_DIR=$(pwd)
@@ -44,104 +34,100 @@ if [ ! -f ./mvnw ]; then
     mvn -N io.takari:maven:wrapper
 fi
 
-# # Prepare result CSV header if not exists (for LLM mode only)
-# if [[ "$MODE" == -llm* ]]; then
-#     RESULT_CSV="$SCRIPT_DIR/results_${LLM_TYPE}.csv"
-#     if ! grep -q '^patch,build,test' "$RESULT_CSV" 2>/dev/null; then
-#         echo "patch,build,test" > "$RESULT_CSV"
-#     fi
-# fi
-
 tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_hash source_code jmh_case unittest commit_url; do
-    echo "Processing commit: $commit_hash"
+    echo -e "\n Processing commit: $commit_hash"
 
-    if [[ "$MODE" == -llm* ]]; then
-        PATCH_DIR="$SCRIPT_DIR/EvalLLMforJava/llm_output/netty/${LLM_TYPE}/${id}/"
+    if [ "$MODE" = "-llm" ]; then
+        for LLM_TYPE_DIR in "$SCRIPT_DIR"/EvalLLMforJava/llm_output/netty/*; do
+            [ -d "$LLM_TYPE_DIR" ] || continue
+            LLM_TYPE=$(basename "$LLM_TYPE_DIR")
+            echo "Processing LLM_TYPE: $LLM_TYPE"
 
-        if [ ! -d "$PATCH_DIR" ]; then
-            echo "No patches found for commit $id under $PATCH_DIR"
-            continue
-        fi
-
-        for patch_file in "$PATCH_DIR"/*.diff; do
-            git reset --hard "$commit_hash"
-            git clean -fd
-            git reset HEAD~1 && git restore --staged $source_code && git restore $source_code
-
-            patch_name=$(basename "$patch_file")
-            patch_rel_path="$PATCH_DIR/${patch_name}"
-
-            echo "Applying patch: $patch_rel_path"
-
-            if git apply --ignore-whitespace "$patch_file"; then
-                echo "Patch applied successfully: $patch_rel_path"
-
-                # Workaround for version issue
-                find . -name "*.xml" -exec sed -i 's/Final-SNAPSHOT/Final/g' {} \;
-                sed -i '/<goal>check-format<\/goal>/,/<\/goals>/ {
-                /<\/goals>/ a\
-                <configuration>\
-                    <skip>true</skip>\
-                </configuration>
-                }' pom.xml
-
-                sed -i 's#<maven.compiler.source>1\.6</maven.compiler.source>#<maven.compiler.source>1.8</maven.compiler.source>#g' pom.xml
-                sed -i 's#<maven.compiler.target>1\.6</maven.compiler.target>#<maven.compiler.target>1.8</maven.compiler.target>#g' pom.xml
-
-                if [ ! -f ./mvnw ]; then
-                    echo "mvnw not found, generating Maven wrapper..."
-                    mvn -N io.takari:maven:wrapper
-                fi
-
-                # Build
-                submodule=$(echo "$source_code" | cut -d'/' -f1)
-                ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true
-                # if ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true; then
-                #     echo "Build succeeded for patch: $patch_rel_path"
-
-                #     TEST_RESULT="success"
-                #     # Run unit tests only if build succeeded
-                #     for test_path in $unittest; do
-                #         test_submodule=$(echo "$test_path" | cut -d'/' -f1)
-                #         test_file=$(basename "$test_path")
-                #         test_name="${test_file%.*}"  # Remove .java or .scala
-                #         if ! ./mvnw -pl "$test_submodule" test -Dtest="$test_name" -DfailIfNoTests=false -Dcheckstyle.skip=true; then
-                #             echo "Unit test failed: $test_name"
-                #             TEST_RESULT="failed"
-                #         fi
-                #     done
-
-                #     echo "${patch_rel_path},success,${TEST_RESULT}" >> "$RESULT_CSV"
-                # else
-                #     echo "Build failed for patch: $patch_rel_path"
-                #     echo "${patch_rel_path},failed," >> "$RESULT_CSV"
-                # fi
-
-                # benchmark
-                # Define JSON output file
-                patch_base_name="${patch_name%.diff}"
-                JSON_FILE="$PATCH_DIR/${patch_base_name}_${jmh_case}.json"
-                # Skip if JSON file already exists
-                if [ -f "$JSON_FILE" ]; then
-                    echo "JSON file already exists: $JSON_FILE, skipping."
-                    continue
-                fi
-                echo "Running JMH benchmark: $jmh_case"
-                cd microbench || { echo "microbench directory not found"; exit 1; }
-                ../mvnw -DskipTests=false -Dtest="$jmh_case" -DwarmupIterations=5 -DmeasureIterations=15 -Dforks=1 -DperfReportDir=$PATCH_DIR test
-
-                wait
-
-                # Rename the JMH result file
-                mv "$PATCH_DIR/${jmh_case}.json" "$JSON_FILE"
-
-                cd ..
-            else
-                echo "Patch failed to apply: $patch_rel_path"
-                # echo "${patch_rel_path},failed," >> "$RESULT_CSV"
+            PATCH_DIR="$LLM_TYPE_DIR/${id}"
+            if [ ! -d "$PATCH_DIR" ]; then
+                echo "No patches found for commit $id under $PATCH_DIR"
+                continue
             fi
-        done
 
+            for patch_file in "$PATCH_DIR"/*.diff; do
+                git reset --hard "$commit_hash"
+                git clean -fd
+                git reset HEAD~1 && git restore --staged $source_code && git restore $source_code
+
+                patch_name=$(basename "$patch_file")
+                patch_rel_path="$PATCH_DIR/${patch_name}"
+
+                echo "Applying patch: $patch_rel_path"
+
+                if git apply --ignore-whitespace "$patch_file"; then
+                    echo "Patch applied successfully: $patch_rel_path"
+
+                    # Workaround for version issue
+                    find . -name "*.xml" -exec sed -i 's/Final-SNAPSHOT/Final/g' {} \;
+                    sed -i '/<goal>check-format<\/goal>/,/<\/goals>/ {
+                    /<\/goals>/ a\
+                    <configuration>\
+                        <skip>true</skip>\
+                    </configuration>
+                    }' pom.xml
+
+                    sed -i 's#<maven.compiler.source>1\.6</maven.compiler.source>#<maven.compiler.source>1.8</maven.compiler.source>#g' pom.xml
+                    sed -i 's#<maven.compiler.target>1\.6</maven.compiler.target>#<maven.compiler.target>1.8</maven.compiler.target>#g' pom.xml
+
+                    if [ ! -f ./mvnw ]; then
+                        echo "mvnw not found, generating Maven wrapper..."
+                        mvn -N io.takari:maven:wrapper
+                    fi
+
+                    # Build
+                    submodule=$(echo "$source_code" | cut -d'/' -f1)
+                    ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true
+                    # if ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true; then
+                    #     echo "Build succeeded for patch: $patch_rel_path"
+
+                    #     TEST_RESULT="success"
+                    #     # Run unit tests only if build succeeded
+                    #     for test_path in $unittest; do
+                    #         test_submodule=$(echo "$test_path" | cut -d'/' -f1)
+                    #         test_file=$(basename "$test_path")
+                    #         test_name="${test_file%.*}"  # Remove .java or .scala
+                    #         if ! ./mvnw -pl "$test_submodule" test -Dtest="$test_name" -DfailIfNoTests=false -Dcheckstyle.skip=true; then
+                    #             echo "Unit test failed: $test_name"
+                    #             TEST_RESULT="failed"
+                    #         fi
+                    #     done
+
+                    #     echo "${patch_rel_path},success,${TEST_RESULT}" >> "$RESULT_CSV"
+                    # else
+                    #     echo "Build failed for patch: $patch_rel_path"
+                    #     echo "${patch_rel_path},failed," >> "$RESULT_CSV"
+                    # fi
+
+                    # benchmark
+                    # Define JSON output file
+                    patch_base_name="${patch_name%.diff}"
+                    JSON_FILE="$PATCH_DIR/${patch_base_name}_${jmh_case}.json"
+                    # Skip if JSON file already exists
+                    if [ -f "$JSON_FILE" ]; then
+                        echo "JSON file already exists: $JSON_FILE, skipping."
+                        continue
+                    fi
+                    echo "Running JMH benchmark: $jmh_case"
+                    cd microbench || { echo "microbench directory not found"; exit 1; }
+                    ../mvnw -DskipTests=false -Dtest="$jmh_case" -DwarmupIterations=5 -DmeasureIterations=15 -Dforks=1 -DperfReportDir=$PATCH_DIR test
+
+                    wait
+
+                    # Rename the JMH result file
+                    mv "$PATCH_DIR/${jmh_case}.json" "$JSON_FILE"
+
+                    cd ..
+                else
+                    echo "Patch failed to apply: $patch_rel_path"
+                    # echo "${patch_rel_path},failed," >> "$RESULT_CSV"
+                fi
+            done
+        done
     else
         # Reset repository to specific commit
         git clean -fd
