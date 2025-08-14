@@ -109,16 +109,7 @@ def get_hash_from_filename(file_path):
 
 
 def print_results(results, output_path="benchmark_summary.csv"):
-    """
-    Saves the benchmark results to a CSV file in the specified format,
-    now including a 'trial' column.
-    
-    Args:
-        results (dict): A dictionary containing the aggregated benchmark results.
-        output_path (str): The path to the output CSV file.
-    """
-    # Add 'trial' to the header
-    header = ['hash_value', 'benchmark_name', 'params', 'mode', 'unit', 'model', 'prompt', 'trial', 'mean', 'error']
+    header = ['hash_value', 'benchmark_name', 'params', 'mode', 'unit', 'model', 'prompt', 'trial', 'mean', 'error', 'normalized_performance']
 
     with open(output_path, "w", newline="", encoding='utf-8') as f:
         writer = csv.writer(f)
@@ -128,7 +119,6 @@ def print_results(results, output_path="benchmark_summary.csv"):
             if not entries:
                 continue
 
-            # Filter based on the 'model' key instead of 'version'
             originals = [e for e in entries if e["model"] == "original"]
             developers = [e for e in entries if e["model"] == "developer"]
 
@@ -154,6 +144,14 @@ def print_results(results, output_path="benchmark_summary.csv"):
             params_str = f'"{params}"' if params else ""
 
             for entry in entries:
+                # Calculate normalized performance for the current entry
+                normalized_value = ""
+                if org_mean > 0 and entry.get("score") is not None and entry["score"] > 0:
+                    if mode in ["avgt", "sample"]:
+                        normalized_value = org_mean / entry["score"]
+                    elif mode == "thrpt":
+                        normalized_value = entry["score"] / org_mean
+                
                 writer.writerow([
                     hash_value,
                     benchmark_name,
@@ -162,15 +160,16 @@ def print_results(results, output_path="benchmark_summary.csv"):
                     unit,
                     entry["model"],
                     entry["prompt"],
-                    entry["trial"], # New column added
+                    entry["trial"],
                     entry["score"],
-                    entry["error"]
+                    entry["error"],
+                    normalized_value
                 ])
 
 
 if __name__ == "__main__":
 
-    project_name = "RoaringBitmap"
+    project_name = "presto"
 
     org_files = glob.glob(f"../baseline/{project_name}/org/*.json", recursive=True)
     dev_files = glob.glob(f"../baseline/{project_name}/dev/*.json", recursive=True)
@@ -181,7 +180,6 @@ if __name__ == "__main__":
 
     for file in files:
         data = extract_score_data(file)
-        # Get the parsed dictionary instead of a single version string
         parsed_info = parse_version_from_filename(file)
         hash_value = get_hash_from_filename(file)
 
@@ -189,7 +187,6 @@ if __name__ == "__main__":
             benchmark_name = d["benchmark"]
             params = d.get("params", "")
             key = (hash_value, benchmark_name, params)
-            # Store the parsed info directly
             all_results[key].append({
                 "model": parsed_info["model"],
                 "prompt": parsed_info["prompt"],
