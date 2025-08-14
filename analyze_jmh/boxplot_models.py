@@ -253,7 +253,7 @@ def calculate_outperformance_by_config(project_names, output_dir="plots", data=N
     summary_filename = os.path.join(output_dir, 'outperformance_by_config_summary.txt')
     with open(summary_filename, 'w') as f:
         f.write(summary_text)
-    print(f"\nSummary saved to {summary_filename}")
+    print(f"Summary saved to {summary_filename}")
 
 def plot_faceted_by_dev_performance_model_view(project_names, output_dir="plots", data=None):
     plot_df = add_dev_improvement_level(data)
@@ -423,7 +423,7 @@ def calculate_strict_outperformance(project_names, output_dir="plots", data=None
     summary_filename = os.path.join(output_dir, 'strict_outperformance_summary.txt')
     with open(summary_filename, 'w') as f:
         f.write(summary_text)
-    print(f"\nSummary saved to {summary_filename}")
+    print(f"Summary saved to {summary_filename}")
 
 
 if __name__ == "__main__":
