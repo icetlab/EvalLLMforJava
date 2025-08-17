@@ -1,0 +1,19 @@
+diff --git a/transport-native-epoll/src/main/java/io/netty/channel/epoll/EpollEventLoop.java b/transport-native-epoll/src/main/java/io/netty/channel/epoll/EpollEventLoop.java
+index 8c9ad17821..86f0a930fb 100644
+--- a/transport-native-epoll/src/main/java/io/netty/channel/epoll/EpollEventLoop.java
++++ b/transport-native-epoll/src/main/java/io/netty/channel/epoll/EpollEventLoop.java
+@@ -261,8 +261,13 @@ class EpollEventLoop extends SingleThreadEventLoop {
+             delaySeconds = -1;
+             delayNanos = -1;
+         } else {
+-            long totalDelay = delayNanos(System.nanoTime());
+             prevDeadlineNanos = curDeadlineNanos;
++            long totalDelay;
++            if (curDeadlineNanos == Long.MAX_VALUE) {
++                totalDelay = Long.MAX_VALUE;
++            } else {
++                totalDelay = Math.max(0, curDeadlineNanos - System.nanoTime());
++            }
+             delaySeconds = (int) min(totalDelay / 1000000000L, Integer.MAX_VALUE);
+             delayNanos = (int) min(totalDelay - delaySeconds * 1000000000L, MAX_SCHEDULED_TIMERFD_NS);
+         }

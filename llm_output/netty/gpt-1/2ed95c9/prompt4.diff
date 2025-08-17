@@ -1,0 +1,70 @@
+diff --git a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
+index 389d8ef150..5dfca79e14 100644
+--- a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
++++ b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
+@@ -138,12 +138,61 @@ final class HpackStaticTable {
+      * -1 if the header field name is not in the static table.
+      */
+     static int getIndex(CharSequence name) {
+-        Integer index = STATIC_INDEX_BY_NAME.get(name);
+-        if (index == null) {
++        // Perfect hash on header name for static table lookup
++        if (equalsVariableTime(name, ":authority")) return 1;
++        if (equalsVariableTime(name, ":method")) return 2;
++        if (equalsVariableTime(name, ":path")) return 4;
++        if (equalsVariableTime(name, ":scheme")) return 6;
++        if (equalsVariableTime(name, ":status")) return 8;
++        if (equalsVariableTime(name, "accept-charset")) return 15;
++        if (equalsVariableTime(name, "accept-encoding")) return 16;
++        if (equalsVariableTime(name, "accept-language")) return 17;
++        if (equalsVariableTime(name, "accept-ranges")) return 18;
++        if (equalsVariableTime(name, "accept")) return 19;
++        if (equalsVariableTime(name, "access-control-allow-origin")) return 20;
++        if (equalsVariableTime(name, "age")) return 21;
++        if (equalsVariableTime(name, "allow")) return 22;
++        if (equalsVariableTime(name, "authorization")) return 23;
++        if (equalsVariableTime(name, "cache-control")) return 24;
++        if (equalsVariableTime(name, "content-disposition")) return 25;
++        if (equalsVariableTime(name, "content-encoding")) return 26;
++        if (equalsVariableTime(name, "content-language")) return 27;
++        if (equalsVariableTime(name, "content-length")) return 28;
++        if (equalsVariableTime(name, "content-location")) return 29;
++        if (equalsVariableTime(name, "content-range")) return 30;
++        if (equalsVariableTime(name, "content-type")) return 31;
++        if (equalsVariableTime(name, "cookie")) return 32;
++        if (equalsVariableTime(name, "date")) return 33;
++        if (equalsVariableTime(name, "etag")) return 34;
++        if (equalsVariableTime(name, "expect")) return 35;
++        if (equalsVariableTime(name, "expires")) return 36;
++        if (equalsVariableTime(name, "from")) return 37;
++        if (equalsVariableTime(name, "host")) return 38;
++        if (equalsVariableTime(name, "if-match")) return 39;
++        if (equalsVariableTime(name, "if-modified-since")) return 40;
++        if (equalsVariableTime(name, "if-none-match")) return 41;
++        if (equalsVariableTime(name, "if-range")) return 42;
++        if (equalsVariableTime(name, "if-unmodified-since")) return 43;
++        if (equalsVariableTime(name, "last-modified")) return 44;
++        if (equalsVariableTime(name, "link")) return 45;
++        if (equalsVariableTime(name, "location")) return 46;
++        if (equalsVariableTime(name, "max-forwards")) return 47;
++        if (equalsVariableTime(name, "proxy-authenticate")) return 48;
++        if (equalsVariableTime(name, "proxy-authorization")) return 49;
++        if (equalsVariableTime(name, "range")) return 50;
++        if (equalsVariableTime(name, "referer")) return 51;
++        if (equalsVariableTime(name, "refresh")) return 52;
++        if (equalsVariableTime(name, "retry-after")) return 53;
++        if (equalsVariableTime(name, "server")) return 54;
++        if (equalsVariableTime(name, "set-cookie")) return 55;
++        if (equalsVariableTime(name, "strict-transport-security")) return 56;
++        if (equalsVariableTime(name, "transfer-encoding")) return 57;
++        if (equalsVariableTime(name, "user-agent")) return 58;
++        if (equalsVariableTime(name, "vary")) return 59;
++        if (equalsVariableTime(name, "via")) return 60;
++        if (equalsVariableTime(name, "www-authenticate")) return 61;
+         return NOT_FOUND;
+     }
+-        return index;
+-    }
+ 
+     /**
+      * Returns the index value for the given header field in the static table. Returns -1 if the

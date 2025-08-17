@@ -1,0 +1,36 @@
+diff --git a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+index 656c57847b..c668915e93 100644
+--- a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
++++ b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+@@ -94,8 +94,8 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
+             return;
+         }
+ 
+-        final ScheduledFutureTask<?>[] scheduledTasks =
+-                scheduledTaskQueue.toArray(new ScheduledFutureTask<?>[0]);
++        ScheduledFutureTask<?>[] scheduledTasks =
++                scheduledTaskQueue.toArray(new ScheduledFutureTask<?>[scheduledTaskQueue.size()]);
+ 
+         for (ScheduledFutureTask<?> task: scheduledTasks) {
+             task.cancelWithoutRemove(false);
+@@ -118,13 +118,15 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
+     protected final Runnable pollScheduledTask(long nanoTime) {
+         assert inEventLoop();
+ 
+-        Queue<ScheduledFutureTask<?>> scheduledTaskQueue = this.scheduledTaskQueue;
+-        ScheduledFutureTask<?> scheduledTask = scheduledTaskQueue == null ? null : scheduledTaskQueue.peek();
+-        if (scheduledTask == null || scheduledTask.deadlineNanos() - nanoTime > 0) {
++        PriorityQueue<ScheduledFutureTask<?>> q = this.scheduledTaskQueue;
++        if (q == null) {
++            return null;
++        }
++        ScheduledFutureTask<?> task = q.peek();
++        if (task == null || task.deadlineNanos() - nanoTime > 0) {
+             return null;
+         }
+-        scheduledTaskQueue.remove();
+-        return scheduledTask;
++        return q.poll();
+     }
+ 
+     /**

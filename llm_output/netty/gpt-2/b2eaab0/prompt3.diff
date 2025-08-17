@@ -1,0 +1,32 @@
+diff --git a/common/src/main/java/io/netty/util/internal/PlatformDependent.java b/common/src/main/java/io/netty/util/internal/PlatformDependent.java
+index 0a70c36401..d4529eabd1 100644
+--- a/common/src/main/java/io/netty/util/internal/PlatformDependent.java
++++ b/common/src/main/java/io/netty/util/internal/PlatformDependent.java
+@@ -683,9 +683,10 @@ public final class PlatformDependent {
+      * by the caller.
+      */
+     public static boolean equals(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {
+-        return !hasUnsafe() || !unalignedAccess() ?
+-                  equalsSafe(bytes1, startPos1, bytes2, startPos2, length) :
+-                  PlatformDependent0.equals(bytes1, startPos1, bytes2, startPos2, length);
++        if (hasUnsafe()) {
++            return PlatformDependent0.equals(bytes1, startPos1, bytes2, startPos2, length);
++        }
++        return equalsSafe(bytes1, startPos1, bytes2, startPos2, length);
+     }
+ 
+     /**
+@@ -723,9 +724,10 @@ public final class PlatformDependent {
+      * @return {@code 0} if not equal. {@code 1} if equal.
+      */
+     public static int equalsConstantTime(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {
+-        return !hasUnsafe() || !unalignedAccess() ?
+-                  ConstantTimeUtils.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length) :
+-                  PlatformDependent0.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);
++        if (hasUnsafe()) {
++            return PlatformDependent0.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);
++        }
++        return ConstantTimeUtils.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);
+     }
+ 
+     /**

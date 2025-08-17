@@ -1,0 +1,40 @@
+diff --git a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java
+index 01b747b3f2..c2a258b3c5 100644
+--- a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java
++++ b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java
+@@ -351,16 +351,13 @@ public class QueryStringDecoder {
+             return s.substring(from, toExcluded);
+         }
+ 
+-        CharsetDecoder decoder = CharsetUtil.decoder(charset);
+-
+-        // Each encoded byte takes 3 characters (e.g. "%20")
+-        int decodedCapacity = (toExcluded - firstEscaped) / 3;
+-        ByteBuffer byteBuf = ByteBuffer.allocate(decodedCapacity);
+-        CharBuffer charBuf = CharBuffer.allocate(decodedCapacity);
+-
+         StringBuilder strBuf = new StringBuilder(len);
+         strBuf.append(s, from, firstEscaped);
+ 
++        CharsetDecoder decoder = null;
++        ByteBuffer byteBuf = null;
++        CharBuffer charBuf = null;
++
+         for (int i = firstEscaped; i < toExcluded; i++) {
+             char c = s.charAt(i);
+             if (c != '%') {
+@@ -368,6 +365,14 @@ public class QueryStringDecoder {
+                 continue;
+             }
+ 
++            if (decoder == null) {
++                // Each encoded byte takes 3 characters (e.g. "%20")
++                int decodedCapacity = (toExcluded - i) / 3;
++                byteBuf = ByteBuffer.allocate(decodedCapacity);
++                charBuf = CharBuffer.allocate(decodedCapacity);
++                decoder = CharsetUtil.decoder(charset);
++            }
++
+             byteBuf.clear();
+             do {
+                 if (i + 3 > toExcluded) {

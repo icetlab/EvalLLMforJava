@@ -1,0 +1,66 @@
+diff --git a/common/src/main/java/io/netty/util/internal/PlatformDependent.java b/common/src/main/java/io/netty/util/internal/PlatformDependent.java
+index 0a70c36401..d8e4c683fd 100644
+--- a/common/src/main/java/io/netty/util/internal/PlatformDependent.java
++++ b/common/src/main/java/io/netty/util/internal/PlatformDependent.java
+@@ -104,7 +104,8 @@ public final class PlatformDependent {
+     private static final Cleaner CLEANER;
+     private static final int UNINITIALIZED_ARRAY_ALLOCATION_THRESHOLD;
+ 
+-    public static final boolean BIG_ENDIAN_NATIVE_ORDER = ByteOrder.nativeOrder() == ByteOrder.BIG_ENDIAN;
++    private static final boolean USE_UNSAFE_FAST_PATH = hasUnsafe() && unalignedAccess();
++public static final boolean BIG_ENDIAN_NATIVE_ORDER = ByteOrder.nativeOrder() == ByteOrder.BIG_ENDIAN;
+ 
+     private static final Cleaner NOOP = new Cleaner() {
+         @Override
+@@ -683,9 +684,9 @@ public final class PlatformDependent {
+      * by the caller.
+      */
+     public static boolean equals(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {
+-        return !hasUnsafe() || !unalignedAccess() ?
+-                  equalsSafe(bytes1, startPos1, bytes2, startPos2, length) :
+-                  PlatformDependent0.equals(bytes1, startPos1, bytes2, startPos2, length);
++        return USE_UNSAFE_FAST_PATH ?
++                  PlatformDependent0.equals(bytes1, startPos1, bytes2, startPos2, length) :
++                  equalsSafe(bytes1, startPos1, bytes2, startPos2, length);
+     }
+ 
+     /**
+@@ -696,9 +697,9 @@ public final class PlatformDependent {
+      * @return {@code false} if {@code bytes[startPos:startsPos+length)} contains a value other than zero.
+      */
+     public static boolean isZero(byte[] bytes, int startPos, int length) {
+-        return !hasUnsafe() || !unalignedAccess() ?
+-                isZeroSafe(bytes, startPos, length) :
+-                PlatformDependent0.isZero(bytes, startPos, length);
++        return USE_UNSAFE_FAST_PATH ?
++                PlatformDependent0.isZero(bytes, startPos, length) :
++                isZeroSafe(bytes, startPos, length);
+     }
+ 
+     /**
+@@ -723,9 +724,9 @@ public final class PlatformDependent {
+      * @return {@code 0} if not equal. {@code 1} if equal.
+      */
+     public static int equalsConstantTime(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {
+-        return !hasUnsafe() || !unalignedAccess() ?
+-                  ConstantTimeUtils.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length) :
+-                  PlatformDependent0.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);
++        return USE_UNSAFE_FAST_PATH ?
++                  PlatformDependent0.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length) :
++                  ConstantTimeUtils.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);
+     }
+ 
+     /**
+@@ -738,9 +739,9 @@ public final class PlatformDependent {
+      * The resulting hash code will be case insensitive.
+      */
+     public static int hashCodeAscii(byte[] bytes, int startPos, int length) {
+-        return !hasUnsafe() || !unalignedAccess() ?
+-                hashCodeAsciiSafe(bytes, startPos, length) :
+-                PlatformDependent0.hashCodeAscii(bytes, startPos, length);
++        return USE_UNSAFE_FAST_PATH ?
++                PlatformDependent0.hashCodeAscii(bytes, startPos, length) :
++                hashCodeAsciiSafe(bytes, startPos, length);
+     }
+ 
+     /**

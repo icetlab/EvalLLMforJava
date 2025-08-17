@@ -1,0 +1,35 @@
+diff --git a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java
+index 01b747b3f2..a513b1435f 100644
+--- a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java
++++ b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java
+@@ -65,6 +65,10 @@ public class QueryStringDecoder {
+ 
+     private static final int DEFAULT_MAX_PARAMS = 1024;
+ 
++    // Reusable buffers for decoding to reduce allocations
++    private static final ThreadLocal<ByteBuffer> DECODER_BYTEBUF = ThreadLocal.withInitial(() -> ByteBuffer.allocate(1024));
++    private static final ThreadLocal<CharBuffer> DECODER_CHARBUF = ThreadLocal.withInitial(() -> CharBuffer.allocate(1024));
++
+     private final Charset charset;
+     private final String uri;
+     private final int maxParams;
+@@ -355,8 +359,17 @@ public class QueryStringDecoder {
+ 
+         // Each encoded byte takes 3 characters (e.g. "%20")
+         int decodedCapacity = (toExcluded - firstEscaped) / 3;
+-        ByteBuffer byteBuf = ByteBuffer.allocate(decodedCapacity);
+-        CharBuffer charBuf = CharBuffer.allocate(decodedCapacity);
++        // Reuse buffers from ThreadLocal to reduce allocations
++        ByteBuffer byteBuf = DECODER_BYTEBUF.get();
++        if (byteBuf.capacity() < decodedCapacity) {
++            byteBuf = ByteBuffer.allocate(decodedCapacity);
++            DECODER_BYTEBUF.set(byteBuf);
++        }
++        CharBuffer charBuf = DECODER_CHARBUF.get();
++        if (charBuf.capacity() < decodedCapacity) {
++            charBuf = CharBuffer.allocate(decodedCapacity);
++            DECODER_CHARBUF.set(charBuf);
++        }
+ 
+         StringBuilder strBuf = new StringBuilder(len);
+         strBuf.append(s, from, firstEscaped);

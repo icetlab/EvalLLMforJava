@@ -1,0 +1,17 @@
+diff --git a/codec-http2/src/main/java/io/netty/handler/codec/http2/DefaultHttp2HeadersEncoder.java b/codec-http2/src/main/java/io/netty/handler/codec/http2/DefaultHttp2HeadersEncoder.java
+index 5e0a9f6cf1..36b42e982c 100644
+--- a/codec-http2/src/main/java/io/netty/handler/codec/http2/DefaultHttp2HeadersEncoder.java
++++ b/codec-http2/src/main/java/io/netty/handler/codec/http2/DefaultHttp2HeadersEncoder.java
+@@ -66,9 +66,10 @@ public class DefaultHttp2HeadersEncoder implements Http2HeadersEncoder, Http2Hea
+             }
+ 
+             hpackEncoder.encodeHeaders(streamId, buffer, headers, sensitivityDetector);
+-        } catch (Http2Exception e) {
+-            throw e;
+         } catch (Throwable t) {
++            if (t instanceof Http2Exception) {
++                throw (Http2Exception) t;
++            }
+             throw connectionError(COMPRESSION_ERROR, t, "Failed encoding headers block: %s", t.getMessage());
+         }
+     }

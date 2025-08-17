@@ -1,0 +1,22 @@
+diff --git a/common/src/main/java/io/netty/util/Recycler.java b/common/src/main/java/io/netty/util/Recycler.java
+index a17a9906c4..cdbdb27cad 100644
+--- a/common/src/main/java/io/netty/util/Recycler.java
++++ b/common/src/main/java/io/netty/util/Recycler.java
+@@ -322,11 +322,14 @@ public abstract class Recycler<T> {
+             if (handles == null) {
+                 return null;
+             }
+-            if (batch.isEmpty()) {
++            // Try to take an element without draining first
++            DefaultHandle<T> handle = batch.pollFirst();
++            if (handle == null) {
++                // Only drain when empty, then retry once
+                 handles.drain(this, chunkSize);
++                handle = batch.pollFirst();
+             }
+-            DefaultHandle<T> handle = batch.pollFirst();
+-            if (null != handle) {
++            if (handle != null) {
+                 handle.toClaimed();
+             }
+             return handle;

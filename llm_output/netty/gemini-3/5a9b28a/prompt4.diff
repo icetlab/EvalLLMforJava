@@ -1,0 +1,79 @@
+diff --git a/common/src/main/java/io/netty/util/Recycler.java b/common/src/main/java/io/netty/util/Recycler.java
+index a17a9906c4..369c390408 100644
+--- a/common/src/main/java/io/netty/util/Recycler.java
++++ b/common/src/main/java/io/netty/util/Recycler.java
+@@ -211,7 +211,7 @@ public abstract class Recycler<T> {
+     @VisibleForTesting
+     final int threadLocalSize() {
+         LocalPool<T> localPool = threadLocal.getIfExists();
+-        return localPool == null ? 0 : localPool.pooledHandles.size() + localPool.batch.size();
++        return localPool == null ? 0 : localPool.pooledHandles.size() + localPool.batchSize;
+     }
+ 
+     /**
+@@ -297,7 +297,10 @@ public abstract class Recycler<T> {
+     private static final class LocalPool<T> implements MessagePassingQueue.Consumer<DefaultHandle<T>> {
+         private final int ratioInterval;
+         private final int chunkSize;
+-        private final ArrayDeque<DefaultHandle<T>> batch;
++        private final DefaultHandle<T>[] batch;
++        private int batchHead;
++        private int batchTail;
++        private int batchSize;
+         private volatile Thread owner;
+         private volatile MessagePassingQueue<DefaultHandle<T>> pooledHandles;
+         private int ratioCounter;
+@@ -306,7 +309,7 @@ public abstract class Recycler<T> {
+         LocalPool(int maxCapacity, int ratioInterval, int chunkSize) {
+             this.ratioInterval = ratioInterval;
+             this.chunkSize = chunkSize;
+-            batch = new ArrayDeque<DefaultHandle<T>>(chunkSize);
++            batch = (DefaultHandle<T>[]) new DefaultHandle[chunkSize];
+             Thread currentThread = Thread.currentThread();
+             owner = !BATCH_FAST_TL_ONLY || currentThread instanceof FastThreadLocalThread ? currentThread : null;
+             if (BLOCKING_POOL) {
+@@ -322,10 +325,19 @@ public abstract class Recycler<T> {
+             if (handles == null) {
+                 return null;
+             }
+-            if (batch.isEmpty()) {
++            if (batchSize == 0) {
+                 handles.drain(this, chunkSize);
+             }
+-            DefaultHandle<T> handle = batch.pollFirst();
++            DefaultHandle<T> handle = null;
++            if (batchSize > 0) {
++                batchSize--;
++                handle = batch[batchHead];
++                batch[batchHead] = null;
++                batchHead++;
++                if (batchHead == chunkSize) {
++                    batchHead = 0;
++                }
++            }
+             if (null != handle) {
+                 handle.toClaimed();
+             }
+@@ -339,7 +351,7 @@ public abstract class Recycler<T> {
+                 handle.unguardedToAvailable();
+             }
+             Thread owner = this.owner;
+-            if (owner != null && Thread.currentThread() == owner && batch.size() < chunkSize) {
++            if (owner != null && Thread.currentThread() == owner && batchSize < chunkSize) {
+                 accept(handle);
+             } else if (owner != null && isTerminated(owner)) {
+                 this.owner = null;
+@@ -368,7 +380,12 @@ public abstract class Recycler<T> {
+ 
+         @Override
+         public void accept(DefaultHandle<T> e) {
+-            batch.addLast(e);
++            batch[batchTail] = e;
++            batchTail++;
++            if (batchTail == chunkSize) {
++                batchTail = 0;
++            }
++            batchSize++;
+         }
+     }
+ 

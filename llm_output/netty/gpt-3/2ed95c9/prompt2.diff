@@ -1,0 +1,71 @@
+diff --git a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
+index 389d8ef150..835774e78e 100644
+--- a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
++++ b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
+@@ -138,11 +138,62 @@ final class HpackStaticTable {
+      * -1 if the header field name is not in the static table.
+      */
+     static int getIndex(CharSequence name) {
+-        Integer index = STATIC_INDEX_BY_NAME.get(name);
+-        if (index == null) {
+-            return NOT_FOUND;
++        String key = name.toString();
++        switch (key) {
++            case ":authority": return 1;
++            case ":method": return 2;
++            case ":path": return 4;
++            case ":scheme": return 6;
++            case ":status": return 8;
++            case "accept-charset": return 15;
++            case "accept-encoding": return 16;
++            case "accept-language": return 17;
++            case "accept-ranges": return 18;
++            case "accept": return 19;
++            case "access-control-allow-origin": return 20;
++            case "age": return 21;
++            case "allow": return 22;
++            case "authorization": return 23;
++            case "cache-control": return 24;
++            case "content-disposition": return 25;
++            case "content-encoding": return 26;
++            case "content-language": return 27;
++            case "content-length": return 28;
++            case "content-location": return 29;
++            case "content-range": return 30;
++            case "content-type": return 31;
++            case "cookie": return 32;
++            case "date": return 33;
++            case "etag": return 34;
++            case "expect": return 35;
++            case "expires": return 36;
++            case "from": return 37;
++            case "host": return 38;
++            case "if-match": return 39;
++            case "if-modified-since": return 40;
++            case "if-none-match": return 41;
++            case "if-range": return 42;
++            case "if-unmodified-since": return 43;
++            case "last-modified": return 44;
++            case "link": return 45;
++            case "location": return 46;
++            case "max-forwards": return 47;
++            case "proxy-authenticate": return 48;
++            case "proxy-authorization": return 49;
++            case "range": return 50;
++            case "referer": return 51;
++            case "refresh": return 52;
++            case "retry-after": return 53;
++            case "server": return 54;
++            case "set-cookie": return 55;
++            case "strict-transport-security": return 56;
++            case "transfer-encoding": return 57;
++            case "user-agent": return 58;
++            case "vary": return 59;
++            case "via": return 60;
++            case "www-authenticate": return 61;
++            default: return NOT_FOUND;
+         }
+-        return index;
+     }
+ 
+     /**

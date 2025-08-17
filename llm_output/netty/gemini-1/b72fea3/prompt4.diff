@@ -1,0 +1,119 @@
+diff --git a/codec/src/main/java/io/netty/handler/codec/DateFormatter.java b/codec/src/main/java/io/netty/handler/codec/DateFormatter.java
+index 86df148500..7a9875eeab 100644
+--- a/codec/src/main/java/io/netty/handler/codec/DateFormatter.java
++++ b/codec/src/main/java/io/netty/handler/codec/DateFormatter.java
+@@ -261,10 +261,6 @@ public final class DateFormatter {
+         return false;
+     }
+ 
+-    private static boolean matchMonth(String month, CharSequence txt, int tokenStart) {
+-        return AsciiString.regionMatchesAscii(month, true, 0, txt, tokenStart, 3);
+-    }
+-
+     private boolean tryParseMonth(CharSequence txt, int tokenStart, int tokenEnd) {
+         int len = tokenEnd - tokenStart;
+ 
+@@ -272,33 +268,88 @@ public final class DateFormatter {
+             return false;
+         }
+ 
+-        if (matchMonth("Jan", txt, tokenStart)) {
++        char m0 = txt.charAt(tokenStart);
++        char m1 = txt.charAt(tokenStart + 1);
++        char m2 = txt.charAt(tokenStart + 2);
++
++        if (m0 >= 'A' && m0 <= 'Z') {
++            m0 += 32;
++        }
++        if (m1 >= 'A' && m1 <= 'Z') {
++            m1 += 32;
++        }
++        if (m2 >= 'A' && m2 <= 'Z') {
++            m2 += 32;
++        }
++
++        switch (m0) {
++            case 'j':
++                if (m1 == 'a' && m2 == 'n') {
+                     month = Calendar.JANUARY;
+-        } else if (matchMonth("Feb", txt, tokenStart)) {
++                } else if (m1 == 'u' && m2 == 'n') {
++                    month = Calendar.JUNE;
++                } else if (m1 == 'u' && m2 == 'l') {
++                    month = Calendar.JULY;
++                } else {
++                    return false;
++                }
++                break;
++            case 'f':
++                if (m1 == 'e' && m2 == 'b') {
+                     month = Calendar.FEBRUARY;
+-        } else if (matchMonth("Mar", txt, tokenStart)) {
++                } else {
++                    return false;
++                }
++                break;
++            case 'm':
++                if (m1 == 'a' && m2 == 'r') {
+                     month = Calendar.MARCH;
+-        } else if (matchMonth("Apr", txt, tokenStart)) {
+-            month = Calendar.APRIL;
+-        } else if (matchMonth("May", txt, tokenStart)) {
++                } else if (m1 == 'a' && m2 == 'y') {
+                     month = Calendar.MAY;
+-        } else if (matchMonth("Jun", txt, tokenStart)) {
+-            month = Calendar.JUNE;
+-        } else if (matchMonth("Jul", txt, tokenStart)) {
+-            month = Calendar.JULY;
+-        } else if (matchMonth("Aug", txt, tokenStart)) {
++                } else {
++                    return false;
++                }
++                break;
++            case 'a':
++                if (m1 == 'p' && m2 == 'r') {
++                    month = Calendar.APRIL;
++                } else if (m1 == 'u' && m2 == 'g') {
+                     month = Calendar.AUGUST;
+-        } else if (matchMonth("Sep", txt, tokenStart)) {
++                } else {
++                    return false;
++                }
++                break;
++            case 's':
++                if (m1 == 'e' && m2 == 'p') {
+                     month = Calendar.SEPTEMBER;
+-        } else if (matchMonth("Oct", txt, tokenStart)) {
++                } else {
++                    return false;
++                }
++                break;
++            case 'o':
++                if (m1 == 'c' && m2 == 't') {
+                     month = Calendar.OCTOBER;
+-        } else if (matchMonth("Nov", txt, tokenStart)) {
++                } else {
++                    return false;
++                }
++                break;
++            case 'n':
++                if (m1 == 'o' && m2 == 'v') {
+                     month = Calendar.NOVEMBER;
+-        } else if (matchMonth("Dec", txt, tokenStart)) {
++                } else {
++                    return false;
++                }
++                break;
++            case 'd':
++                if (m1 == 'e' && m2 == 'c') {
+                     month = Calendar.DECEMBER;
+                 } else {
+                     return false;
+                 }
++                break;
++            default:
++                return false;
++        }
+ 
+         return true;
+     }

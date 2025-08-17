@@ -1,0 +1,68 @@
+diff --git a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+index c132aa5b20..9531ee3ec2 100644
+--- a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
++++ b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+@@ -249,23 +249,16 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
+             scheduledTaskQueue().add(task.setId(nextTaskId++));
+         } else {
+             final long deadlineNanos = task.deadlineNanos();
+-            final Runnable addToQueue = new Runnable() {
+-                @Override
+-                public void run() {
+-                    scheduledTaskQueue().add(task.setId(nextTaskId++));
+-                }
+-            };
+             if (beforeScheduledTaskSubmitted(deadlineNanos)) {
+-                execute(addToQueue);
++                execute(task);
+             } else {
+-                lazyExecute(addToQueue);
++                lazyExecute(task);
+                 // Second hook after scheduling to facilitate race-avoidance
+                 if (afterScheduledTaskSubmitted(deadlineNanos)) {
+                     execute(WAKEUP_TASK);
+                 }
+             }
+         }
+-
+         return task;
+     }
+ 
+diff --git a/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java b/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
+index 5ffe824119..af5843ee40 100644
+--- a/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
++++ b/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
+@@ -49,6 +49,11 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
+     /* 0 - no repeat, >0 - repeat at fixed rate, <0 - repeat with fixed delay */
+     private final long periodNanos;
+ 
++    private static final byte STATE_INIT = 0;
++    private static final byte STATE_SCHEDULED = 1;
++
++    private byte state;
++
+     private int queueIndex = INDEX_NOT_IN_QUEUE;
+ 
+     ScheduledFutureTask(AbstractScheduledEventExecutor executor,
+@@ -91,6 +96,9 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
+     }
+ 
+     ScheduledFutureTask<V> setId(long id) {
++        if (state == STATE_INIT) {
++            state = STATE_SCHEDULED;
++        }
+         this.id = id;
+         return this;
+     }
+@@ -144,6 +152,11 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
+     @Override
+     public void run() {
+         assert executor().inEventLoop();
++        if (state == STATE_INIT) {
++            AbstractScheduledEventExecutor exec = (AbstractScheduledEventExecutor) executor();
++            exec.scheduledTaskQueue().add(this.setId(exec.nextTaskId++));
++            return;
++        }
+         try {
+             if (periodNanos == 0) {
+                 if (setUncancellableInternal()) {

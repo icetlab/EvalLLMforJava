@@ -1,0 +1,48 @@
+diff --git a/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java b/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java
+index 0db8a4ce34..ea08c978ac 100644
+--- a/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java
++++ b/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java
+@@ -39,9 +39,41 @@ public class HttpRequestEncoder extends HttpObjectEncoder<HttpRequest> {
+         ByteBufUtil.copy(request.method().asciiName(), buf);
+         buf.writeByte(SP);
+ 
+-        // Add / as absolute path if no is present.
+-        // See http://tools.ietf.org/html/rfc2616#section-5.1.2
+         String uri = request.uri();
++        int insertPos = -1;
++        if (uri.isEmpty()) {
++            // Empty URI -> write a single slash
++            buf.writeByte(SLASH);
++        } else {
++            // Detect absolute URI needing a slash before path or query
++            int start = uri.indexOf("://");
++            if (start != -1 && uri.charAt(0) != SLASH) {
++                int startIndex = start + 3;
++                int questionIndex = uri.indexOf(QUESTION_MARK, startIndex);
++                if (questionIndex == -1) {
++                    if (uri.lastIndexOf(SLASH) <= startIndex) {
++                        insertPos = uri.length();
++                    }
++                } else {
++                    if (uri.lastIndexOf(SLASH, questionIndex) <= startIndex) {
++                        insertPos = questionIndex;
++                    }
++                }
++            }
++            if (insertPos >= 0) {
++                // Write segments around the inserted slash
++                buf.writeCharSequence(uri.substring(0, insertPos), CharsetUtil.UTF_8);
++                buf.writeByte(SLASH);
++                buf.writeCharSequence(uri.substring(insertPos), CharsetUtil.UTF_8);
++            } else {
++                buf.writeCharSequence(uri, CharsetUtil.UTF_8);
++            }
++        }
++
++        buf.writeByte(SP);
++        request.protocolVersion().encode(buf);
++        buf.writeBytes(CRLF);
++    }
+ 
+         if (uri.isEmpty()) {
+             uri += SLASH;

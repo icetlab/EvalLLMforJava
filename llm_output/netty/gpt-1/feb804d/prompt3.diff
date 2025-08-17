@@ -1,0 +1,39 @@
+diff --git a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+index c132aa5b20..2afb43dbf2 100644
+--- a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
++++ b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+@@ -246,26 +246,19 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
+ 
+     private <V> ScheduledFuture<V> schedule(final ScheduledFutureTask<V> task) {
+         if (inEventLoop()) {
++            // fast path: in-loop, just enqueue
+             scheduledTaskQueue().add(task.setId(nextTaskId++));
+         } else {
++            // outside event-loop: enqueue immediately under lock, then wakeup once
+             final long deadlineNanos = task.deadlineNanos();
+-            final Runnable addToQueue = new Runnable() {
+-                @Override
+-                public void run() {
+-                    scheduledTaskQueue().add(task.setId(nextTaskId++));
+-                }
+-            };
+-            if (beforeScheduledTaskSubmitted(deadlineNanos)) {
+-                execute(addToQueue);
+-            } else {
+-                lazyExecute(addToQueue);
+-                // Second hook after scheduling to facilitate race-avoidance
+-                if (afterScheduledTaskSubmitted(deadlineNanos)) {
+-                    execute(WAKEUP_TASK);
+-                }
++            io.netty.util.internal.PriorityQueue<ScheduledFutureTask<?>> q = scheduledTaskQueue();
++            synchronized (q) {
++                q.add(task.setId(nextTaskId++));
++            }
++            if (beforeScheduledTaskSubmitted(deadlineNanos) || afterScheduledTaskSubmitted(deadlineNanos)) {
++                execute(WAKEUP_TASK);
+             }
+         }
+-
+         return task;
+     }
+ 

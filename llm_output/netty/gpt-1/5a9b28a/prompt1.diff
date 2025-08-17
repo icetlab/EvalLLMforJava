@@ -1,0 +1,65 @@
+diff --git a/common/src/main/java/io/netty/util/Recycler.java b/common/src/main/java/io/netty/util/Recycler.java
+index a17a9906c4..c3d248c4ef 100644
+--- a/common/src/main/java/io/netty/util/Recycler.java
++++ b/common/src/main/java/io/netty/util/Recycler.java
+@@ -295,6 +295,8 @@ public abstract class Recycler<T> {
+     }
+ 
+     private static final class LocalPool<T> implements MessagePassingQueue.Consumer<DefaultHandle<T>> {
++        // cache JVM type to avoid repeated PlatformDependent.isJ9Jvm() calls
++        private static final boolean IS_J9 = PlatformDependent.isJ9Jvm();
+         private final int ratioInterval;
+         private final int chunkSize;
+         private final ArrayDeque<DefaultHandle<T>> batch;
+@@ -333,29 +335,33 @@ public abstract class Recycler<T> {
+         }
+ 
+         void release(DefaultHandle<T> handle, boolean guarded) {
+-            if (guarded) {
+-                handle.toAvailable();
+-            } else {
+-                handle.unguardedToAvailable();
+-            }
+-            Thread owner = this.owner;
+-            if (owner != null && Thread.currentThread() == owner && batch.size() < chunkSize) {
+-                accept(handle);
+-            } else if (owner != null && isTerminated(owner)) {
+-                this.owner = null;
+-                pooledHandles = null;
+-            } else {
+-                MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;
+-                if (handles != null) {
+-                    handles.relaxedOffer(handle);
+-                }
+-            }
++    if (guarded) {
++        handle.toAvailable();
++    } else {
++        handle.unguardedToAvailable();
++    }
++    Thread localOwner = this.owner;
++    if (localOwner != null) {
++        if (Thread.currentThread() == localOwner && batch.size() < chunkSize) {
++            accept(handle);
++            return;
+         }
++        if (isTerminated(localOwner)) {
++            this.owner = null;
++            pooledHandles = null;
++            return;
++        }
++    }
++    MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;
++    if (handles != null) {
++        handles.relaxedOffer(handle);
++    }
++}
+ 
+         private static boolean isTerminated(Thread owner) {
+             // Do not use `Thread.getState()` in J9 JVM because it's known to have a performance issue.
+             // See: https://github.com/netty/netty/issues/13347#issuecomment-1518537895
+-            return PlatformDependent.isJ9Jvm() ? !owner.isAlive() : owner.getState() == Thread.State.TERMINATED;
++            return IS_J9 ? !owner.isAlive() : owner.getState() == Thread.State.TERMINATED;
+         }
+ 
+         DefaultHandle<T> newHandle() {

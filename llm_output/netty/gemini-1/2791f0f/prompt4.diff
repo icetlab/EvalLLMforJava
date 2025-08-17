@@ -1,0 +1,58 @@
+diff --git a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+index 656c57847b..82cc9ee54a 100644
+--- a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
++++ b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+@@ -38,6 +38,7 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
+             };
+ 
+     PriorityQueue<ScheduledFutureTask<?>> scheduledTaskQueue;
++    long scheduledTaskCounter;
+ 
+     protected AbstractScheduledEventExecutor() {
+     }
+@@ -241,11 +242,13 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
+ 
+     private <V> ScheduledFuture<V> schedule(final ScheduledFutureTask<V> task) {
+         if (inEventLoop()) {
++            task.setId(++scheduledTaskCounter);
+             scheduledTaskQueue().add(task);
+         } else {
+             executeScheduledRunnable(new Runnable() {
+                 @Override
+                 public void run() {
++                    task.setId(++scheduledTaskCounter);
+                     scheduledTaskQueue().add(task);
+                 }
+             }, true, task.deadlineNanos());
+diff --git a/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java b/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
+index 1d1403e3f0..79afd73ea8 100644
+--- a/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
++++ b/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
+@@ -27,7 +27,6 @@ import java.util.concurrent.atomic.AtomicLong;
+ 
+ @SuppressWarnings("ComparableImplementedButEqualsNotOverridden")
+ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFuture<V>, PriorityQueueNode {
+-    private static final AtomicLong nextTaskId = new AtomicLong();
+     private static final long START_TIME = System.nanoTime();
+ 
+     static long nanoTime() {
+@@ -44,7 +43,7 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
+         return START_TIME;
+     }
+ 
+-    private final long id = nextTaskId.getAndIncrement();
++    private long id;
+     private long deadlineNanos;
+     /* 0 - no repeat, >0 - repeat at fixed rate, <0 - repeat with fixed delay */
+     private final long periodNanos;
+@@ -79,6 +78,10 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
+         periodNanos = 0;
+     }
+ 
++    void setId(long id) {
++        this.id = id;
++    }
++
+     @Override
+     protected EventExecutor executor() {
+         return super.executor();

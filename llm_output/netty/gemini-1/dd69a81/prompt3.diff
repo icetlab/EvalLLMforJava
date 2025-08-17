@@ -1,0 +1,47 @@
+diff --git a/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java b/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java
+index 0db8a4ce34..e205ef6da4 100644
+--- a/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java
++++ b/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java
+@@ -44,7 +44,7 @@ public class HttpRequestEncoder extends HttpObjectEncoder<HttpRequest> {
+         String uri = request.uri();
+ 
+         if (uri.isEmpty()) {
+-            uri += SLASH;
++            buf.writeByte(SLASH);
+         } else {
+             int start = uri.indexOf("://");
+             if (start != -1 && uri.charAt(0) != SLASH) {
+@@ -53,24 +53,24 @@ public class HttpRequestEncoder extends HttpObjectEncoder<HttpRequest> {
+                 // See https://github.com/netty/netty/issues/2732
+                 int index = uri.indexOf(QUESTION_MARK, startIndex);
+                 if (index == -1) {
++                    buf.writeCharSequence(uri, CharsetUtil.UTF_8);
+                     if (uri.lastIndexOf(SLASH) <= startIndex) {
+-                        uri += SLASH;
++                        buf.writeByte(SLASH);
+                     }
+                 } else {
+                     if (uri.lastIndexOf(SLASH, index) <= startIndex) {
+-                        int len = uri.length();
+-                        StringBuilder sb = new StringBuilder(len + 1);
+-                        sb.append(uri, 0, index)
+-                          .append(SLASH)
+-                          .append(uri, index, len);
+-                        uri = sb.toString();
++                        buf.writeCharSequence(uri.subSequence(0, index), CharsetUtil.UTF_8);
++                        buf.writeByte(SLASH);
++                        buf.writeCharSequence(uri.subSequence(index, uri.length()), CharsetUtil.UTF_8);
++                    } else {
++                        buf.writeCharSequence(uri, CharsetUtil.UTF_8);
+                     }
+                 }
++            } else {
++                buf.writeCharSequence(uri, CharsetUtil.UTF_8);
+             }
+         }
+ 
+-        buf.writeCharSequence(uri, CharsetUtil.UTF_8);
+-
+         buf.writeByte(SP);
+         request.protocolVersion().encode(buf);
+         buf.writeBytes(CRLF);

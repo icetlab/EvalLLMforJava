@@ -1,0 +1,28 @@
+diff --git a/common/src/main/java/io/netty/util/Recycler.java b/common/src/main/java/io/netty/util/Recycler.java
+index a17a9906c4..e97cd7d5a4 100644
+--- a/common/src/main/java/io/netty/util/Recycler.java
++++ b/common/src/main/java/io/netty/util/Recycler.java
+@@ -274,7 +274,9 @@ public abstract class Recycler<T> {
+         }
+ 
+         void toClaimed() {
+-            assert state == STATE_AVAILABLE;
++            if (state != STATE_AVAILABLE) {
++                throw new IllegalStateException("Object is still in use.");
++            }
+             STATE_UPDATER.lazySet(this, STATE_CLAIMED);
+         }
+ 
+@@ -286,10 +288,8 @@ public abstract class Recycler<T> {
+         }
+ 
+         void unguardedToAvailable() {
+-            int prev = state;
+-            if (prev == STATE_AVAILABLE) {
+-                throw new IllegalStateException("Object has been recycled already.");
+-            }
++            // We are trying to be fast and thus not checking if the state is correct.
++            // The check is done when the handle is claimed.
+             STATE_UPDATER.lazySet(this, STATE_AVAILABLE);
+         }
+     }

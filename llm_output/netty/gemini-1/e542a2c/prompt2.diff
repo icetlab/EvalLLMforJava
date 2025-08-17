@@ -1,0 +1,58 @@
+diff --git a/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java b/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java
+index c8c40a5d24..b99faf274f 100644
+--- a/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java
++++ b/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java
+@@ -45,7 +45,7 @@ public abstract class AbstractByteBuf extends ByteBuf {
+     private static final InternalLogger logger = InternalLoggerFactory.getInstance(AbstractByteBuf.class);
+     private static final String LEGACY_PROP_CHECK_ACCESSIBLE = "io.netty.buffer.bytebuf.checkAccessible";
+     private static final String PROP_CHECK_ACCESSIBLE = "io.netty.buffer.checkAccessible";
+-    private static final boolean checkAccessible;
++    static final boolean checkAccessible;
+     private static final String PROP_CHECK_BOUNDS = "io.netty.buffer.checkBounds";
+     private static final boolean checkBounds;
+ 
+@@ -1441,7 +1441,7 @@ public abstract class AbstractByteBuf extends ByteBuf {
+      * Should be called by every method that tries to access the buffers content to check
+      * if the buffer was released before.
+      */
+-    protected final void ensureAccessible() {
++    protected void ensureAccessible() {
+         if (checkAccessible && refCnt() == 0) {
+             throw new IllegalReferenceCountException(0);
+         }
+diff --git a/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java b/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
+index d624d855f4..ff6eb644af 100644
+--- a/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
++++ b/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
+@@ -30,7 +30,7 @@ public abstract class AbstractReferenceCountedByteBuf extends AbstractByteBuf {
+     private static final AtomicIntegerFieldUpdater<AbstractReferenceCountedByteBuf> refCntUpdater =
+             AtomicIntegerFieldUpdater.newUpdater(AbstractReferenceCountedByteBuf.class, "refCnt");
+ 
+-    private volatile int refCnt;
++    private int refCnt;
+ 
+     protected AbstractReferenceCountedByteBuf(int maxCapacity) {
+         super(maxCapacity);
+@@ -39,7 +39,7 @@ public abstract class AbstractReferenceCountedByteBuf extends AbstractByteBuf {
+ 
+     @Override
+     public int refCnt() {
+-        return refCnt;
++        return refCntUpdater.get(this);
+     }
+ 
+     /**
+@@ -101,6 +101,13 @@ public abstract class AbstractReferenceCountedByteBuf extends AbstractByteBuf {
+         }
+         return false;
+     }
++    @Override
++    protected final void ensureAccessible() {
++        if (checkAccessible && refCnt == 0) {
++            throw new IllegalReferenceCountException(0);
++        }
++    }
++
+     /**
+      * Called once {@link #refCnt()} is equals 0.
+      */

@@ -1,0 +1,33 @@
+diff --git a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+index c132aa5b20..22c6ff2686 100644
+--- a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
++++ b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+@@ -31,17 +31,9 @@ import java.util.concurrent.TimeUnit;
+  */
+ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecutor {
+     private static final Comparator<ScheduledFutureTask<?>> SCHEDULED_FUTURE_TASK_COMPARATOR =
+-            new Comparator<ScheduledFutureTask<?>>() {
+-                @Override
+-                public int compare(ScheduledFutureTask<?> o1, ScheduledFutureTask<?> o2) {
+-                    return o1.compareTo(o2);
+-                }
+-            };
++            ScheduledFutureTask::compareTo;
+ 
+-   static final Runnable WAKEUP_TASK = new Runnable() {
+-       @Override
+-       public void run() { } // Do nothing
+-    };
++   static final Runnable WAKEUP_TASK = () -> { };
+ 
+     PriorityQueue<ScheduledFutureTask<?>> scheduledTaskQueue;
+ 
+@@ -103,7 +95,7 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
+         }
+ 
+         final ScheduledFutureTask<?>[] scheduledTasks =
+-                scheduledTaskQueue.toArray(new ScheduledFutureTask<?>[0]);
++                scheduledTaskQueue.toArray(new ScheduledFutureTask<?>[scheduledTaskQueue.size()]);
+ 
+         for (ScheduledFutureTask<?> task: scheduledTasks) {
+             task.cancelWithoutRemove(false);

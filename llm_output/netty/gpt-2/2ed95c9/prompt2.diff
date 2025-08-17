@@ -1,0 +1,37 @@
+diff --git a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
+index 389d8ef150..66be7a2c05 100644
+--- a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
++++ b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
+@@ -121,6 +121,10 @@ final class HpackStaticTable {
+ 
+     private static final int MAX_SAME_NAME_FIELD_INDEX = maxSameNameFieldIndex();
+ 
++    // simple cache of last lookup to speed up repeated name lookups
++    private static volatile CharSequence lastName;
++    private static volatile int lastIndex;
++
+     /**
+      * The number of header fields in the static table.
+      */
+@@ -138,11 +142,20 @@ final class HpackStaticTable {
+      * -1 if the header field name is not in the static table.
+      */
+     static int getIndex(CharSequence name) {
++        // check cache first
++        if (name == lastName || (lastName != null && lastName.equals(name))) {
++            return lastIndex;
++        }
+         Integer index = STATIC_INDEX_BY_NAME.get(name);
+         if (index == null) {
++            lastName = name;
++            lastIndex = NOT_FOUND;
+             return NOT_FOUND;
+         }
+-        return index;
++        int idx = index;
++        lastName = name;
++        lastIndex = idx;
++        return idx;
+     }
+ 
+     /**

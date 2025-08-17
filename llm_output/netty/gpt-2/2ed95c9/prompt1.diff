@@ -1,0 +1,75 @@
+diff --git a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
+index 389d8ef150..3a789d32fb 100644
+--- a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
++++ b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
+@@ -121,6 +121,31 @@ final class HpackStaticTable {
+ 
+     private static final int MAX_SAME_NAME_FIELD_INDEX = maxSameNameFieldIndex();
+ 
++    // create name and value to index map for fast lookup
++    private static final CharSequenceMap<CharSequenceMap<Integer>> STATIC_INDEX_BY_NAME_VALUE = createNameValueMap();
++
++    private static CharSequenceMap<CharSequenceMap<Integer>> createNameValueMap() {
++        int length = STATIC_TABLE.size();
++        @SuppressWarnings("unchecked")
++        CharSequenceMap<CharSequenceMap<Integer>> ret = new CharSequenceMap<CharSequenceMap<Integer>>(true,
++                UnsupportedValueConverter.<CharSequenceMap<Integer>>instance(), length);
++        for (int index = length; index > 0; index--) {
++            HpackHeaderField entry = getEntry(index);
++            CharSequence nameKey = entry.name;
++            CharSequence valueKey = entry.value;
++            CharSequenceMap<Integer> valueMap = ret.get(nameKey);
++            if (valueMap == null) {
++                @SuppressWarnings("unchecked")
++                CharSequenceMap<Integer> newValueMap = new CharSequenceMap<Integer>(true,
++                        UnsupportedValueConverter.<Integer>instance(), 2);
++                valueMap = newValueMap;
++                ret.set(nameKey, valueMap);
++            }
++            valueMap.set(valueKey, index);
++        }
++        return ret;
++    }
++
+     /**
+      * The number of header fields in the static table.
+      */
+@@ -150,34 +175,12 @@ final class HpackStaticTable {
+      * header field is not in the static table.
+      */
+     static int getIndexInsensitive(CharSequence name, CharSequence value) {
+-        int index = getIndex(name);
+-        if (index == NOT_FOUND) {
++        CharSequenceMap<Integer> innerMap = STATIC_INDEX_BY_NAME_VALUE.get(name);
++        if (innerMap == null) {
+             return NOT_FOUND;
+         }
+-
+-        // Compare values for the first name match
+-        HpackHeaderField entry = getEntry(index);
+-        if (equalsVariableTime(value, entry.value)) {
+-            return index;
+-        }
+-
+-        // Note this assumes all entries for a given header field are sequential.
+-        index++;
+-        while (index <= MAX_SAME_NAME_FIELD_INDEX) {
+-            entry = getEntry(index);
+-            if (!equalsVariableTime(name, entry.name)) {
+-                // As far as fields with the same name are placed in the table sequentially
+-                // and INDEX_BY_NAME returns index of the fist position, - it's safe to
+-                // exit immediately.
+-                return NOT_FOUND;
+-            }
+-            if (equalsVariableTime(value, entry.value)) {
+-                return index;
+-            }
+-            index++;
+-        }
+-
+-        return NOT_FOUND;
++        Integer idx = innerMap.get(value);
++        return idx != null ? idx : NOT_FOUND;
+     }
+ 
+     // create a map CharSequenceMap header name to index value to allow quick lookup

@@ -1,0 +1,60 @@
+diff --git a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+index c132aa5b20..022b2c32df 100644
+--- a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
++++ b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+@@ -246,19 +246,14 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
+ 
+     private <V> ScheduledFuture<V> schedule(final ScheduledFutureTask<V> task) {
+         if (inEventLoop()) {
++            task.setScheduled();
+             scheduledTaskQueue().add(task.setId(nextTaskId++));
+         } else {
+             final long deadlineNanos = task.deadlineNanos();
+-            final Runnable addToQueue = new Runnable() {
+-                @Override
+-                public void run() {
+-                    scheduledTaskQueue().add(task.setId(nextTaskId++));
+-                }
+-            };
+             if (beforeScheduledTaskSubmitted(deadlineNanos)) {
+-                execute(addToQueue);
++                execute(task);
+             } else {
+-                lazyExecute(addToQueue);
++                lazyExecute(task);
+                 // Second hook after scheduling to facilitate race-avoidance
+                 if (afterScheduledTaskSubmitted(deadlineNanos)) {
+                     execute(WAKEUP_TASK);
+diff --git a/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java b/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
+index 5ffe824119..890bbb1091 100644
+--- a/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
++++ b/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
+@@ -28,6 +28,15 @@ import java.util.concurrent.TimeUnit;
+ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFuture<V>, PriorityQueueNode {
+     private static final long START_TIME = System.nanoTime();
+ 
++    private static final byte STATE_PENDING_SCHEDULE = 0;
++    private static final byte STATE_SCHEDULED = 1;
++
++    private byte state;
++
++    void setScheduled() {
++        state = STATE_SCHEDULED;
++    }
++
+     static long nanoTime() {
+         return System.nanoTime() - START_TIME;
+     }
+@@ -144,6 +153,12 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
+     @Override
+     public void run() {
+         assert executor().inEventLoop();
++        if (state == STATE_PENDING_SCHEDULE) {
++            AbstractScheduledEventExecutor exec = (AbstractScheduledEventExecutor) executor();
++            exec.scheduledTaskQueue().add(this.setId(exec.nextTaskId++));
++            state = STATE_SCHEDULED;
++            return;
++        }
+         try {
+             if (periodNanos == 0) {
+                 if (setUncancellableInternal()) {

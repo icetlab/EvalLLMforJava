@@ -1,0 +1,48 @@
+diff --git a/codec/src/main/java/io/netty/handler/codec/DateFormatter.java b/codec/src/main/java/io/netty/handler/codec/DateFormatter.java
+index 86df148500..5f9c91e77a 100644
+--- a/codec/src/main/java/io/netty/handler/codec/DateFormatter.java
++++ b/codec/src/main/java/io/netty/handler/codec/DateFormatter.java
+@@ -45,20 +45,28 @@ import java.util.TimeZone;
+  */
+ public final class DateFormatter {
+ 
+-    private static final BitSet DELIMITERS = new BitSet();
++    private static final boolean[] DELIMITERS = new boolean[128];
+     static {
+-        DELIMITERS.set(0x09);
++        DELIMITERS['\t'] = true;
+         for (char c = 0x20; c <= 0x2F; c++) {
+-            DELIMITERS.set(c);
++            if (c < DELIMITERS.length) {
++                DELIMITERS[c] = true;
++            }
+         }
+         for (char c = 0x3B; c <= 0x40; c++) {
+-            DELIMITERS.set(c);
++            if (c < DELIMITERS.length) {
++                DELIMITERS[c] = true;
++            }
+         }
+         for (char c = 0x5B; c <= 0x60; c++) {
+-            DELIMITERS.set(c);
++            if (c < DELIMITERS.length) {
++                DELIMITERS[c] = true;
++            }
+         }
+         for (char c = 0x7B; c <= 0x7E; c++) {
+-            DELIMITERS.set(c);
++            if (c < DELIMITERS.length) {
++                DELIMITERS[c] = true;
++            }
+         }
+     }
+ 
+@@ -132,7 +140,7 @@ public final class DateFormatter {
+ 
+     // delimiter = %x09 / %x20-2F / %x3B-40 / %x5B-60 / %x7B-7E
+     private static boolean isDelim(char c) {
+-        return DELIMITERS.get(c);
++        return c < DELIMITERS.length && DELIMITERS[c];
+     }
+ 
+     private static boolean isDigit(char c) {

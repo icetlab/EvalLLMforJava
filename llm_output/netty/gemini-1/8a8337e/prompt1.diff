@@ -1,0 +1,41 @@
+diff --git a/common/src/main/java/io/netty/util/Recycler.java b/common/src/main/java/io/netty/util/Recycler.java
+index dd7b2d73be..71e0f2ef81 100644
+--- a/common/src/main/java/io/netty/util/Recycler.java
++++ b/common/src/main/java/io/netty/util/Recycler.java
+@@ -166,21 +166,17 @@ public abstract class Recycler<T> {
+         }
+         LocalPool<T> localPool = threadLocal.get();
+         DefaultHandle<T> handle = localPool.claim();
+-        T obj;
+         if (handle == null) {
+             handle = localPool.newHandle();
+-            if (handle != null) {
+-                obj = newObject(handle);
+-                handle.set(obj);
+-            } else {
+-                obj = newObject((Handle<T>) NOOP_HANDLE);
+-            }
+-        } else {
+-            obj = handle.get();
++            if (handle == null) {
++                return newObject((Handle<T>) NOOP_HANDLE);
+             }
+-
++            T obj = newObject(handle);
++            handle.set(obj);
+             return obj;
+         }
++        return handle.get();
++    }
+ 
+     /**
+      * @deprecated use {@link Handle#recycle(Object)}.
+@@ -244,7 +240,7 @@ public abstract class Recycler<T> {
+ 
+         void toClaimed() {
+             assert state == STATE_AVAILABLE;
+-            state = STATE_CLAIMED;
++            STATE_UPDATER.lazySet(this, STATE_CLAIMED);
+         }
+ 
+         void toAvailable() {

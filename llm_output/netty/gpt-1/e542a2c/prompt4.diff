@@ -1,0 +1,71 @@
+diff --git a/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java b/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java
+index c8c40a5d24..3da88f5cb7 100644
+--- a/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java
++++ b/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java
+@@ -1442,10 +1442,18 @@ public abstract class AbstractByteBuf extends ByteBuf {
+      * if the buffer was released before.
+      */
+     protected final void ensureAccessible() {
+-        if (checkAccessible && refCnt() == 0) {
++    if (checkAccessible) {
++        int cnt;
++        if (this instanceof AbstractReferenceCountedByteBuf) {
++            cnt = ((AbstractReferenceCountedByteBuf) this).nonVolatileRefCnt;
++        } else {
++            cnt = refCnt();
++        }
++        if (cnt == 0) {
+             throw new IllegalReferenceCountException(0);
+         }
+     }
++}
+ 
+     final void setIndex0(int readerIndex, int writerIndex) {
+         this.readerIndex = readerIndex;
+diff --git a/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java b/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
+index d624d855f4..9dca9e5b80 100644
+--- a/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
++++ b/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
+@@ -31,10 +31,13 @@ public abstract class AbstractReferenceCountedByteBuf extends AbstractByteBuf {
+             AtomicIntegerFieldUpdater.newUpdater(AbstractReferenceCountedByteBuf.class, "refCnt");
+ 
+     private volatile int refCnt;
++    // Non-volatile reference count used for fast-path accessibility checks
++    int nonVolatileRefCnt;
+ 
+     protected AbstractReferenceCountedByteBuf(int maxCapacity) {
+         super(maxCapacity);
+         refCntUpdater.set(this, 1);
++        nonVolatileRefCnt = 1;
+     }
+ 
+     @Override
+@@ -66,6 +69,7 @@ public abstract class AbstractReferenceCountedByteBuf extends AbstractByteBuf {
+             refCntUpdater.getAndAdd(this, -increment);
+             throw new IllegalReferenceCountException(oldRef, increment);
+         }
++        nonVolatileRefCnt += increment;
+         return this;
+     }
+ 
+@@ -93,12 +97,20 @@ public abstract class AbstractReferenceCountedByteBuf extends AbstractByteBuf {
+         int oldRef = refCntUpdater.getAndAdd(this, -decrement);
+         if (oldRef == decrement) {
+             deallocate();
++            nonVolatileRefCnt = 0;
+             return true;
+         } else if (oldRef < decrement || oldRef - decrement > oldRef) {
+             // Ensure we don't over-release, and avoid underflow.
+             refCntUpdater.getAndAdd(this, decrement);
+             throw new IllegalReferenceCountException(oldRef, -decrement);
+         }
++        nonVolatileRefCnt = oldRef - decrement;
++        return false;
++    }
++            // Ensure we don't over-release, and avoid underflow.
++            refCntUpdater.getAndAdd(this, decrement);
++            throw new IllegalReferenceCountException(oldRef, -decrement);
++        }
+         return false;
+     }
+     /**

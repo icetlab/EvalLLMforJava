@@ -1,0 +1,39 @@
+diff --git a/common/src/main/java/io/netty/util/Recycler.java b/common/src/main/java/io/netty/util/Recycler.java
+index a17a9906c4..b79b18c61b 100644
+--- a/common/src/main/java/io/netty/util/Recycler.java
++++ b/common/src/main/java/io/netty/util/Recycler.java
+@@ -339,9 +339,17 @@ public abstract class Recycler<T> {
+                 handle.unguardedToAvailable();
+             }
+             Thread owner = this.owner;
+-            if (owner != null && Thread.currentThread() == owner && batch.size() < chunkSize) {
++            if (owner != null && Thread.currentThread() == owner) {
++                if (batch.size() < chunkSize) {
+                     accept(handle);
+-            } else if (owner != null && isTerminated(owner)) {
++                } else {
++                    MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;
++                    if (handles != null) {
++                        handles.relaxedOffer(handle);
++                    }
++                }
++            } else {
++                if (owner != null && isTerminated(owner)) {
+                     this.owner = null;
+                     pooledHandles = null;
+                 } else {
+@@ -351,11 +359,13 @@ public abstract class Recycler<T> {
+                     }
+                 }
+             }
++        }
+ 
+         private static boolean isTerminated(Thread owner) {
+             // Do not use `Thread.getState()` in J9 JVM because it's known to have a performance issue.
+             // See: https://github.com/netty/netty/issues/13347#issuecomment-1518537895
+-            return PlatformDependent.isJ9Jvm() ? !owner.isAlive() : owner.getState() == Thread.State.TERMINATED;
++            // Also, `Thread.getState()` is not fast, so we can lift the J9 check and use `isAlive()` for all JVMs.
++            return !owner.isAlive();
+         }
+ 
+         DefaultHandle<T> newHandle() {

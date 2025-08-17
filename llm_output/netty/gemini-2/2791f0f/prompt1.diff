@@ -1,0 +1,68 @@
+diff --git a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+index 656c57847b..ef067256d6 100644
+--- a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
++++ b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+@@ -30,12 +30,7 @@ import java.util.concurrent.TimeUnit;
+  */
+ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecutor {
+     private static final Comparator<ScheduledFutureTask<?>> SCHEDULED_FUTURE_TASK_COMPARATOR =
+-            new Comparator<ScheduledFutureTask<?>>() {
+-                @Override
+-                public int compare(ScheduledFutureTask<?> o1, ScheduledFutureTask<?> o2) {
+-                    return o1.compareTo(o2);
+-                }
+-            };
++            ScheduledFutureTask::compareTo;
+ 
+     PriorityQueue<ScheduledFutureTask<?>> scheduledTaskQueue;
+ 
+@@ -94,10 +89,7 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
+             return;
+         }
+ 
+-        final ScheduledFutureTask<?>[] scheduledTasks =
+-                scheduledTaskQueue.toArray(new ScheduledFutureTask<?>[0]);
+-
+-        for (ScheduledFutureTask<?> task: scheduledTasks) {
++        for (ScheduledFutureTask<?> task: scheduledTaskQueue) {
+             task.cancelWithoutRemove(false);
+         }
+ 
+@@ -123,8 +115,7 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
+         if (scheduledTask == null || scheduledTask.deadlineNanos() - nanoTime > 0) {
+             return null;
+         }
+-        scheduledTaskQueue.remove();
+-        return scheduledTask;
++        return scheduledTaskQueue.poll();
+     }
+ 
+     /**
+@@ -243,12 +234,7 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
+         if (inEventLoop()) {
+             scheduledTaskQueue().add(task);
+         } else {
+-            executeScheduledRunnable(new Runnable() {
+-                @Override
+-                public void run() {
+-                    scheduledTaskQueue().add(task);
+-                }
+-            }, true, task.deadlineNanos());
++            executeScheduledRunnable(() -> scheduledTaskQueue().add(task), true, task.deadlineNanos());
+         }
+ 
+         return task;
+@@ -258,12 +244,7 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
+         if (inEventLoop()) {
+             scheduledTaskQueue().removeTyped(task);
+         } else {
+-            executeScheduledRunnable(new Runnable() {
+-                @Override
+-                public void run() {
+-                    scheduledTaskQueue().removeTyped(task);
+-                }
+-            }, false, task.deadlineNanos());
++            executeScheduledRunnable(() -> scheduledTaskQueue().removeTyped(task), false, task.deadlineNanos());
+         }
+     }
+ 

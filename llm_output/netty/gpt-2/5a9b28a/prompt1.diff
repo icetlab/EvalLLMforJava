@@ -1,0 +1,16 @@
+diff --git a/common/src/main/java/io/netty/util/Recycler.java b/common/src/main/java/io/netty/util/Recycler.java
+index a17a9906c4..28ecf75172 100644
+--- a/common/src/main/java/io/netty/util/Recycler.java
++++ b/common/src/main/java/io/netty/util/Recycler.java
+@@ -353,9 +353,8 @@ public abstract class Recycler<T> {
+         }
+ 
+         private static boolean isTerminated(Thread owner) {
+-            // Do not use `Thread.getState()` in J9 JVM because it's known to have a performance issue.
+-            // See: https://github.com/netty/netty/issues/13347#issuecomment-1518537895
+-            return PlatformDependent.isJ9Jvm() ? !owner.isAlive() : owner.getState() == Thread.State.TERMINATED;
++            // A simple and fast check for thread termination
++            return !owner.isAlive();
+         }
+ 
+         DefaultHandle<T> newHandle() {

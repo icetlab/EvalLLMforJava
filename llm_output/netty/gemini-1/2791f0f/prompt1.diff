@@ -1,0 +1,13 @@
+diff --git a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+index 656c57847b..14a1d4911f 100644
+--- a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
++++ b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+@@ -95,7 +95,7 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
+         }
+ 
+         final ScheduledFutureTask<?>[] scheduledTasks =
+-                scheduledTaskQueue.toArray(new ScheduledFutureTask<?>[0]);
++                scheduledTaskQueue.toArray(new ScheduledFutureTask<?>[scheduledTaskQueue.size()]);
+ 
+         for (ScheduledFutureTask<?> task: scheduledTasks) {
+             task.cancelWithoutRemove(false);

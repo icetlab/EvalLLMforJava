@@ -1,0 +1,66 @@
+diff --git a/common/src/main/java/io/netty/util/internal/PlatformDependent.java b/common/src/main/java/io/netty/util/internal/PlatformDependent.java
+index 0a70c36401..b97d6374aa 100644
+--- a/common/src/main/java/io/netty/util/internal/PlatformDependent.java
++++ b/common/src/main/java/io/netty/util/internal/PlatformDependent.java
+@@ -69,6 +69,9 @@ public final class PlatformDependent {
+ 
+     private static final InternalLogger logger = InternalLoggerFactory.getInstance(PlatformDependent.class);
+ 
++    // Cache the unsafe+unaligned check to avoid repeated method calls
++    private static final boolean USE_UNSAFE_AND_ALIGNED = hasUnsafe() && unalignedAccess();
++
+     private static final Pattern MAX_DIRECT_MEMORY_SIZE_ARG_PATTERN = Pattern.compile(
+             "\\s*-XX:MaxDirectMemorySize\\s*=\\s*([0-9]+)\\s*([kKmMgG]?)\\s*$");
+ 
+@@ -683,9 +686,9 @@ public final class PlatformDependent {
+      * by the caller.
+      */
+     public static boolean equals(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {
+-        return !hasUnsafe() || !unalignedAccess() ?
+-                  equalsSafe(bytes1, startPos1, bytes2, startPos2, length) :
+-                  PlatformDependent0.equals(bytes1, startPos1, bytes2, startPos2, length);
++        return USE_UNSAFE_AND_ALIGNED ?
++                  PlatformDependent0.equals(bytes1, startPos1, bytes2, startPos2, length) :
++                  equalsSafe(bytes1, startPos1, bytes2, startPos2, length);
+     }
+ 
+     /**
+@@ -696,9 +699,9 @@ public final class PlatformDependent {
+      * @return {@code false} if {@code bytes[startPos:startsPos+length)} contains a value other than zero.
+      */
+     public static boolean isZero(byte[] bytes, int startPos, int length) {
+-        return !hasUnsafe() || !unalignedAccess() ?
+-                isZeroSafe(bytes, startPos, length) :
+-                PlatformDependent0.isZero(bytes, startPos, length);
++        return USE_UNSAFE_AND_ALIGNED ?
++                PlatformDependent0.isZero(bytes, startPos, length) :
++                isZeroSafe(bytes, startPos, length);
+     }
+ 
+     /**
+@@ -723,9 +726,9 @@ public final class PlatformDependent {
+      * @return {@code 0} if not equal. {@code 1} if equal.
+      */
+     public static int equalsConstantTime(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {
+-        return !hasUnsafe() || !unalignedAccess() ?
+-                  ConstantTimeUtils.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length) :
+-                  PlatformDependent0.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);
++        return USE_UNSAFE_AND_ALIGNED ?
++                  PlatformDependent0.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length) :
++                  ConstantTimeUtils.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);
+     }
+ 
+     /**
+@@ -738,9 +741,9 @@ public final class PlatformDependent {
+      * The resulting hash code will be case insensitive.
+      */
+     public static int hashCodeAscii(byte[] bytes, int startPos, int length) {
+-        return !hasUnsafe() || !unalignedAccess() ?
+-                hashCodeAsciiSafe(bytes, startPos, length) :
+-                PlatformDependent0.hashCodeAscii(bytes, startPos, length);
++        return USE_UNSAFE_AND_ALIGNED ?
++                PlatformDependent0.hashCodeAscii(bytes, startPos, length) :
++                hashCodeAsciiSafe(bytes, startPos, length);
+     }
+ 
+     /**

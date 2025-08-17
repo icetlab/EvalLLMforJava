@@ -1,0 +1,108 @@
+diff --git a/common/src/main/java/io/netty/util/internal/PlatformDependent.java b/common/src/main/java/io/netty/util/internal/PlatformDependent.java
+index 0a70c36401..b9cafccc04 100644
+--- a/common/src/main/java/io/netty/util/internal/PlatformDependent.java
++++ b/common/src/main/java/io/netty/util/internal/PlatformDependent.java
+@@ -755,55 +755,28 @@ public final class PlatformDependent {
+      */
+     public static int hashCodeAscii(CharSequence bytes) {
+         int hash = HASH_CODE_ASCII_SEED;
+-        final int remainingBytes = bytes.length() & 7;
++        final int len = bytes.length();
++        final int remainingBytes = len & 7;
+         // Benchmarking shows that by just naively looping for inputs 8~31 bytes long we incur a relatively large
+         // performance penalty (only achieve about 60% performance of loop which iterates over each char). So because
+         // of this we take special provisions to unroll the looping for these conditions.
+-        switch (bytes.length()) {
+-            case 31:
+-            case 30:
+-            case 29:
+-            case 28:
+-            case 27:
+-            case 26:
+-            case 25:
+-            case 24:
+-                hash = hashCodeAsciiCompute(bytes, bytes.length() - 24,
+-                        hashCodeAsciiCompute(bytes, bytes.length() - 16,
+-                          hashCodeAsciiCompute(bytes, bytes.length() - 8, hash)));
++        switch (len >>> 3) {
++            case 0:
+                 break;
+-            case 23:
+-            case 22:
+-            case 21:
+-            case 20:
+-            case 19:
+-            case 18:
+-            case 17:
+-            case 16:
+-                hash = hashCodeAsciiCompute(bytes, bytes.length() - 16,
+-                         hashCodeAsciiCompute(bytes, bytes.length() - 8, hash));
++            case 1:
++                hash = hashCodeAsciiCompute(bytes, len - 8, hash);
+                 break;
+-            case 15:
+-            case 14:
+-            case 13:
+-            case 12:
+-            case 11:
+-            case 10:
+-            case 9:
+-            case 8:
+-                hash = hashCodeAsciiCompute(bytes, bytes.length() - 8, hash);
++            case 2:
++                hash = hashCodeAsciiCompute(bytes, len - 16,
++                        hashCodeAsciiCompute(bytes, len - 8, hash));
+                 break;
+-            case 7:
+-            case 6:
+-            case 5:
+-            case 4:
+             case 3:
+-            case 2:
+-            case 1:
+-            case 0:
++                hash = hashCodeAsciiCompute(bytes, len - 24,
++                        hashCodeAsciiCompute(bytes, len - 16,
++                                hashCodeAsciiCompute(bytes, len - 8, hash)));
+                 break;
+             default:
+-                for (int i = bytes.length() - 8; i >= remainingBytes; i -= 8) {
++                for (int i = len - 8; i >= remainingBytes; i -= 8) {
+                     hash = hashCodeAsciiCompute(bytes, i, hash);
+                 }
+                 break;
+diff --git a/common/src/main/java/io/netty/util/internal/PlatformDependent0.java b/common/src/main/java/io/netty/util/internal/PlatformDependent0.java
+index df45d1614a..bc6258f6da 100644
+--- a/common/src/main/java/io/netty/util/internal/PlatformDependent0.java
++++ b/common/src/main/java/io/netty/util/internal/PlatformDependent0.java
+@@ -644,9 +644,13 @@ final class PlatformDependent0 {
+         }
+         if (remainingBytes >= 2) {
+             return UNSAFE.getChar(bytes1, baseOffset1) == UNSAFE.getChar(bytes2, baseOffset2) &&
+-                   (remainingBytes == 2 || bytes1[startPos1 + 2] == bytes2[startPos2 + 2]);
++                   (remainingBytes == 2 || UNSAFE.getByte(bytes1, baseOffset1 + 2) ==
++                                           UNSAFE.getByte(bytes2, baseOffset2 + 2));
+         }
+-        return bytes1[startPos1] == bytes2[startPos2];
++        if (remainingBytes == 1) {
++            return UNSAFE.getByte(bytes1, baseOffset1) == UNSAFE.getByte(bytes2, baseOffset2);
++        }
++        return true;
+     }
+ 
+     static int equalsConstantTime(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {
+@@ -711,9 +715,12 @@ final class PlatformDependent0 {
+         }
+         if (remainingBytes >= 2) {
+             return UNSAFE.getChar(bytes, baseOffset) == 0 &&
+-                    (remainingBytes == 2 || bytes[startPos + 2] == 0);
++                    (remainingBytes == 2 || UNSAFE.getByte(bytes, baseOffset + 2) == 0);
+         }
+-        return bytes[startPos] == 0;
++        if (remainingBytes == 1) {
++            return UNSAFE.getByte(bytes, baseOffset) == 0;
++        }
++        return true;
+     }
+ 
+     static int hashCodeAscii(byte[] bytes, int startPos, int length) {

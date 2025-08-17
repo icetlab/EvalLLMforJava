@@ -1,0 +1,45 @@
+diff --git a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
+index da5080ff85..0a6ed49bd6 100644
+--- a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
++++ b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
+@@ -120,6 +120,19 @@ public class QueryStringEncoder {
+      * @param s The String to encode
+      */
+     private void encodeNonUtf8Component(CharSequence s) {
++        // Fast‐path: if no characters need encoding, append entire component
++        int len = s.length();
++        boolean needEncode = false;
++        for (int i = 0; i < len; i++) {
++            if (!dontNeedEncoding(s.charAt(i))) {
++                needEncode = true;
++                break;
++            }
++        }
++        if (!needEncode) {
++            uriBuilder.append(s);
++            return;
++        }
+         //Don't allocate memory until needed
+         char[] buf = null;
+ 
+@@ -153,6 +166,20 @@ public class QueryStringEncoder {
+      * @see ByteBufUtil#writeUtf8(io.netty.buffer.ByteBuf, CharSequence, int, int)
+      */
+     private void encodeUtf8Component(CharSequence s) {
++        // Fast‐path: if all chars are ASCII unreserved, append entire component
++        int n = s.length();
++        boolean needEncode = false;
++        for (int i = 0; i < n; i++) {
++            char c = s.charAt(i);
++            if (c >= 0x80 || !dontNeedEncoding(c)) {
++                needEncode = true;
++                break;
++            }
++        }
++        if (!needEncode) {
++            uriBuilder.append(s);
++            return;
++        }
+         for (int i = 0, len = s.length(); i < len; i++) {
+             char c = s.charAt(i);
+             if (c < 0x80) {
