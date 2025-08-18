@@ -1,0 +1,154 @@
+commit deea51e6093db224878b33eaefc3321f2a0d4a07
+Author: Carl Mastrangelo <carl@carlmastrangelo.com>
+Date:   Mon Jul 1 12:00:21 2019 -0700
+
+    Disable Huffman encoding for small headers (#9260)
+    
+    Motivation:
+    
+    Huffman coding saves only a little space, but has a huge CPU cost
+    
+    Modification:
+    
+    Disable huff coding for headers smaller than 512 bytes.  Also, add a
+    configurable limit to the encoder.
+    
+    Result:
+    
+    Faster HPACK
+    
+    BEFORE:
+    ```
+    Benchmark                     (duplicates)  (limitToAscii)  (sensitive)  (size)  Mode  Cnt       Score       Error  Units
+    HpackEncoderBenchmark.encode          true            true         true   SMALL  avgt   10    2572.595 ±    16.184  ns/op
+    HpackEncoderBenchmark.encode          true            true         true  MEDIUM  avgt   10   19580.815 ±   397.780  ns/op
+    HpackEncoderBenchmark.encode          true            true         true   LARGE  avgt   10  379456.381 ±  2059.919  ns/op
+    HpackEncoderBenchmark.encode          true            true        false   SMALL  avgt   10     730.579 ±     8.116  ns/op
+    HpackEncoderBenchmark.encode          true            true        false  MEDIUM  avgt   10    2087.590 ±    84.644  ns/op
+    HpackEncoderBenchmark.encode          true            true        false   LARGE  avgt   10   11725.228 ±    89.298  ns/op
+    HpackEncoderBenchmark.encode          true           false         true   SMALL  avgt   10     555.971 ±     5.120  ns/op
+    HpackEncoderBenchmark.encode          true           false         true  MEDIUM  avgt   10    2831.874 ±    41.801  ns/op
+    HpackEncoderBenchmark.encode          true           false         true   LARGE  avgt   10   36054.025 ±   179.504  ns/op
+    HpackEncoderBenchmark.encode          true           false        false   SMALL  avgt   10     340.337 ±     3.313  ns/op
+    HpackEncoderBenchmark.encode          true           false        false  MEDIUM  avgt   10    1006.817 ±     8.942  ns/op
+    HpackEncoderBenchmark.encode          true           false        false   LARGE  avgt   10    8784.168 ±   164.014  ns/op
+    HpackEncoderBenchmark.encode         false            true         true   SMALL  avgt   10    2561.934 ±    27.056  ns/op
+    HpackEncoderBenchmark.encode         false            true         true  MEDIUM  avgt   10   22061.105 ±   154.533  ns/op
+    HpackEncoderBenchmark.encode         false            true         true   LARGE  avgt   10  435744.897 ±  8853.388  ns/op
+    HpackEncoderBenchmark.encode         false            true        false   SMALL  avgt   10    2737.683 ±    47.142  ns/op
+    HpackEncoderBenchmark.encode         false            true        false  MEDIUM  avgt   10   22385.146 ±    98.430  ns/op
+    HpackEncoderBenchmark.encode         false            true        false   LARGE  avgt   10  408159.698 ± 12044.931  ns/op
+    HpackEncoderBenchmark.encode         false           false         true   SMALL  avgt   10     544.213 ±     3.279  ns/op
+    HpackEncoderBenchmark.encode         false           false         true  MEDIUM  avgt   10    2908.978 ±    31.026  ns/op
+    HpackEncoderBenchmark.encode         false           false         true   LARGE  avgt   10   36471.262 ±  1044.010  ns/op
+    HpackEncoderBenchmark.encode         false           false        false   SMALL  avgt   10     609.305 ±     4.371  ns/op
+    HpackEncoderBenchmark.encode         false           false        false  MEDIUM  avgt   10    3223.946 ±    23.505  ns/op
+    HpackEncoderBenchmark.encode         false           false        false   LARGE  avgt   10   39975.152 ±   655.196  ns/op
+    ```
+    
+    AFTER:
+    ```
+    NEW AFTER
+    
+    Benchmark                     (duplicates)  (limitToAscii)  (sensitive)  (size)  Mode  Cnt     Score     Error  Units
+    HpackEncoderBenchmark.encode          true            true         true   SMALL  avgt    5   379.473 ± 133.815  ns/op
+    HpackEncoderBenchmark.encode          true            true         true  MEDIUM  avgt    5  1118.772 ±  89.258  ns/op
+    HpackEncoderBenchmark.encode          true            true         true   LARGE  avgt    5  5366.828 ±  89.746  ns/op
+    HpackEncoderBenchmark.encode          true            true        false   SMALL  avgt    5   284.401 ±   2.088  ns/op
+    HpackEncoderBenchmark.encode          true            true        false  MEDIUM  avgt    5   922.805 ±  10.796  ns/op
+    HpackEncoderBenchmark.encode          true            true        false   LARGE  avgt    5  8727.831 ± 462.138  ns/op
+    HpackEncoderBenchmark.encode          true           false         true   SMALL  avgt    5   337.093 ±  22.585  ns/op
+    HpackEncoderBenchmark.encode          true           false         true  MEDIUM  avgt    5   693.689 ±  16.351  ns/op
+    HpackEncoderBenchmark.encode          true           false         true   LARGE  avgt    5  5616.786 ±  98.647  ns/op
+    HpackEncoderBenchmark.encode          true           false        false   SMALL  avgt    5   286.708 ±  13.765  ns/op
+    HpackEncoderBenchmark.encode          true           false        false  MEDIUM  avgt    5   906.279 ±  32.338  ns/op
+    HpackEncoderBenchmark.encode          true           false        false   LARGE  avgt    5  8304.736 ± 128.584  ns/op
+    HpackEncoderBenchmark.encode         false            true         true   SMALL  avgt    5   351.381 ±  15.547  ns/op
+    HpackEncoderBenchmark.encode         false            true         true  MEDIUM  avgt    5  1188.166 ±   7.023  ns/op
+    HpackEncoderBenchmark.encode         false            true         true   LARGE  avgt    5  6876.009 ±  48.117  ns/op
+    HpackEncoderBenchmark.encode         false            true        false   SMALL  avgt    5   434.759 ±   8.619  ns/op
+    HpackEncoderBenchmark.encode         false            true        false  MEDIUM  avgt    5   954.588 ±  58.514  ns/op
+    HpackEncoderBenchmark.encode         false            true        false   LARGE  avgt    5  8534.017 ± 552.597  ns/op
+    HpackEncoderBenchmark.encode         false           false         true   SMALL  avgt    5   223.713 ±   4.823  ns/op
+    HpackEncoderBenchmark.encode         false           false         true  MEDIUM  avgt    5  1181.538 ±  11.851  ns/op
+    HpackEncoderBenchmark.encode         false           false         true   LARGE  avgt    5  6670.830 ± 267.927  ns/op
+    HpackEncoderBenchmark.encode         false           false        false   SMALL  avgt    5   424.609 ±  27.477  ns/op
+    HpackEncoderBenchmark.encode         false           false        false  MEDIUM  avgt    5  1003.578 ±  53.991  ns/op
+    HpackEncoderBenchmark.encode         false           false        false   LARGE  avgt    5  8428.932 ± 102.838  ns/op
+    ```
+
+diff --git a/codec-http2/src/main/java/io/netty/handler/codec/http2/DefaultHttp2HeadersEncoder.java b/codec-http2/src/main/java/io/netty/handler/codec/http2/DefaultHttp2HeadersEncoder.java
+index 5e0a9f6cf1..7b48b96e31 100644
+--- a/codec-http2/src/main/java/io/netty/handler/codec/http2/DefaultHttp2HeadersEncoder.java
++++ b/codec-http2/src/main/java/io/netty/handler/codec/http2/DefaultHttp2HeadersEncoder.java
+@@ -43,7 +43,13 @@ public class DefaultHttp2HeadersEncoder implements Http2HeadersEncoder, Http2Hea
+ 
+     public DefaultHttp2HeadersEncoder(SensitivityDetector sensitivityDetector, boolean ignoreMaxHeaderListSize,
+                                       int dynamicTableArraySizeHint) {
+-        this(sensitivityDetector, new HpackEncoder(ignoreMaxHeaderListSize, dynamicTableArraySizeHint));
++        this(sensitivityDetector, ignoreMaxHeaderListSize, dynamicTableArraySizeHint, HpackEncoder.HUFF_CODE_THRESHOLD);
++    }
++
++    public DefaultHttp2HeadersEncoder(SensitivityDetector sensitivityDetector, boolean ignoreMaxHeaderListSize,
++                                      int dynamicTableArraySizeHint, int huffCodeThreshold) {
++        this(sensitivityDetector,
++                new HpackEncoder(ignoreMaxHeaderListSize, dynamicTableArraySizeHint, huffCodeThreshold));
+     }
+ 
+     /**
+diff --git a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java
+index 301a2c51cf..a1b25179c1 100644
+--- a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java
++++ b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java
+@@ -54,6 +54,7 @@ import static java.lang.Math.max;
+ import static java.lang.Math.min;
+ 
+ final class HpackEncoder {
++    static final int HUFF_CODE_THRESHOLD = 512;
+     // a linked hash map of header fields
+     private final HeaderEntry[] headerFields;
+     private final HeaderEntry head = new HeaderEntry(-1, AsciiString.EMPTY_STRING,
+@@ -61,6 +62,7 @@ final class HpackEncoder {
+     private final HpackHuffmanEncoder hpackHuffmanEncoder = new HpackHuffmanEncoder();
+     private final byte hashMask;
+     private final boolean ignoreMaxHeaderListSize;
++    private final int huffCodeThreshold;
+     private long size;
+     private long maxHeaderTableSize;
+     private long maxHeaderListSize;
+@@ -76,13 +78,13 @@ final class HpackEncoder {
+      * Creates a new encoder.
+      */
+     HpackEncoder(boolean ignoreMaxHeaderListSize) {
+-        this(ignoreMaxHeaderListSize, 16);
++        this(ignoreMaxHeaderListSize, 16, HUFF_CODE_THRESHOLD);
+     }
+ 
+     /**
+      * Creates a new encoder.
+      */
+-    HpackEncoder(boolean ignoreMaxHeaderListSize, int arraySizeHint) {
++    HpackEncoder(boolean ignoreMaxHeaderListSize, int arraySizeHint, int huffCodeThreshold) {
+         this.ignoreMaxHeaderListSize = ignoreMaxHeaderListSize;
+         maxHeaderTableSize = DEFAULT_HEADER_TABLE_SIZE;
+         maxHeaderListSize = MAX_HEADER_LIST_SIZE;
+@@ -91,6 +93,7 @@ final class HpackEncoder {
+         headerFields = new HeaderEntry[findNextPositivePowerOfTwo(max(2, min(arraySizeHint, 128)))];
+         hashMask = (byte) (headerFields.length - 1);
+         head.before = head.after = head;
++        this.huffCodeThreshold = huffCodeThreshold;
+     }
+ 
+     /**
+@@ -250,8 +253,9 @@ final class HpackEncoder {
+      * Encode string literal according to Section 5.2.
+      */
+     private void encodeStringLiteral(ByteBuf out, CharSequence string) {
+-        int huffmanLength = hpackHuffmanEncoder.getEncodedLength(string);
+-        if (huffmanLength < string.length()) {
++        int huffmanLength;
++        if (string.length() >= huffCodeThreshold
++                && (huffmanLength = hpackHuffmanEncoder.getEncodedLength(string)) < string.length()) {
+             encodeInteger(out, 0x80, 7, huffmanLength);
+             hpackHuffmanEncoder.encode(out, string);
+         } else {

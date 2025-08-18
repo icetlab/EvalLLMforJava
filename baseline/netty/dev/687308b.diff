@@ -1,0 +1,70 @@
+commit 687308b4de56ff77a03d731d67153947497271f5
+Author: Anuraag Agrawal <anuraaga@gmail.com>
+Date:   Fri Dec 20 16:51:18 2019 +0900
+
+    Separate out query string encoding for non-encoded strings. (#9887)
+    
+    Motivation:
+    
+    Currently, characters are appended to the encoded string char-by-char even when no encoding is needed. We can instead separate out codepath that appends the entire string in one go for better `StringBuilder` allocation performance.
+    
+    Modification:
+    
+    Only go into char-by-char loop when finding a character that requires encoding.
+    
+    Result:
+    
+    The results aren't so clear with noise on my hot laptop - the biggest impact is on long strings, both to reduce resizes of the buffer and also to reduce complexity of the loop. I don't think there's a significant downside though for the cases that hit the slow path.
+    
+    After
+    ```
+    Benchmark                                     Mode  Cnt   Score   Error   Units
+    QueryStringEncoderBenchmark.longAscii        thrpt    6   1.406 ± 0.069  ops/us
+    QueryStringEncoderBenchmark.longAsciiFirst   thrpt    6   0.046 ± 0.001  ops/us
+    QueryStringEncoderBenchmark.longUtf8         thrpt    6   0.046 ± 0.001  ops/us
+    QueryStringEncoderBenchmark.shortAscii       thrpt    6  15.781 ± 0.949  ops/us
+    QueryStringEncoderBenchmark.shortAsciiFirst  thrpt    6   3.171 ± 0.232  ops/us
+    QueryStringEncoderBenchmark.shortUtf8        thrpt    6   3.900 ± 0.667  ops/us
+    ```
+    
+    Before
+    ```
+    Benchmark                                     Mode  Cnt   Score    Error   Units
+    QueryStringEncoderBenchmark.longAscii        thrpt    6   0.444 ±  0.072  ops/us
+    QueryStringEncoderBenchmark.longAsciiFirst   thrpt    6   0.043 ±  0.002  ops/us
+    QueryStringEncoderBenchmark.longUtf8         thrpt    6   0.047 ±  0.001  ops/us
+    QueryStringEncoderBenchmark.shortAscii       thrpt    6  16.503 ±  1.015  ops/us
+    QueryStringEncoderBenchmark.shortAsciiFirst  thrpt    6   3.316 ±  0.154  ops/us
+    QueryStringEncoderBenchmark.shortUtf8        thrpt    6   3.776 ±  0.956  ops/us
+    ```
+
+diff --git a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
+index da5080ff85..b624016f9a 100644
+--- a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
++++ b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
+@@ -154,6 +154,25 @@ public class QueryStringEncoder {
+      */
+     private void encodeUtf8Component(CharSequence s) {
+         for (int i = 0, len = s.length(); i < len; i++) {
++            char c = s.charAt(i);
++            if (!dontNeedEncoding(c)) {
++                encodeUtf8Component(s, i, len);
++                return;
++            }
++        }
++        uriBuilder.append(s);
++    }
++
++    private void encodeUtf8Component(CharSequence s, int encodingStart, int len) {
++        if (encodingStart > 0) {
++            // Append non-encoded characters directly first.
++            uriBuilder.append(s, 0, encodingStart);
++        }
++        encodeUtf8ComponentSlow(s, encodingStart, len);
++    }
++
++    private void encodeUtf8ComponentSlow(CharSequence s, int start, int len) {
++        for (int i = start; i < len; i++) {
+             char c = s.charAt(i);
+             if (c < 0x80) {
+                 if (dontNeedEncoding(c)) {

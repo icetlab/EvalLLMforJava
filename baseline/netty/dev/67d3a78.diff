@@ -1,0 +1,97 @@
+commit 67d3a78123fa3faa85c1a150bd4ee69425079b3d
+Author: buchgr <jakob.buchgraber@tum.de>
+Date:   Wed Sep 7 11:57:09 2016 +0200
+
+    Reduce bytecode size of PlatformDependent0.equals.
+    
+    Motivation:
+    
+    PP0.equals has a bytecode size of 476. This is above the default inlining threshold of OpenJDK.
+    
+    Modifications:
+    
+    Slightly change the method to reduce the bytecode size by > 50% to 212 bytes.
+    
+    Result:
+    
+    The bytecode size is dramatically reduced, making the method a candidate for inlining.
+    The relevant code in our application (gRPC) that relies heavily on equals comparisons,
+    runs some ~10% faster. The Netty JMH benchmark shows no performance regression.
+    
+    Current 4.1:
+    
+    PlatformDependentBenchmark.unsafeBytesEqual      10  avgt   20     7.836 ±   0.113  ns/op
+    PlatformDependentBenchmark.unsafeBytesEqual      50  avgt   20    16.889 ±   4.284  ns/op
+    PlatformDependentBenchmark.unsafeBytesEqual     100  avgt   20    15.601 ±   0.296  ns/op
+    PlatformDependentBenchmark.unsafeBytesEqual    1000  avgt   20    95.885 ±   1.992  ns/op
+    PlatformDependentBenchmark.unsafeBytesEqual   10000  avgt   20   824.429 ±  12.792  ns/op
+    PlatformDependentBenchmark.unsafeBytesEqual  100000  avgt   20  8907.035 ± 177.844  ns/op
+    
+    With this change:
+    
+    PlatformDependentBenchmark.unsafeBytesEqual      10  avgt   20      5.616 ±   0.102  ns/op
+    PlatformDependentBenchmark.unsafeBytesEqual      50  avgt   20     17.896 ±   0.373  ns/op
+    PlatformDependentBenchmark.unsafeBytesEqual     100  avgt   20     14.952 ±   0.210  ns/op
+    PlatformDependentBenchmark.unsafeBytesEqual    1000  avgt   20     94.799 ±   1.604  ns/op
+    PlatformDependentBenchmark.unsafeBytesEqual   10000  avgt   20    834.996 ±  17.484  ns/op
+    PlatformDependentBenchmark.unsafeBytesEqual  100000  avgt   20   8757.421 ± 187.555  ns/op
+
+diff --git a/common/src/main/java/io/netty/util/internal/PlatformDependent0.java b/common/src/main/java/io/netty/util/internal/PlatformDependent0.java
+index 3c6012601f..f0efdc0b41 100644
+--- a/common/src/main/java/io/netty/util/internal/PlatformDependent0.java
++++ b/common/src/main/java/io/netty/util/internal/PlatformDependent0.java
+@@ -435,38 +435,31 @@ final class PlatformDependent0 {
+     }
+ 
+     static boolean equals(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {
++        if (length == 0) {
++            return true;
++        }
+         final long baseOffset1 = BYTE_ARRAY_BASE_OFFSET + startPos1;
+         final long baseOffset2 = BYTE_ARRAY_BASE_OFFSET + startPos2;
+-        final int remainingBytes = length & 7;
++        int remainingBytes = length & 7;
+         final long end = baseOffset1 + remainingBytes;
+         for (long i = baseOffset1 - 8 + length, j = baseOffset2 - 8 + length; i >= end; i -= 8, j -= 8) {
+             if (UNSAFE.getLong(bytes1, i) != UNSAFE.getLong(bytes2, j)) {
+                 return false;
+             }
+         }
+-        switch (remainingBytes) {
+-        case 7:
+-            return UNSAFE.getInt(bytes1, baseOffset1 + 3) == UNSAFE.getInt(bytes2, baseOffset2 + 3) &&
+-                   UNSAFE.getChar(bytes1, baseOffset1 + 1) == UNSAFE.getChar(bytes2, baseOffset2 + 1) &&
+-                   UNSAFE.getByte(bytes1, baseOffset1) == UNSAFE.getByte(bytes2, baseOffset2);
+-        case 6:
+-            return UNSAFE.getInt(bytes1, baseOffset1 + 2) == UNSAFE.getInt(bytes2, baseOffset2 + 2) &&
+-                   UNSAFE.getChar(bytes1, baseOffset1) == UNSAFE.getChar(bytes2, baseOffset2);
+-        case 5:
+-            return UNSAFE.getInt(bytes1, baseOffset1 + 1) == UNSAFE.getInt(bytes2, baseOffset2 + 1) &&
+-                   UNSAFE.getByte(bytes1, baseOffset1) == UNSAFE.getByte(bytes2, baseOffset2);
+-        case 4:
+-            return UNSAFE.getInt(bytes1, baseOffset1) == UNSAFE.getInt(bytes2, baseOffset2);
+-        case 3:
+-            return UNSAFE.getChar(bytes1, baseOffset1 + 1) == UNSAFE.getChar(bytes2, baseOffset2 + 1) &&
+-                   UNSAFE.getByte(bytes1, baseOffset1) == UNSAFE.getByte(bytes2, baseOffset2);
+-        case 2:
+-            return UNSAFE.getChar(bytes1, baseOffset1) == UNSAFE.getChar(bytes2, baseOffset2);
+-        case 1:
+-            return UNSAFE.getByte(bytes1, baseOffset1) == UNSAFE.getByte(bytes2, baseOffset2);
+-        default:
+-            return true;
++
++        if (remainingBytes >= 4) {
++            remainingBytes -= 4;
++            if (UNSAFE.getInt(bytes1, baseOffset1 + remainingBytes) !=
++                UNSAFE.getInt(bytes2, baseOffset2 + remainingBytes)) {
++                return false;
++            }
++        }
++        if (remainingBytes >= 2) {
++            return UNSAFE.getChar(bytes1, baseOffset1) == UNSAFE.getChar(bytes2, baseOffset2) &&
++                   (remainingBytes == 2 || bytes1[startPos1 + 2] == bytes2[startPos2 + 2]);
+         }
++        return bytes1[startPos1] == bytes2[startPos2];
+     }
+ 
+     static int equalsConstantTime(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {

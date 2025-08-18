@@ -1,0 +1,111 @@
+commit 2791f0fefac82663ca09dc8aa5dda024152c92f8
+Author: Nick Hill <nickhill@us.ibm.com>
+Date:   Tue Sep 24 22:34:25 2019 -0700
+
+    Avoid use of global AtomicLong for ScheduledFutureTask ids (#9599)
+    
+    Motivation
+    
+    Currently a static AtomicLong is used to allocate a unique id whenever a
+    task is scheduled to any event loop. This could be a source of
+    contention if delayed tasks are scheduled at a high frequency and can be
+    easily avoided by having a non-volatile id counter per queue.
+    
+    Modifications
+    
+    - Replace static AtomicLong ScheduledFutureTask#nextTaskId with a long
+    field in AbstractScheduledExecutorService
+    - Set ScheduledFutureTask#id based on this when adding the task to the
+    queue (in event loop) instead of at construction time
+    - Add simple benchmark
+    
+    Result
+    
+    Less contention / cache-miss possibility when scheduling future tasks
+    
+    Before:
+    
+    Benchmark      (num)   Mode  Cnt    Score    Error  Units
+    scheduleLots  100000  thrpt   20  346.008 ± 21.931  ops/s
+    
+    Benchmark      (num)   Mode  Cnt    Score    Error  Units
+    scheduleLots  100000  thrpt   20  654.824 ± 22.064  ops/s
+
+diff --git a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+index 656c57847b..a44ae521dd 100644
+--- a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
++++ b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+@@ -39,6 +39,8 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
+ 
+     PriorityQueue<ScheduledFutureTask<?>> scheduledTaskQueue;
+ 
++    long nextTaskId;
++
+     protected AbstractScheduledEventExecutor() {
+     }
+ 
+@@ -241,12 +243,12 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
+ 
+     private <V> ScheduledFuture<V> schedule(final ScheduledFutureTask<V> task) {
+         if (inEventLoop()) {
+-            scheduledTaskQueue().add(task);
++            scheduledTaskQueue().add(task.setId(nextTaskId++));
+         } else {
+             executeScheduledRunnable(new Runnable() {
+                 @Override
+                 public void run() {
+-                    scheduledTaskQueue().add(task);
++                    scheduledTaskQueue().add(task.setId(nextTaskId++));
+                 }
+             }, true, task.deadlineNanos());
+         }
+diff --git a/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java b/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
+index 1d1403e3f0..ac77dc5d84 100644
+--- a/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
++++ b/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
+@@ -23,11 +23,9 @@ import java.util.Queue;
+ import java.util.concurrent.Callable;
+ import java.util.concurrent.Delayed;
+ import java.util.concurrent.TimeUnit;
+-import java.util.concurrent.atomic.AtomicLong;
+ 
+ @SuppressWarnings("ComparableImplementedButEqualsNotOverridden")
+ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFuture<V>, PriorityQueueNode {
+-    private static final AtomicLong nextTaskId = new AtomicLong();
+     private static final long START_TIME = System.nanoTime();
+ 
+     static long nanoTime() {
+@@ -44,7 +42,9 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
+         return START_TIME;
+     }
+ 
+-    private final long id = nextTaskId.getAndIncrement();
++    // set once when added to priority queue
++    private long id;
++
+     private long deadlineNanos;
+     /* 0 - no repeat, >0 - repeat at fixed rate, <0 - repeat with fixed delay */
+     private final long periodNanos;
+@@ -79,6 +79,11 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
+         periodNanos = 0;
+     }
+ 
++    ScheduledFutureTask<V> setId(long id) {
++        this.id = id;
++        return this;
++    }
++
+     @Override
+     protected EventExecutor executor() {
+         return super.executor();
+@@ -182,9 +187,7 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
+         StringBuilder buf = super.toStringBuilder();
+         buf.setCharAt(buf.length() - 1, ',');
+ 
+-        return buf.append(" id: ")
+-                  .append(id)
+-                  .append(", deadline: ")
++        return buf.append(" deadline: ")
+                   .append(deadlineNanos)
+                   .append(", period: ")
+                   .append(periodNanos)

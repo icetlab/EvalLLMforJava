@@ -1,0 +1,37 @@
+commit 5a9b28a4157f79bb69331b0979e73c2eb8b2bb3f
+Author: Obolrom <65775868+Obolrom@users.noreply.github.com>
+Date:   Fri Sep 13 09:22:23 2024 +0300
+
+    Replace ArrayDeque::pollFirst with ArrayDeque::pollLast for Recycler.LocalPool batch. (#14268) (#14292)
+    
+    Motivation:
+    
+    Improve performance by replacing ArrayDeque::pollFirst with
+    ArrayDeque::pollLast.
+    
+    Modifications:
+    
+    Replaced ArrayDeque::pollFirst with ArrayDeque::pollLast for LocalPool
+    batch.
+    
+    Result:
+    - The new version shows the best overall performance in benchmarks such
+    as plainNew, recyclerGetAndRecycle, and unguardedProducerConsumer.
+    - Overall, the new version shows a significant reduction in GC time,
+    improving memory efficiency across most tests.
+    
+    Fixes #14268
+
+diff --git a/common/src/main/java/io/netty/util/Recycler.java b/common/src/main/java/io/netty/util/Recycler.java
+index a17a9906c4..c434874bff 100644
+--- a/common/src/main/java/io/netty/util/Recycler.java
++++ b/common/src/main/java/io/netty/util/Recycler.java
+@@ -325,7 +325,7 @@ public abstract class Recycler<T> {
+             if (batch.isEmpty()) {
+                 handles.drain(this, chunkSize);
+             }
+-            DefaultHandle<T> handle = batch.pollFirst();
++            DefaultHandle<T> handle = batch.pollLast();
+             if (null != handle) {
+                 handle.toClaimed();
+             }

@@ -1,0 +1,107 @@
+commit 9abeaf16fd06344a535ced33eaedcbda55540c7a
+Author: Carl Mastrangelo <carl@carlmastrangelo.com>
+Date:   Tue Jun 4 05:17:23 2019 -0700
+
+    Properly debounce wakeups (#9191)
+    
+    Motivation:
+    The wakeup logic in EpollEventLoop is overly complex
+    
+    Modification:
+    * Simplify the race to wakeup the loop
+    * Dont let the event loop wake up itself (it's already awake!)
+    * Make event loop check if there are any more tasks after preparing to
+    sleep.  There is small window where the non-eventloop writers can issue
+    eventfd writes here, but that is okay.
+    
+    Result:
+    Cleaner wakeup logic.
+    
+    Benchmarks:
+    
+    ```
+    BEFORE
+    Benchmark                                   Mode  Cnt       Score      Error  Units
+    EpollSocketChannelBenchmark.executeMulti   thrpt   20  408381.411 ± 2857.498  ops/s
+    EpollSocketChannelBenchmark.executeSingle  thrpt   20  157022.360 ± 1240.573  ops/s
+    EpollSocketChannelBenchmark.pingPong       thrpt   20   60571.704 ±  331.125  ops/s
+    
+    Benchmark                                   Mode  Cnt       Score      Error  Units
+    EpollSocketChannelBenchmark.executeMulti   thrpt   20  440546.953 ± 1652.823  ops/s
+    EpollSocketChannelBenchmark.executeSingle  thrpt   20  168114.751 ± 1176.609  ops/s
+    EpollSocketChannelBenchmark.pingPong       thrpt   20   61231.878 ±  520.108  ops/s
+    ```
+
+diff --git a/transport-native-epoll/src/main/java/io/netty/channel/epoll/EpollEventLoop.java b/transport-native-epoll/src/main/java/io/netty/channel/epoll/EpollEventLoop.java
+index 8c9ad17821..d99f4a5d48 100644
+--- a/transport-native-epoll/src/main/java/io/netty/channel/epoll/EpollEventLoop.java
++++ b/transport-native-epoll/src/main/java/io/netty/channel/epoll/EpollEventLoop.java
+@@ -166,7 +166,7 @@ class EpollEventLoop extends SingleThreadEventLoop {
+ 
+     @Override
+     protected void wakeup(boolean inEventLoop) {
+-        if (!inEventLoop && WAKEN_UP_UPDATER.compareAndSet(this, 0, 1)) {
++        if (!inEventLoop && WAKEN_UP_UPDATER.getAndSet(this, 1) == 0) {
+             // write to the evfd which will then wake-up epoll_wait(...)
+             Native.eventFdWrite(eventFd.intValue(), 1L);
+         }
+@@ -245,15 +245,7 @@ class EpollEventLoop extends SingleThreadEventLoop {
+         return channels.size();
+     }
+ 
+-    private int epollWait(boolean oldWakeup) throws IOException {
+-        // If a task was submitted when wakenUp value was 1, the task didn't get a chance to produce wakeup event.
+-        // So we need to check task queue again before calling epoll_wait. If we don't, the task might be pended
+-        // until epoll_wait was timed out. It might be pended until idle timeout if IdleStateHandler existed
+-        // in pipeline.
+-        if (oldWakeup && hasTasks()) {
+-            return epollWaitNow();
+-        }
+-
++    private int epollWait() throws IOException {
+         int delaySeconds;
+         int delayNanos;
+         long curDeadlineNanos = deadlineNanos();
+@@ -291,38 +283,11 @@ class EpollEventLoop extends SingleThreadEventLoop {
+                         break;
+ 
+                     case SelectStrategy.SELECT:
+-                        strategy = epollWait(WAKEN_UP_UPDATER.getAndSet(this, 0) == 1);
+-
+-                        // 'wakenUp.compareAndSet(false, true)' is always evaluated
+-                        // before calling 'selector.wakeup()' to reduce the wake-up
+-                        // overhead. (Selector.wakeup() is an expensive operation.)
+-                        //
+-                        // However, there is a race condition in this approach.
+-                        // The race condition is triggered when 'wakenUp' is set to
+-                        // true too early.
+-                        //
+-                        // 'wakenUp' is set to true too early if:
+-                        // 1) Selector is waken up between 'wakenUp.set(false)' and
+-                        //    'selector.select(...)'. (BAD)
+-                        // 2) Selector is waken up between 'selector.select(...)' and
+-                        //    'if (wakenUp.get()) { ... }'. (OK)
+-                        //
+-                        // In the first case, 'wakenUp' is set to true and the
+-                        // following 'selector.select(...)' will wake up immediately.
+-                        // Until 'wakenUp' is set to false again in the next round,
+-                        // 'wakenUp.compareAndSet(false, true)' will fail, and therefore
+-                        // any attempt to wake up the Selector will fail, too, causing
+-                        // the following 'selector.select(...)' call to block
+-                        // unnecessarily.
+-                        //
+-                        // To fix this problem, we wake up the selector again if wakenUp
+-                        // is true immediately after selector.select(...).
+-                        // It is inefficient in that it wakes up the selector for both
+-                        // the first case (BAD - wake-up required) and the second case
+-                        // (OK - no wake-up required).
+-
+                         if (wakenUp == 1) {
+-                            Native.eventFdWrite(eventFd.intValue(), 1L);
++                            wakenUp = 0;
++                        }
++                        if (!hasTasks()) {
++                            strategy = epollWait();
+                         }
+                         // fallthrough
+                     default:
