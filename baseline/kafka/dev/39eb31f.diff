@@ -1,0 +1,76 @@
+commit 39eb31feaeebfb184d98cc5d94da9148c2319d81
+Author: Ismael Juma <ismael@juma.me.uk>
+Date:   Tue Jun 6 03:08:40 2017 +0100
+
+    MINOR: Optimise performance of `Topic.validate()`
+    
+    I included a JMH benchmark and the results follow. The
+    implementation in this PR takes no more than 1/10th
+    of the time when compared to trunk. I also included
+    results for an alternative implementation that is a little
+    slower than the one in the PR.
+    
+    Trunk:
+    ```text
+    TopicBenchmark.testValidate                                topic  avgt   15  134.107 ±  3.956  ns/op
+    TopicBenchmark.testValidate                    longer-topic-name  avgt   15  316.241 ± 13.379  ns/op
+    TopicBenchmark.testValidate  very-long-topic-name_with_more_text  avgt   15  636.026 ± 30.272  ns/op
+    ```
+    
+    Implementation in the PR:
+    ```text
+    TopicBenchmark.testValidate                                topic  avgt   15  13.153 ± 0.383  ns/op
+    TopicBenchmark.testValidate                    longer-topic-name  avgt   15  26.139 ± 0.896  ns/op
+    TopicBenchmark.testValidate  very-long-topic-name.with_more_text  avgt   15  44.829 ± 1.390  ns/op
+    ```
+    
+    Alternative implementation where boolean validChar = Character.isLetterOrDigit(c) || c == '.' || c == '_' || c == '-';
+    ```text
+    TopicBenchmark.testValidate                                topic  avgt   15  18.883 ± 1.044  ns/op
+    TopicBenchmark.testValidate                    longer-topic-name  avgt   15  36.696 ± 1.220  ns/op
+    TopicBenchmark.testValidate  very-long-topic-name_with_more_text  avgt   15  65.956 ± 0.669  ns/op
+    ```
+    
+    Author: Ismael Juma <ismael@juma.me.uk>
+    
+    Reviewers: Guozhang Wang <wangguoz@gmail.com>
+    
+    Closes #3234 from ijuma/optimise-topic-is-valid
+
+diff --git a/clients/src/main/java/org/apache/kafka/common/internals/Topic.java b/clients/src/main/java/org/apache/kafka/common/internals/Topic.java
+index dd6dbcf3a2..a5ef3357dd 100644
+--- a/clients/src/main/java/org/apache/kafka/common/internals/Topic.java
++++ b/clients/src/main/java/org/apache/kafka/common/internals/Topic.java
+@@ -21,7 +21,6 @@ import org.apache.kafka.common.utils.Utils;
+ 
+ import java.util.Collections;
+ import java.util.Set;
+-import java.util.regex.Pattern;
+ 
+ public class Topic {
+ 
+@@ -33,7 +32,6 @@ public class Topic {
+             Utils.mkSet(GROUP_METADATA_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME));
+ 
+     private static final int MAX_NAME_LENGTH = 249;
+-    private static final Pattern LEGAL_CHARS_PATTERN = Pattern.compile(LEGAL_CHARS + "+");
+ 
+     public static void validate(String topic) {
+         if (topic.isEmpty())
+@@ -77,6 +75,15 @@ public class Topic {
+      * Valid characters for Kafka topics are the ASCII alphanumerics, '.', '_', and '-'
+      */
+     static boolean containsValidPattern(String topic) {
+-        return LEGAL_CHARS_PATTERN.matcher(topic).matches();
++        for (int i = 0; i < topic.length(); ++i) {
++            char c = topic.charAt(i);
++
++            // We don't use Character.isLetterOrDigit(c) because it's slower
++            boolean validChar = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || c == '.' ||
++                    c == '_' || c == '-';
++            if (!validChar)
++                return false;
++        }
++        return true;
+     }
+ }

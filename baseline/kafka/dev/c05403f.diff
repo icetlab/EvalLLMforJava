@@ -1,0 +1,102 @@
+commit c05403f47fa4e6a8244b56c2287b64a42b968292
+Author: Jason Koch <jasonk@bluedevel.com>
+Date:   Sun Feb 6 13:36:44 2022 -0800
+
+    KAFKA-13629: Use faster algorithm for ByteUtils sizeOfXxx algorithm (#11721)
+    
+    Replace loop with a branch-free implementation.
+    
+    Include:
+    - Unit tests that includes old code and new code and runs through several ints/longs.
+    - JMH benchmark that compares old vs new performance of algorithm.
+    
+    JMH results with JDK 17.0.2 and `compiler` blackhole mode are 2.8-3.4 faster with
+    the new implementation. In a real application, a 6% reduction in CPU cycles was
+    observed in the `send()` path via flamegraphs.
+    
+    ```
+    ByteUtilsBenchmark.testSizeOfUnsignedVarint                            thrpt    4  1472440.102 ±  67331.797  ops/ms
+    ByteUtilsBenchmark.testSizeOfUnsignedVarint:·async                     thrpt               NaN                  ---
+    ByteUtilsBenchmark.testSizeOfUnsignedVarint:·gc.alloc.rate             thrpt    4       ≈ 10⁻⁴               MB/sec
+    ByteUtilsBenchmark.testSizeOfUnsignedVarint:·gc.alloc.rate.norm        thrpt    4       ≈ 10⁻⁷                 B/op
+    ByteUtilsBenchmark.testSizeOfUnsignedVarint:·gc.count                  thrpt    4          ≈ 0               counts
+    ByteUtilsBenchmark.testSizeOfUnsignedVarintSimple                      thrpt    4   521333.117 ± 595169.618  ops/ms
+    ByteUtilsBenchmark.testSizeOfUnsignedVarintSimple:·async               thrpt               NaN                  ---
+    ByteUtilsBenchmark.testSizeOfUnsignedVarintSimple:·gc.alloc.rate       thrpt    4       ≈ 10⁻⁴               MB/sec
+    ByteUtilsBenchmark.testSizeOfUnsignedVarintSimple:·gc.alloc.rate.norm  thrpt    4       ≈ 10⁻⁶                 B/op
+    ByteUtilsBenchmark.testSizeOfUnsignedVarintSimple:·gc.count            thrpt    4          ≈ 0               counts
+    ByteUtilsBenchmark.testSizeOfVarlong                                   thrpt    4  1106519.633 ±  16556.502  ops/ms
+    ByteUtilsBenchmark.testSizeOfVarlong:·async                            thrpt               NaN                  ---
+    ByteUtilsBenchmark.testSizeOfVarlong:·gc.alloc.rate                    thrpt    4       ≈ 10⁻⁴               MB/sec
+    ByteUtilsBenchmark.testSizeOfVarlong:·gc.alloc.rate.norm               thrpt    4       ≈ 10⁻⁶                 B/op
+    ByteUtilsBenchmark.testSizeOfVarlong:·gc.count                         thrpt    4          ≈ 0               counts
+    ByteUtilsBenchmark.testSizeOfVarlongSimple                             thrpt    4   324435.607 ± 147754.813  ops/ms
+    ByteUtilsBenchmark.testSizeOfVarlongSimple:·async                      thrpt               NaN                  ---
+    ByteUtilsBenchmark.testSizeOfVarlongSimple:·gc.alloc.rate              thrpt    4       ≈ 10⁻⁴               MB/sec
+    ByteUtilsBenchmark.testSizeOfVarlongSimple:·gc.alloc.rate.norm         thrpt    4       ≈ 10⁻⁶                 B/op
+    ByteUtilsBenchmark.testSizeOfVarlongSimple:·gc.count                   thrpt    4          ≈ 0               counts
+    ```
+    
+    Reviewers: Ismael Juma <ismael@juma.me.uk>, Artem Livshits
+
+diff --git a/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java b/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java
+index 15868721da..7bd1d9257f 100644
+--- a/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java
++++ b/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java
+@@ -390,14 +390,25 @@ public final class ByteUtils {
+      * Number of bytes needed to encode an integer in unsigned variable-length format.
+      *
+      * @param value The signed value
++     *
++     * @see #writeUnsignedVarint(int, DataOutput)
+      */
+     public static int sizeOfUnsignedVarint(int value) {
+-        int bytes = 1;
+-        while ((value & 0xffffff80) != 0L) {
+-            bytes += 1;
+-            value >>>= 7;
+-        }
+-        return bytes;
++        // Protocol buffers varint encoding is variable length, with a minimum of 1 byte
++        // (for zero). The values themselves are not important. What's important here is
++        // any leading zero bits are dropped from output. We can use this leading zero
++        // count w/ fast intrinsic to calc the output length directly.
++
++        // Test cases verify this matches the output for loop logic exactly.
++
++        // return (38 - leadingZeros) / 7 + leadingZeros / 32;
++
++        // The above formula provides the implementation, but the Java encoding is suboptimal
++        // when we have a narrow range of integers, so we can do better manually
++
++        int leadingZeros = Integer.numberOfLeadingZeros(value);
++        int leadingZerosBelow38DividedBy7 = ((38 - leadingZeros) * 0b10010010010010011) >>> 19;
++        return leadingZerosBelow38DividedBy7 + (leadingZeros >>> 5);
+     }
+ 
+     /**
+@@ -413,15 +424,18 @@ public final class ByteUtils {
+      * Number of bytes needed to encode a long in variable-length format.
+      *
+      * @param value The signed value
++     * @see #sizeOfUnsignedVarint(int)
+      */
+     public static int sizeOfVarlong(long value) {
+         long v = (value << 1) ^ (value >> 63);
+-        int bytes = 1;
+-        while ((v & 0xffffffffffffff80L) != 0L) {
+-            bytes += 1;
+-            v >>>= 7;
+-        }
+-        return bytes;
++
++        // For implementation notes @see #sizeOfUnsignedVarint(int)
++        // Similar logic is applied to allow for 64bit input -> 1-9byte output.
++        // return (70 - leadingZeros) / 7 + leadingZeros / 64;
++
++        int leadingZeros = Long.numberOfLeadingZeros(v);
++        int leadingZerosBelow70DividedBy7 = ((70 - leadingZeros) * 0b10010010010010011) >>> 19;
++        return leadingZerosBelow70DividedBy7 + (leadingZeros >>> 6);
+     }
+ 
+     private static IllegalArgumentException illegalVarintException(int value) {

@@ -1,0 +1,32 @@
+commit c7bc8f7d8c0101103853b5f6778edb04d1f41b76
+Author: Ismael Juma <ismael@juma.me.uk>
+Date:   Sun Jun 4 10:48:34 2017 -0700
+
+    MINOR: Remove redundant volatile write in RecordHeaders
+    
+    The JMH benchmark included shows that the redundant
+    volatile write causes the constructor of `ProducerRecord`
+    to take more than 50% longer:
+    
+    ProducerRecordBenchmark.constructorBenchmark  avgt   15  24.136 ± 1.458  ns/op (before)
+    ProducerRecordBenchmark.constructorBenchmark  avgt   15  14.904 ± 0.231  ns/op (after)
+    
+    Author: Ismael Juma <ismael@juma.me.uk>
+    
+    Reviewers: Jason Gustafson <jason@confluent.io>
+    
+    Closes #3233 from ijuma/remove-volatile-write-in-records-header-constructor
+
+diff --git a/clients/src/main/java/org/apache/kafka/common/header/internals/RecordHeaders.java b/clients/src/main/java/org/apache/kafka/common/header/internals/RecordHeaders.java
+index afd991f458..141c9720c3 100644
+--- a/clients/src/main/java/org/apache/kafka/common/header/internals/RecordHeaders.java
++++ b/clients/src/main/java/org/apache/kafka/common/header/internals/RecordHeaders.java
+@@ -30,7 +30,7 @@ import org.apache.kafka.common.utils.AbstractIterator;
+ public class RecordHeaders implements Headers {
+     
+     private final List<Header> headers;
+-    private volatile boolean isReadOnly = false;
++    private volatile boolean isReadOnly;
+ 
+     public RecordHeaders() {
+         this((Iterable<Header>) null);

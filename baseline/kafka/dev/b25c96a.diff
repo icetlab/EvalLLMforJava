@@ -1,0 +1,40 @@
+commit b25c96a91599ea029eae77c55cffaeafcc87b8a4
+Author: Jorge Esteban Quilcate Otoya <jorge.quilcate@aiven.io>
+Date:   Fri Feb 9 20:17:17 2024 -0500
+
+    KAFKA-16229: Fix slow expired producer id deletion (#15324)
+    
+    Expiration of ProducerIds is implemented with a slow removal of map keys:
+            producers.keySet().removeAll(keys);
+    Unnecessarily going through all producer ids and then throw all expired keys to be removed.
+    This leads to exponential time on worst case when most/all keys need to be removed:
+    
+    Benchmark                                        (numProducerIds)  Mode  Cnt           Score            Error  Units
+    ProducerStateManagerBench.testDeleteExpiringIds               100  avgt    3        9164.043 ±      10647.877  ns/op
+    ProducerStateManagerBench.testDeleteExpiringIds              1000  avgt    3      341561.093 ±      20283.211  ns/op
+    ProducerStateManagerBench.testDeleteExpiringIds             10000  avgt    3    44957983.550 ±    9389011.290  ns/op
+    ProducerStateManagerBench.testDeleteExpiringIds            100000  avgt    3  5683374164.167 ± 1446242131.466  ns/op
+    A simple fix is to use map#remove(key) instead, leading to a more linear growth:
+    
+    Benchmark                                        (numProducerIds)  Mode  Cnt        Score         Error  Units
+    ProducerStateManagerBench.testDeleteExpiringIds               100  avgt    3     5779.056 ±     651.389  ns/op
+    ProducerStateManagerBench.testDeleteExpiringIds              1000  avgt    3    61430.530 ±   21875.644  ns/op
+    ProducerStateManagerBench.testDeleteExpiringIds             10000  avgt    3   643887.031 ±  600475.302  ns/op
+    ProducerStateManagerBench.testDeleteExpiringIds            100000  avgt    3  7741689.539 ± 3218317.079  ns/op
+    Flamegraph of the CPU usage at dealing with expiration when producers ids ~1Million:
+    
+    Reviewers: Justine Olshan <jolshan@confluent.io>
+
+diff --git a/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java b/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java
+index 6bcafd2d60..270aa0a42f 100644
+--- a/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java
++++ b/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java
+@@ -177,7 +177,7 @@ public class ProducerStateManager {
+     }
+ 
+     private void removeProducerIds(List<Long> keys) {
+-        producers.keySet().removeAll(keys);
++        keys.forEach(producers::remove);
+         producerIdCount = producers.size();
+     }
+ 

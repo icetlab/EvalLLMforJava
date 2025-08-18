@@ -1,0 +1,129 @@
+commit 59a75f4422a68d2e1edc661264058f040139fde5
+Author: Guozhang Wang <wangguoz@gmail.com>
+Date:   Mon Oct 28 07:57:50 2019 -0700
+
+    KAFKA-9048 Pt1: Remove Unnecessary lookup in Fetch Building (#7576)
+    
+    Get rid of partitionStates that creates a new PartitionState for each state since all the callers do not require it to be a Seq.
+    
+    Modify ReplicaFetcherThread constructor to fix the broken benchmark path.
+    
+    This PR:
+    
+    Benchmark                                  (partitionCount)  Mode  Cnt        Score       Error  Units
+    ReplicaFetcherThreadBenchmark.testFetcher               100  avgt   15     9280.953 ±    55.967  ns/op
+    ReplicaFetcherThreadBenchmark.testFetcher               500  avgt   15    61533.546 ±  1213.559  ns/op
+    ReplicaFetcherThreadBenchmark.testFetcher              1000  avgt   15   151306.146 ±  1820.222  ns/op
+    ReplicaFetcherThreadBenchmark.testFetcher              5000  avgt   15  1138547.929 ± 45301.938  ns/op
+    
+    Trunk:
+    
+    Benchmark                                  (partitionCount)  Mode  Cnt        Score       Error  Units |   |   |   |   |
+    -- | -- | -- | -- | -- | --
+    ReplicaFetcherThreadBenchmark.testFetcher               100  avgt   15     9305.588 ±    51.886  ns/op |   |   |   |   |
+    ReplicaFetcherThreadBenchmark.testFetcher               500  avgt   15    65216.933 ±   939.827  ns/op |   |   |   |   |
+    ReplicaFetcherThreadBenchmark.testFetcher              1000  avgt   15   151715.514 ±  1361.009  ns/op |   |   |   |   |
+    ReplicaFetcherThreadBenchmark.testFetcher              5000  avgt   15  1231958.103 ± 94
+    
+    
+    Reviewers: Jason Gustafson <jason@confluent.io>, Lucas Bradstreet <lucasbradstreet@gmail.com>
+
+diff --git a/clients/src/main/java/org/apache/kafka/common/internals/PartitionStates.java b/clients/src/main/java/org/apache/kafka/common/internals/PartitionStates.java
+index c289eaa59b..22f21e64b8 100644
+--- a/clients/src/main/java/org/apache/kafka/common/internals/PartitionStates.java
++++ b/clients/src/main/java/org/apache/kafka/common/internals/PartitionStates.java
+@@ -85,17 +85,6 @@ public class PartitionStates<S> {
+         return map.containsKey(topicPartition);
+     }
+ 
+-    /**
+-     * Returns the partition states in order.
+-     */
+-    public List<PartitionState<S>> partitionStates() {
+-        List<PartitionState<S>> result = new ArrayList<>(map.size());
+-        for (Map.Entry<TopicPartition, S> entry : map.entrySet()) {
+-            result.add(new PartitionState<>(entry.getKey(), entry.getValue()));
+-        }
+-        return result;
+-    }
+-
+     public Stream<PartitionState<S>> stream() {
+         return map.entrySet().stream().map(entry -> new PartitionState<>(entry.getKey(), entry.getValue()));
+     }
+diff --git a/core/src/main/scala/kafka/server/AbstractFetcherThread.scala b/core/src/main/scala/kafka/server/AbstractFetcherThread.scala
+index 0f3b06952a..0e10e62459 100755
+--- a/core/src/main/scala/kafka/server/AbstractFetcherThread.scala
++++ b/core/src/main/scala/kafka/server/AbstractFetcherThread.scala
+@@ -31,7 +31,7 @@ import kafka.metrics.KafkaMetricsGroup
+ import kafka.utils.CoreUtils.inLock
+ import org.apache.kafka.common.protocol.Errors
+ 
+-import scala.collection.{mutable, Map, Seq, Set}
++import scala.collection.{mutable, Map, Set}
+ import scala.collection.JavaConverters._
+ import java.util.concurrent.TimeUnit
+ import java.util.concurrent.atomic.AtomicLong
+@@ -214,10 +214,10 @@ abstract class AbstractFetcherThread(name: String,
+       //Check no leadership and no leader epoch changes happened whilst we were unlocked, fetching epochs
+       val epochEndOffsets = endOffsets.filter { case (tp, _) =>
+         val curPartitionState = partitionStates.stateValue(tp)
+-        val partitionEpochRequest = latestEpochsForPartitions.get(tp).getOrElse {
++        val partitionEpochRequest = latestEpochsForPartitions.getOrElse(tp, {
+           throw new IllegalStateException(
+             s"Leader replied with partition $tp not requested in OffsetsForLeaderEpoch request")
+-        }
++        })
+         val leaderEpochInRequest = partitionEpochRequest.currentLeaderEpoch.get
+         curPartitionState != null && leaderEpochInRequest == curPartitionState.currentLeaderEpoch
+       }
+@@ -435,18 +435,17 @@ abstract class AbstractFetcherThread(name: String,
+     * @param fetchOffsets the partitions to update fetch offset and maybe mark truncation complete
+     */
+   private def updateFetchOffsetAndMaybeMarkTruncationComplete(fetchOffsets: Map[TopicPartition, OffsetTruncationState]): Unit = {
+-    val newStates: Map[TopicPartition, PartitionFetchState] = partitionStates.partitionStates.asScala
+-      .map { state =>
+-        val currentFetchState = state.value
+-        val maybeTruncationComplete = fetchOffsets.get(state.topicPartition) match {
++    val newStates: Map[TopicPartition, PartitionFetchState] = partitionStates.partitionStateMap.asScala
++      .map { case (topicPartition, currentFetchState) =>
++        val maybeTruncationComplete = fetchOffsets.get(topicPartition) match {
+           case Some(offsetTruncationState) =>
+             val state = if (offsetTruncationState.truncationCompleted) Fetching else Truncating
+             PartitionFetchState(offsetTruncationState.offset, currentFetchState.lag,
+               currentFetchState.currentLeaderEpoch, currentFetchState.delay, state)
+           case None => currentFetchState
+         }
+-        (state.topicPartition, maybeTruncationComplete)
+-      }.toMap
++        (topicPartition, maybeTruncationComplete)
++      }
+     partitionStates.set(newStates.asJava)
+   }
+ 
+@@ -648,12 +647,12 @@ abstract class AbstractFetcherThread(name: String,
+   }
+ 
+   private[server] def partitionsAndOffsets: Map[TopicPartition, InitialFetchState] = inLock(partitionMapLock) {
+-    partitionStates.partitionStates.asScala.map { state =>
++    partitionStates.partitionStateMap.asScala.map { case (topicPartition, currentFetchState) =>
+       val initialFetchState = InitialFetchState(sourceBroker,
+-        currentLeaderEpoch = state.value.currentLeaderEpoch,
+-        initOffset = state.value.fetchOffset)
+-      state.topicPartition -> initialFetchState
+-    }.toMap
++        currentLeaderEpoch = currentFetchState.currentLeaderEpoch,
++        initOffset = currentFetchState.fetchOffset)
++      topicPartition -> initialFetchState
++    }
+   }
+ 
+   protected def toMemoryRecords(records: Records): MemoryRecords = {
+@@ -793,7 +792,7 @@ case class OffsetTruncationState(offset: Long, truncationCompleted: Boolean) {
+ 
+   def this(offset: Long) = this(offset, true)
+ 
+-  override def toString = "offset:%d-truncationCompleted:%b".format(offset, truncationCompleted)
++  override def toString: String = "offset:%d-truncationCompleted:%b".format(offset, truncationCompleted)
+ }
+ 
+ case class OffsetAndEpoch(offset: Long, leaderEpoch: Int) {

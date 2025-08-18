@@ -1,0 +1,113 @@
+commit 8dff0b168a28a5ed75b1ee8a8c33ba9a9c67d1a1
+Author: Manikumar Reddy <manikumar.reddy@gmail.com>
+Date:   Tue Mar 3 01:51:09 2020 +0530
+
+    Kafka 9626: Improve ACLAuthorizer.acls() performance
+    
+    This PR avoids creation of unnecessary sets in AclAuthorizer.acls() method implementation.
+    
+    Perf results:
+    **Old**
+    ```
+    Benchmark                                (aclCount)  (resourceCount)  Mode  Cnt    Score   Error  Units
+    AclAuthorizerBenchmark.testAclsIterator           5             5000  avgt   15    5.821 ? 0.309  ms/op
+    AclAuthorizerBenchmark.testAclsIterator           5            10000  avgt   15   15.303 ? 0.107  ms/op
+    AclAuthorizerBenchmark.testAclsIterator           5            50000  avgt   15   74.976 ? 0.543  ms/op
+    AclAuthorizerBenchmark.testAclsIterator          10             5000  avgt   15   15.366 ? 0.184  ms/op
+    AclAuthorizerBenchmark.testAclsIterator          10            10000  avgt   15   29.899 ? 0.129  ms/op
+    AclAuthorizerBenchmark.testAclsIterator          10            50000  avgt   15  167.301 ? 1.723  ms/op
+    AclAuthorizerBenchmark.testAclsIterator          15             5000  avgt   15   21.980 ? 0.114  ms/op
+    AclAuthorizerBenchmark.testAclsIterator          15            10000  avgt   15   44.385 ? 0.255  ms/op
+    AclAuthorizerBenchmark.testAclsIterator          15            50000  avgt   15  241.919 ? 3.955  ms/op
+    ```
+    **New**
+    
+    ```
+    Benchmark                                (aclCount)  (resourceCount)  Mode  Cnt   Score   Error  Units
+    AclAuthorizerBenchmark.testAclsIterator           5             5000  avgt   15   0.666 ? 0.004  ms/op
+    AclAuthorizerBenchmark.testAclsIterator           5            10000  avgt   15   1.427 ? 0.015  ms/op
+    AclAuthorizerBenchmark.testAclsIterator           5            50000  avgt   15  21.410 ? 0.225  ms/op
+    AclAuthorizerBenchmark.testAclsIterator          10             5000  avgt   15   1.230 ? 0.018  ms/op
+    AclAuthorizerBenchmark.testAclsIterator          10            10000  avgt   15   4.303 ? 0.744  ms/op
+    AclAuthorizerBenchmark.testAclsIterator          10            50000  avgt   15  36.724 ? 0.409  ms/op
+    AclAuthorizerBenchmark.testAclsIterator          15             5000  avgt   15   2.433 ? 0.379  ms/op
+    AclAuthorizerBenchmark.testAclsIterator          15            10000  avgt   15   9.818 ? 0.214  ms/op
+    AclAuthorizerBenchmark.testAclsIterator          15            50000  avgt   15  52.886 ? 0.525  ms/op
+    ```
+    
+    Author: Manikumar Reddy <manikumar.reddy@gmail.com>
+    Author: Lucas Bradstreet <lucas@confluent.io>
+    
+    Reviewers: Ismael Juma <ismael@juma.me.uk>, Rajini Sivaram <rajinisivaram@googlemail.com>, Lucas Bradstreet <lucas@confluent.io>
+    
+    Closes #8199 from omkreddy/KAFKA-9626
+
+diff --git a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+index e5b4945e17..86f06981ff 100644
+--- a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
++++ b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+@@ -22,7 +22,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock
+ 
+ import com.typesafe.scalalogging.Logger
+ import kafka.api.KAFKA_2_0_IV1
+-import kafka.security.authorizer.AclAuthorizer.VersionedAcls
++import kafka.security.authorizer.AclAuthorizer.{ResourceOrdering, VersionedAcls}
+ import kafka.security.authorizer.AclEntry.ResourceSeparator
+ import kafka.server.{KafkaConfig, KafkaServer}
+ import kafka.utils.CoreUtils.{inReadLock, inWriteLock}
+@@ -36,7 +36,7 @@ import org.apache.kafka.common.errors.{ApiException, InvalidRequestException, Un
+ import org.apache.kafka.common.protocol.ApiKeys
+ import org.apache.kafka.common.resource._
+ import org.apache.kafka.common.security.auth.KafkaPrincipal
+-import org.apache.kafka.common.utils.{Time, SecurityUtils}
++import org.apache.kafka.common.utils.{SecurityUtils, Time}
+ import org.apache.kafka.server.authorizer.AclDeleteResult.AclBindingDeleteResult
+ import org.apache.kafka.server.authorizer._
+ import org.apache.zookeeper.client.ZKClientConfig
+@@ -67,7 +67,7 @@ object AclAuthorizer {
+   val WildcardHost = "*"
+ 
+   // Orders by resource type, then resource pattern type and finally reverse ordering by name.
+-  private object ResourceOrdering extends Ordering[ResourcePattern] {
++  class ResourceOrdering extends Ordering[ResourcePattern] {
+ 
+     def compare(a: ResourcePattern, b: ResourcePattern): Int = {
+       val rt = a.resourceType.compareTo(b.resourceType)
+@@ -116,7 +116,7 @@ class AclAuthorizer extends Authorizer with Logging {
+   private var extendedAclSupport: Boolean = _
+ 
+   @volatile
+-  private var aclCache = new scala.collection.immutable.TreeMap[ResourcePattern, VersionedAcls]()(AclAuthorizer.ResourceOrdering)
++  private var aclCache = new scala.collection.immutable.TreeMap[ResourcePattern, VersionedAcls]()(new ResourceOrdering)
+   private val lock = new ReentrantReadWriteLock()
+ 
+   // The maximum number of times we should try to update the resource acls in zookeeper before failing;
+@@ -252,7 +252,7 @@ class AclAuthorizer extends Authorizer with Logging {
+       }
+     }
+     val deletedResult = deletedBindings.groupBy(_._2)
+-      .mapValues(_.map{ case (binding, _) => new AclBindingDeleteResult(binding, deleteExceptions.getOrElse(binding, null)) })
++      .mapValues(_.map { case (binding, _) => new AclBindingDeleteResult(binding, deleteExceptions.getOrElse(binding, null)) })
+     (0 until aclBindingFilters.size).map { i =>
+       new AclDeleteResult(deletedResult.getOrElse(i, Set.empty[AclBindingDeleteResult]).toSet.asJava)
+     }.map(CompletableFuture.completedFuture[AclDeleteResult]).asJava
+@@ -260,10 +260,15 @@ class AclAuthorizer extends Authorizer with Logging {
+ 
+   override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {
+     inReadLock(lock) {
+-      unorderedAcls.flatMap { case (resource, versionedAcls) =>
+-        versionedAcls.acls.map(acl => new AclBinding(resource, acl.ace))
+-            .filter(filter.matches)
+-      }.asJava
++      val aclBindings = new util.ArrayList[AclBinding]()
++      unorderedAcls.foreach { case (resource, versionedAcls) =>
++        versionedAcls.acls.foreach { acl =>
++          val binding = new AclBinding(resource, acl.ace)
++          if (filter.matches(binding))
++            aclBindings.add(binding)
++        }
++      }
++      aclBindings
+     }
+   }
+ 

@@ -1,0 +1,123 @@
+commit aecd47b3bc691c3158463dab2c698a3ba9eb2f98
+Author: Francesco Nigro <nigro.fra@gmail.com>
+Date:   Sat Aug 13 05:09:15 2022 +0200
+
+    KAFKA-13900 Support Java 9 direct ByteBuffer Checksum methods (#12163)
+    
+    Some numbers with JDK 11.
+    
+    Before:
+    ```
+    Benchmark                 (bytes)  (direct)  (readonly)  (seed)   Mode  Cnt   Score    Error   Units
+    Crc32CBenchmark.checksum      128     false       false      42  thrpt   20  26.730 ±  0.410  ops/us
+    Crc32CBenchmark.checksum      128      true       false      42  thrpt   20   1.781 ±  0.007  ops/us
+    Crc32CBenchmark.checksum     1024     false       false      42  thrpt   20   6.553 ±  0.053  ops/us
+    Crc32CBenchmark.checksum     1024      true       false      42  thrpt   20   0.223 ±  0.001  ops/us
+    Crc32CBenchmark.checksum     4096     false       false      42  thrpt   20   4.054 ±  0.015  ops/us
+    Crc32CBenchmark.checksum     4096      true       false      42  thrpt   20   0.056 ±  0.001  ops/us
+    ```
+    
+    And this PR:
+    ```
+    Benchmark                 (bytes)  (direct)  (readonly)  (seed)   Mode  Cnt   Score   Error   Units
+    Crc32CBenchmark.checksum      128     false       false      42  thrpt   20  26.922 ± 0.065  ops/us
+    Crc32CBenchmark.checksum      128      true       false      42  thrpt   20  24.656 ± 0.620  ops/us
+    Crc32CBenchmark.checksum     1024     false       false      42  thrpt   20   6.548 ± 0.025  ops/us
+    Crc32CBenchmark.checksum     1024      true       false      42  thrpt   20   6.432 ± 0.136  ops/us
+    Crc32CBenchmark.checksum     4096     false       false      42  thrpt   20   4.031 ± 0.022  ops/us
+    Crc32CBenchmark.checksum     4096      true       false      42  thrpt   20   4.004 ± 0.016  ops/us
+    ```
+    
+    The purpose of the PR is to makes heap and direct ByteBuffer able to perform the same (especially
+    not read-only), without affecting the existing heap ByteBuffer performance.
+    
+    Reviewers: Ismael Juma <ismael@juma.me.uk>, Divij Vaidya <diviv@amazon.com>
+
+diff --git a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+index 679b59249d..17a31edc9a 100644
+--- a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
++++ b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+@@ -16,6 +16,9 @@
+  */
+ package org.apache.kafka.common.utils;
+ 
++import java.lang.invoke.MethodHandle;
++import java.lang.invoke.MethodHandles;
++import java.lang.invoke.MethodType;
+ import java.nio.ByteBuffer;
+ import java.util.zip.Checksum;
+ 
+@@ -29,22 +32,72 @@ import java.util.zip.Checksum;
+  * NOTE: This class is intended for INTERNAL usage only within Kafka.
+  */
+ public final class Checksums {
++    private static final MethodHandle BYTE_BUFFER_UPDATE;
++
++    static {
++        MethodHandle byteBufferUpdate = null;
++        if (Java.IS_JAVA9_COMPATIBLE) {
++            try {
++                byteBufferUpdate = MethodHandles.publicLookup().findVirtual(Checksum.class, "update",
++                    MethodType.methodType(void.class, ByteBuffer.class));
++            } catch (Throwable t) {
++                handleUpdateThrowable(t);
++            }
++        }
++        BYTE_BUFFER_UPDATE = byteBufferUpdate;
++    }
+ 
+     private Checksums() {
+     }
+ 
++    /**
++     * Uses {@link Checksum#update} on {@code buffer}'s content, without modifying its position and limit.<br>
++     * This is semantically equivalent to {@link #update(Checksum, ByteBuffer, int, int)} with {@code offset = 0}.
++     */
+     public static void update(Checksum checksum, ByteBuffer buffer, int length) {
+         update(checksum, buffer, 0, length);
+     }
+ 
++    /**
++     * Uses {@link Checksum#update} on {@code buffer}'s content, starting from the given {@code offset}
++     * by the provided {@code length}, without modifying its position and limit.
++     */
+     public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {
+         if (buffer.hasArray()) {
+             checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);
++        } else if (BYTE_BUFFER_UPDATE != null && buffer.isDirect()) {
++            final int oldPosition = buffer.position();
++            final int oldLimit = buffer.limit();
++            try {
++                // save a slice to be used to save an allocation in the hot-path
++                final int start = oldPosition + offset;
++                buffer.limit(start + length);
++                buffer.position(start);
++                BYTE_BUFFER_UPDATE.invokeExact(checksum, buffer);
++            } catch (Throwable t) {
++                handleUpdateThrowable(t);
++            } finally {
++                // reset buffer's offsets
++                buffer.limit(oldLimit);
++                buffer.position(oldPosition);
++            }
+         } else {
++            // slow-path
+             int start = buffer.position() + offset;
+-            for (int i = start; i < start + length; i++)
++            for (int i = start; i < start + length; i++) {
+                 checksum.update(buffer.get(i));
++            }
++        }
++    }
++
++    private static void handleUpdateThrowable(Throwable t) {
++        if (t instanceof RuntimeException) {
++            throw (RuntimeException) t;
++        }
++        if (t instanceof Error) {
++            throw (Error) t;
+         }
++        throw new IllegalStateException(t);
+     }
+     
+     public static void updateInt(Checksum checksum, int input) {

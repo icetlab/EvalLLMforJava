@@ -1,0 +1,162 @@
+commit e2e2c628b9f2368ca253cc00b99f85899afc9cc7
+Author: Ismael Juma <ismael@juma.me.uk>
+Date:   Mon Jun 1 07:01:18 2020 -0700
+
+    KAFKA-10074: Improve performance of `matchingAcls` (#8769)
+    
+    This PR reduces allocations by using a plain old `foreach` in
+    `matchingAcls` and improves `AclSeqs.find` to only search the inner
+    collections that are required to find a match (instead of searching all
+    of them).
+    
+    A recent change (90bbeedf52) in `matchingAcls` to remove `filterKeys` in
+    favor of filtering inside `flatMap` caused a performance regression in
+    cases where there are large number of topics, prefix ACLs and
+    TreeMap.from/to filtering is ineffective. In such cases, we rely on
+    string comparisons to exclude entries from the ACL cache that are not
+    relevant.
+    
+    This issue is not present in any release yet, so we should include the
+    simple fix in the 2.6 branch.
+    
+    The original benchmark did not show a performance difference, so I
+    adjusted the benchmark to stress the relevant code more. More
+    specifically, `aclCacheSnapshot.from(...).to(...)` returns nearly 20000
+    entries where each map value contains 1000 AclEntries. Out of the 200k
+    AclEntries, only 1050 are retained due to the `startsWith` filtering.
+    
+    This is the case where the implementation in master is least
+    efficient when compared to the previous version and the version in this
+    PR.
+    
+    The adjusted benchmark results for testAuthorizer are 4.532ms for
+    master, 2.903ms for the previous version and 2.877ms for this PR.
+    Normalized allocation rate was 593 KB/op for master, 597 KB/op for the
+    previous version and 101 KB/s for this PR. Full results follow:
+    
+    master with adjusted benchmark:
+    ```
+    Benchmark                                                                 (aclCount)  (resourceCount)  Mode  Cnt          Score          Error   Units
+    AclAuthorizerBenchmark.testAclsIterator                                           50           200000  avgt    5        680.805 ±       44.318   ms/op
+    AclAuthorizerBenchmark.testAclsIterator:·gc.alloc.rate                            50           200000  avgt    5        549.879 ±       36.259  MB/sec
+    AclAuthorizerBenchmark.testAclsIterator:·gc.alloc.rate.norm                       50           200000  avgt    5  411457042.000 ±     4805.461    B/op
+    AclAuthorizerBenchmark.testAclsIterator:·gc.churn.G1_Eden_Space                   50           200000  avgt    5        331.110 ±       95.821  MB/sec
+    AclAuthorizerBenchmark.testAclsIterator:·gc.churn.G1_Eden_Space.norm              50           200000  avgt    5  247799480.320 ± 72877192.319    B/op
+    AclAuthorizerBenchmark.testAclsIterator:·gc.churn.G1_Survivor_Space               50           200000  avgt    5          0.891 ±        3.183  MB/sec
+    AclAuthorizerBenchmark.testAclsIterator:·gc.churn.G1_Survivor_Space.norm          50           200000  avgt    5     667593.387 ±  2369888.357    B/op
+    AclAuthorizerBenchmark.testAclsIterator:·gc.count                                 50           200000  avgt    5         28.000                 counts
+    AclAuthorizerBenchmark.testAclsIterator:·gc.time                                  50           200000  avgt    5       3458.000                     ms
+    AclAuthorizerBenchmark.testAuthorizer                                             50           200000  avgt    5          4.532 ±        0.546   ms/op
+    AclAuthorizerBenchmark.testAuthorizer:·gc.alloc.rate                              50           200000  avgt    5        119.036 ±       14.261  MB/sec
+    AclAuthorizerBenchmark.testAuthorizer:·gc.alloc.rate.norm                         50           200000  avgt    5     593524.310 ±       22.452    B/op
+    AclAuthorizerBenchmark.testAuthorizer:·gc.churn.G1_Eden_Space                     50           200000  avgt    5        117.091 ±     1008.188  MB/sec
+    AclAuthorizerBenchmark.testAuthorizer:·gc.churn.G1_Eden_Space.norm                50           200000  avgt    5     598574.303 ±  5153905.271    B/op
+    AclAuthorizerBenchmark.testAuthorizer:·gc.churn.G1_Survivor_Space                 50           200000  avgt    5          0.034 ±        0.291  MB/sec
+    AclAuthorizerBenchmark.testAuthorizer:·gc.churn.G1_Survivor_Space.norm            50           200000  avgt    5        173.001 ±     1489.593    B/op
+    AclAuthorizerBenchmark.testAuthorizer:·gc.count                                   50           200000  avgt    5          1.000                 counts
+    AclAuthorizerBenchmark.testAuthorizer:·gc.time                                    50           200000  avgt    5         13.000                     ms
+    ```
+    
+    master with filterKeys like 90bbeedf52 and adjusted benchmark:
+    ```
+    Benchmark                                                                 (aclCount)  (resourceCount)  Mode  Cnt          Score          Error   Units
+    AclAuthorizerBenchmark.testAclsIterator                                           50           200000  avgt    5        729.163 ±       20.842   ms/op
+    AclAuthorizerBenchmark.testAclsIterator:·gc.alloc.rate                            50           200000  avgt    5        513.005 ±       13.966  MB/sec
+    AclAuthorizerBenchmark.testAclsIterator:·gc.alloc.rate.norm                       50           200000  avgt    5  411459778.400 ±     3178.045    B/op
+    AclAuthorizerBenchmark.testAclsIterator:·gc.churn.G1_Eden_Space                   50           200000  avgt    5        307.041 ±       94.544  MB/sec
+    AclAuthorizerBenchmark.testAclsIterator:·gc.churn.G1_Eden_Space.norm              50           200000  avgt    5  246385400.686 ± 82294899.881    B/op
+    AclAuthorizerBenchmark.testAclsIterator:·gc.churn.G1_Survivor_Space               50           200000  avgt    5          1.571 ±        2.590  MB/sec
+    AclAuthorizerBenchmark.testAclsIterator:·gc.churn.G1_Survivor_Space.norm          50           200000  avgt    5    1258291.200 ±  2063669.849    B/op
+    AclAuthorizerBenchmark.testAclsIterator:·gc.count                                 50           200000  avgt    5         33.000                 counts
+    AclAuthorizerBenchmark.testAclsIterator:·gc.time                                  50           200000  avgt    5       3266.000                     ms
+    AclAuthorizerBenchmark.testAuthorizer                                             50           200000  avgt    5          2.903 ±        0.175   ms/op
+    AclAuthorizerBenchmark.testAuthorizer:·gc.alloc.rate                              50           200000  avgt    5        187.088 ±       11.301  MB/sec
+    AclAuthorizerBenchmark.testAuthorizer:·gc.alloc.rate.norm                         50           200000  avgt    5     597962.743 ±       14.237    B/op
+    AclAuthorizerBenchmark.testAuthorizer:·gc.churn.G1_Eden_Space                     50           200000  avgt    5        118.602 ±     1021.202  MB/sec
+    AclAuthorizerBenchmark.testAuthorizer:·gc.churn.G1_Eden_Space.norm                50           200000  avgt    5     383359.632 ±  3300842.044    B/op
+    AclAuthorizerBenchmark.testAuthorizer:·gc.count                                   50           200000  avgt    5          1.000                 counts
+    AclAuthorizerBenchmark.testAuthorizer:·gc.time                                    50           200000  avgt    5         14.000                     ms
+    ```
+    
+    This PR with adjusted benchmark:
+    ```
+    Benchmark                                                                 (aclCount)  (resourceCount)  Mode  Cnt          Score          Error   Units
+    AclAuthorizerBenchmark.testAclsIterator                                           50           200000  avgt    5        706.774 ±       32.353   ms/op
+    AclAuthorizerBenchmark.testAclsIterator:·gc.alloc.rate                            50           200000  avgt    5        529.879 ±       25.416  MB/sec
+    AclAuthorizerBenchmark.testAclsIterator:·gc.alloc.rate.norm                       50           200000  avgt    5  411458751.497 ±     4424.187    B/op
+    AclAuthorizerBenchmark.testAclsIterator:·gc.churn.G1_Eden_Space                   50           200000  avgt    5        310.559 ±      112.310  MB/sec
+    AclAuthorizerBenchmark.testAclsIterator:·gc.churn.G1_Eden_Space.norm              50           200000  avgt    5  241364219.611 ± 97317733.967    B/op
+    AclAuthorizerBenchmark.testAclsIterator:·gc.churn.G1_Old_Gen                      50           200000  avgt    5          0.690 ±        5.937  MB/sec
+    AclAuthorizerBenchmark.testAclsIterator:·gc.churn.G1_Old_Gen.norm                 50           200000  avgt    5     531278.507 ±  4574468.166    B/op
+    AclAuthorizerBenchmark.testAclsIterator:·gc.churn.G1_Survivor_Space               50           200000  avgt    5          2.550 ±       17.243  MB/sec
+    AclAuthorizerBenchmark.testAclsIterator:·gc.churn.G1_Survivor_Space.norm          50           200000  avgt    5    1969325.592 ± 13278191.648    B/op
+    AclAuthorizerBenchmark.testAclsIterator:·gc.count                                 50           200000  avgt    5         32.000                 counts
+    AclAuthorizerBenchmark.testAclsIterator:·gc.time                                  50           200000  avgt    5       3489.000                     ms
+    AclAuthorizerBenchmark.testAuthorizer                                             50           200000  avgt    5          2.877 ±        0.530   ms/op
+    AclAuthorizerBenchmark.testAuthorizer:·gc.alloc.rate                              50           200000  avgt    5         31.963 ±        5.912  MB/sec
+    AclAuthorizerBenchmark.testAuthorizer:·gc.alloc.rate.norm                         50           200000  avgt    5     101057.225 ±        9.468    B/op
+    AclAuthorizerBenchmark.testAuthorizer:·gc.count                                   50           200000  avgt    5            ≈ 0                 counts
+    ```
+    
+    Reviewers: Rajini Sivaram <rajinisivaram@googlemail.com>, Chia-Ping Tsai <chia7712@gmail.com>
+
+diff --git a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+index 5f2be90535..d9e89e1d11 100644
+--- a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
++++ b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+@@ -40,6 +40,7 @@ import org.apache.kafka.server.authorizer._
+ import org.apache.zookeeper.client.ZKClientConfig
+ 
+ import scala.annotation.nowarn
++import scala.collection.mutable.ArrayBuffer
+ import scala.collection.{Seq, mutable}
+ import scala.jdk.CollectionConverters._
+ import scala.util.{Failure, Random, Success, Try}
+@@ -63,9 +64,15 @@ object AclAuthorizer {
+     def exists: Boolean = zkVersion != ZkVersion.UnknownVersion
+   }
+ 
+-  class AclSeqs(classes: Seq[AclEntry]*) {
+-    def find(p: AclEntry => Boolean): Option[AclEntry] = classes.flatMap(_.find(p)).headOption
+-    def isEmpty: Boolean = !classes.exists(_.nonEmpty)
++  class AclSeqs(seqs: Seq[AclEntry]*) {
++    def find(p: AclEntry => Boolean): Option[AclEntry] = {
++      // Lazily iterate through the inner `Seq` elements and stop as soon as we find a match
++      val it = seqs.iterator.flatMap(_.find(p))
++      if (it.hasNext) Some(it.next)
++      else None
++    }
++
++    def isEmpty: Boolean = !seqs.exists(_.nonEmpty)
+   }
+ 
+   val NoAcls = VersionedAcls(Set.empty, ZkVersion.UnknownVersion)
+@@ -344,8 +351,10 @@ class AclAuthorizer extends Authorizer with Logging {
+     } else false
+   }
+ 
+-  @nowarn("cat=deprecation")
++  @nowarn("cat=deprecation&cat=optimizer")
+   private def matchingAcls(resourceType: ResourceType, resourceName: String): AclSeqs = {
++    // this code is performance sensitive, make sure to run AclAuthorizerBenchmark after any changes
++
+     // save aclCache reference to a local val to get a consistent view of the cache during acl updates.
+     val aclCacheSnapshot = aclCache
+     val wildcard = aclCacheSnapshot.get(new ResourcePattern(resourceType, ResourcePattern.WILDCARD_RESOURCE, PatternType.LITERAL))
+@@ -356,11 +365,13 @@ class AclAuthorizer extends Authorizer with Logging {
+       .map(_.acls.toBuffer)
+       .getOrElse(mutable.Buffer.empty)
+ 
+-    val prefixed = aclCacheSnapshot
++    val prefixed = new ArrayBuffer[AclEntry]
++    aclCacheSnapshot
+       .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))
+       .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))
+-      .flatMap { case (resource, acls) => if (resourceName.startsWith(resource.name)) acls.acls else Seq.empty }
+-      .toBuffer
++      .foreach { case (resource, acls) =>
++        if (resourceName.startsWith(resource.name)) prefixed ++= acls.acls
++      }
+ 
+     new AclSeqs(prefixed, wildcard, literal)
+   }

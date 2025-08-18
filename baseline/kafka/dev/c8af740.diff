@@ -1,0 +1,63 @@
+commit c8af740bd44dae92bbe68254114c0fd7f7c32345
+Author: Calvin Liu <83986057+CalvinConfluent@users.noreply.github.com>
+Date:   Wed May 29 16:49:55 2024 -0700
+
+    Improve producer ID expiration performance (#16075)
+    
+    Skip using stream when expiring the producer ID. This can improve the performance significantly when the count is high.
+    Before
+    
+    Benchmark                                        (numProducerIds)  Mode  Cnt      Score       Error  Units
+    ProducerStateManagerBench.testDeleteExpiringIds             10000  avgt    3    101.253 ±    28.031  us/op
+    ProducerStateManagerBench.testDeleteExpiringIds            100000  avgt    3   2297.219 ±  1690.486  us/op
+    ProducerStateManagerBench.testDeleteExpiringIds           1000000  avgt    3  30688.865 ± 16348.768  us/op
+    After
+    
+    Benchmark                                        (numProducerIds)  Mode  Cnt     Score     Error  Units
+    ProducerStateManagerBench.testDeleteExpiringIds             10000  avgt    3    39.122 ±   1.151  us/op
+    ProducerStateManagerBench.testDeleteExpiringIds            100000  avgt    3   464.363 ±  98.857  us/op
+    ProducerStateManagerBench.testDeleteExpiringIds           1000000  avgt    3  5731.169 ± 674.380  us/op
+    Also, made a change to the JMH testing which excludes the producer ID populating from the testing.
+    
+    Reviewers: Artem Livshits <alivshits@confluent.io>, Justine Olshan <jolshan@confluent.io>
+
+diff --git a/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java b/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java
+index da56ddaccc..125730e410 100644
+--- a/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java
++++ b/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java
+@@ -176,11 +176,6 @@ public class ProducerStateManager {
+         producerIdCount = producers.size();
+     }
+ 
+-    private void removeProducerIds(List<Long> keys) {
+-        keys.forEach(producers::remove);
+-        producerIdCount = producers.size();
+-    }
+-
+     private void clearProducerIds() {
+         producers.clear();
+         producerIdCount = 0;
+@@ -369,17 +364,12 @@ public class ProducerStateManager {
+      * Also expire any verification state entries that are lingering as unverified.
+      */
+     public void removeExpiredProducers(long currentTimeMs) {
+-        List<Long> keys = producers.entrySet().stream()
+-                .filter(entry -> isProducerExpired(currentTimeMs, entry.getValue()))
+-                .map(Map.Entry::getKey)
+-                .collect(Collectors.toList());
+-        removeProducerIds(keys);
+-
+-        List<Long> verificationKeys = verificationStates.entrySet().stream()
+-                .filter(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs())
+-                .map(Map.Entry::getKey)
+-                .collect(Collectors.toList());
+-        verificationKeys.forEach(verificationStates::remove);
++        producers.entrySet().removeIf(entry -> isProducerExpired(currentTimeMs, entry.getValue()));
++        producerIdCount = producers.size();
++
++        verificationStates.entrySet().removeIf(entry ->
++            (currentTimeMs - entry.getValue().timestamp()) >= producerStateManagerConfig.producerIdExpirationMs()
++        );
+     }
+ 
+     /**

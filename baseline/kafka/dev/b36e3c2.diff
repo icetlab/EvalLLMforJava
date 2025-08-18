@@ -1,0 +1,110 @@
+commit b36e3c22ab88399d439e870edaf60eea89d5c73d
+Author: Chia-Ping Tsai <chia7712@gmail.com>
+Date:   Thu Sep 24 17:46:21 2020 +0800
+
+    MINOR: Remove `zipWithIndex` to avoid tuple allocation in hot path in `LogValidator` (#9206)
+    
+    - improvement: +17%
+    - garbage allocation: -12 %
+    
+    **Parameters**
+    1. bufferSupplierStr = NO_CACHING
+    1. bytes = RANDOM
+    1. compressionType = NONE
+    1. maxBatchSize = 500
+    1. messageSize = 100000
+    1. messageVersion = 2
+    
+    **BEFORE**
+    
+    ```
+    Benchmark                                                                                                  (bufferSupplierStr)  (bytes)  (maxBatchSize)  (messageSize)  (messageVersion)   Mode  Cnt        Score       Error   Units
+    UncompressedRecordBatchValidationBenchmark.measureAssignOffsetsNonCompressed                                        NO_CACHING   RANDOM             500         100000                 2  thrpt   15  2315566.901 ± 35760.064   ops/s
+    UncompressedRecordBatchValidationBenchmark.measureAssignOffsetsNonCompressed:·gc.alloc.rate                         NO_CACHING   RANDOM             500         100000                 2  thrpt   15     4004.046 ±    61.825  MB/sec
+    UncompressedRecordBatchValidationBenchmark.measureAssignOffsetsNonCompressed:·gc.alloc.rate.norm                    NO_CACHING   RANDOM             500         100000                 2  thrpt   15     1904.000 ±     0.001    B/op
+    UncompressedRecordBatchValidationBenchmark.measureAssignOffsetsNonCompressed:·gc.churn.G1_Eden_Space                NO_CACHING   RANDOM             500         100000                 2  thrpt   15     4007.442 ±    80.422  MB/sec
+    UncompressedRecordBatchValidationBenchmark.measureAssignOffsetsNonCompressed:·gc.churn.G1_Eden_Space.norm           NO_CACHING   RANDOM             500         100000                 2  thrpt   15     1905.678 ±    29.493    B/op
+    UncompressedRecordBatchValidationBenchmark.measureAssignOffsetsNonCompressed:·gc.churn.G1_Old_Gen                   NO_CACHING   RANDOM             500         100000                 2  thrpt   15        0.007 ±     0.001  MB/sec
+    UncompressedRecordBatchValidationBenchmark.measureAssignOffsetsNonCompressed:·gc.churn.G1_Old_Gen.norm              NO_CACHING   RANDOM             500         100000                 2  thrpt   15        0.003 ±     0.001    B/op
+    UncompressedRecordBatchValidationBenchmark.measureAssignOffsetsNonCompressed:·gc.count                              NO_CACHING   RANDOM             500         100000                 2  thrpt   15      516.000              counts
+    UncompressedRecordBatchValidationBenchmark.measureAssignOffsetsNonCompressed:·gc.time                               NO_CACHING   RANDOM             500         100000                 2  thrpt   15      491.000                  ms
+    ```
+    
+    **AFTER**
+    
+    ```
+    Benchmark                                                                                                  (bufferSupplierStr)  (bytes)  (maxBatchSize)  (messageSize)  (messageVersion)   Mode  Cnt        Score      Error   Units
+    UncompressedRecordBatchValidationBenchmark.measureAssignOffsetsNonCompressed                                        NO_CACHING   RANDOM             500         100000                 2  thrpt   15  2715876.329 ± 4288.625   ops/s
+    UncompressedRecordBatchValidationBenchmark.measureAssignOffsetsNonCompressed:·gc.alloc.rate                         NO_CACHING   RANDOM             500         100000                 2  thrpt   15     4163.501 ±    6.553  MB/sec
+    UncompressedRecordBatchValidationBenchmark.measureAssignOffsetsNonCompressed:·gc.alloc.rate.norm                    NO_CACHING   RANDOM             500         100000                 2  thrpt   15     1688.000 ±    0.001    B/op
+    UncompressedRecordBatchValidationBenchmark.measureAssignOffsetsNonCompressed:·gc.churn.G1_Eden_Space                NO_CACHING   RANDOM             500         100000                 2  thrpt   15     4164.497 ±   56.694  MB/sec
+    UncompressedRecordBatchValidationBenchmark.measureAssignOffsetsNonCompressed:·gc.churn.G1_Eden_Space.norm           NO_CACHING   RANDOM             500         100000                 2  thrpt   15     1688.397 ±   22.173    B/op
+    UncompressedRecordBatchValidationBenchmark.measureAssignOffsetsNonCompressed:·gc.churn.G1_Old_Gen                   NO_CACHING   RANDOM             500         100000                 2  thrpt   15        0.008 ±    0.002  MB/sec
+    UncompressedRecordBatchValidationBenchmark.measureAssignOffsetsNonCompressed:·gc.churn.G1_Old_Gen.norm              NO_CACHING   RANDOM             500         100000                 2  thrpt   15        0.003 ±    0.001    B/op
+    UncompressedRecordBatchValidationBenchmark.measureAssignOffsetsNonCompressed:·gc.count                              NO_CACHING   RANDOM             500         100000                 2  thrpt   15      536.000             counts
+    UncompressedRecordBatchValidationBenchmark.measureAssignOffsetsNonCompressed:·gc.time                               NO_CACHING   RANDOM             500         100000                 2  thrpt   15      518.000                 ms
+    ```
+    
+    Reviewers: Ismael Juma <ismael@juma.me.uk>
+
+diff --git a/core/src/main/scala/kafka/log/LogValidator.scala b/core/src/main/scala/kafka/log/LogValidator.scala
+index 48b9f57d9a..58706fa481 100644
+--- a/core/src/main/scala/kafka/log/LogValidator.scala
++++ b/core/src/main/scala/kafka/log/LogValidator.scala
+@@ -234,7 +234,7 @@ private[log] object LogValidator extends Logging {
+ 
+     val firstBatch = getFirstBatchAndMaybeValidateNoMoreBatches(records, NoCompressionCodec)
+ 
+-    for (batch <- records.batches.asScala) {
++    records.batches.forEach { batch =>
+       validateBatch(topicPartition, firstBatch, batch, origin, toMagicValue, brokerTopicStats)
+ 
+       val recordErrors = new ArrayBuffer[ApiRecordError](0)
+@@ -279,14 +279,16 @@ private[log] object LogValidator extends Logging {
+ 
+     val firstBatch = getFirstBatchAndMaybeValidateNoMoreBatches(records, NoCompressionCodec)
+ 
+-    for (batch <- records.batches.asScala) {
++    records.batches.forEach { batch =>
+       validateBatch(topicPartition, firstBatch, batch, origin, magic, brokerTopicStats)
+ 
+       var maxBatchTimestamp = RecordBatch.NO_TIMESTAMP
+       var offsetOfMaxBatchTimestamp = -1L
+ 
+       val recordErrors = new ArrayBuffer[ApiRecordError](0)
+-      for ((record, batchIndex) <- batch.asScala.view.zipWithIndex) {
++      // this is a hot path and we want to avoid any unnecessary allocations.
++      var batchIndex = 0
++      batch.forEach { record =>
+         validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,
+           timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)
+ 
+@@ -295,6 +297,7 @@ private[log] object LogValidator extends Logging {
+           maxBatchTimestamp = record.timestamp
+           offsetOfMaxBatchTimestamp = offset
+         }
++        batchIndex += 1
+       }
+ 
+       processRecordErrors(recordErrors)
+@@ -390,8 +393,7 @@ private[log] object LogValidator extends Logging {
+     if (sourceCodec == NoCompressionCodec && firstBatch.isControlBatch)
+       inPlaceAssignment = true
+ 
+-    val batches = records.batches.asScala
+-    for (batch <- batches) {
++    records.batches.forEach { batch =>
+       validateBatch(topicPartition, firstBatch, batch, origin, toMagic, brokerTopicStats)
+       uncompressedSizeInBytes += AbstractRecords.recordBatchHeaderSizeInBytes(toMagic, batch.compressionType())
+ 
+@@ -404,8 +406,9 @@ private[log] object LogValidator extends Logging {
+ 
+       try {
+         val recordErrors = new ArrayBuffer[ApiRecordError](0)
++        // this is a hot path and we want to avoid any unnecessary allocations.
+         var batchIndex = 0
+-        for (record <- recordsIterator.asScala) {
++        recordsIterator.forEachRemaining { record =>
+           val expectedOffset = expectedInnerOffset.getAndIncrement()
+           val recordError = validateRecordCompression(batchIndex, record).orElse {
+             validateRecord(batch, topicPartition, record, batchIndex, now,
