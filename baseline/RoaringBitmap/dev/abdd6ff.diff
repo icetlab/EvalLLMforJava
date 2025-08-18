@@ -1,0 +1,32 @@
+commit abdd6ffb4fa3991263b8017e60cc0ff9ac2096c9
+Author: xtonik <antonin.janec@gmail.com>
+Date:   Sat Nov 18 00:23:25 2023 +0100
+
+    Make faster removal of top values (#680)
+    
+    * benchmark for removal top values from bitmap
+    
+    * remove current value when iterating on bitmap works properly
+    
+    * use remove() to delete first K values
+
+diff --git a/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java b/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
+index c40c836b..f867941d 100644
+--- a/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
++++ b/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
+@@ -318,14 +318,11 @@ public class BitSliceIndexBase {
+     MutableRoaringBitmap F = ImmutableRoaringBitmap.or(G, E);
+     long n = F.getLongCardinality() - k;
+     if (n > 0) {
+-      // TODO: make faster
+       IntIterator i = F.getIntIterator();
+-      MutableRoaringBitmap turnoff = new MutableRoaringBitmap();
+       while (i.hasNext() && n > 0) {
+-        turnoff.add(i.next());
++        F.remove(i.next());
+         --n;
+       }
+-      F.andNot(turnoff);
+     }
+ 
+     if (F.getCardinality() != k)

@@ -1,0 +1,79 @@
+commit 53ba593e8a1fb288a705837dc3bad057f2a50bc0
+Author: xtonik <antonin.janec@gmail.com>
+Date:   Fri Nov 17 23:45:31 2023 +0100
+
+    Avoid computing cardinality for run container  (#685)
+    
+    * avoid compute cardinality for run container using contains() instead
+    
+    * benchmark for optimized checkedAdd()
+    
+    * benchmark uses enums for testing scenarios
+
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java b/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java
+index 9ae064da..2c3d57f8 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java
+@@ -1560,13 +1560,22 @@ public class RoaringBitmap implements Cloneable, Serializable, Iterable<Integer>
+     final int i = highLowContainer.getIndex(hb);
+     if (i >= 0) {
+       Container c = highLowContainer.getContainerAtIndex(i);
+-      int oldCard = c.getCardinality();
+       // we need to keep the newContainer if a switch between containers type
+       // occur, in order to get the new cardinality
+-      Container newCont = c.add(Util.lowbits(x));
+-      highLowContainer.setContainerAtIndex(i, newCont);
+-      if (newCont.getCardinality() > oldCard) {
+-        return true;
++      Container newCont;
++      if (c instanceof RunContainer) { // do not compute cardinality
++        if (!c.contains(Util.lowbits(x))) {
++          newCont = c.add(Util.lowbits(x));
++          highLowContainer.setContainerAtIndex(i, newCont);
++          return true;
++        }
++      } else { // it is faster to use getCardinality() than contains() for other container types
++        int oldCard = c.getCardinality();
++        newCont = c.add(Util.lowbits(x));
++        highLowContainer.setContainerAtIndex(i, newCont);
++        if (newCont.getCardinality() > oldCard) {
++          return true;
++        }
+       }
+     } else {
+       final ArrayContainer newac = new ArrayContainer();
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MutableRoaringBitmap.java b/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MutableRoaringBitmap.java
+index fb9e35b4..e35f5f50 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MutableRoaringBitmap.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MutableRoaringBitmap.java
+@@ -1022,15 +1022,26 @@ public class MutableRoaringBitmap extends ImmutableRoaringBitmap
+     final int i = highLowContainer.getIndex(hb);
+     if (i >= 0) {
+       MappeableContainer C = highLowContainer.getContainerAtIndex(i);
+-      int oldcard = C.getCardinality();
+-      C = C.add(BufferUtil.lowbits(x));
+-      getMappeableRoaringArray().setContainerAtIndex(i, C);
+-      return C.getCardinality() > oldcard;
++      char lowX = BufferUtil.lowbits(x);
++      MappeableContainer newCont;
++      if (C instanceof MappeableRunContainer) { // do not compute cardinality
++        if (!C.contains(lowX)) {
++          newCont = C.add(lowX);
++          getMappeableRoaringArray().setContainerAtIndex(i, newCont);
++          return true;
++        }
++      } else { // it is faster to use getCardinality() than contains() for other container types
++        int oldCard = C.getCardinality();
++        newCont = C.add(lowX);
++        getMappeableRoaringArray().setContainerAtIndex(i, newCont);
++        return newCont.getCardinality() > oldCard;
++      }
+     } else {
+       final MappeableArrayContainer newac = new MappeableArrayContainer();
+       getMappeableRoaringArray().insertNewKeyValueAt(-i - 1, hb, newac.add(BufferUtil.lowbits(x)));
+       return true;
+     }
++    return false;
+   }
+ 
+   /**

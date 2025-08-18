@@ -1,0 +1,57 @@
+commit b5b4af69b5b136c2f65955d0101bcce9b4798b1d
+Author: xtonik <antonin.janec@gmail.com>
+Date:   Mon Jul 24 16:21:16 2023 +0200
+
+    Optimized getCardinality() for (Mappeable)RunContainer (#643)
+    
+    * more performant cardinality counting
+    
+    * bad limit correction
+    
+    * benchmark for getCardinality()
+    
+    * getCardinality() optimized also for RunContainer
+    
+    * bad iteration step
+    
+    * only buffers backed by array can provide an array
+
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/RunContainer.java b/RoaringBitmap/src/main/java/org/roaringbitmap/RunContainer.java
+index dc605afc..e175f48b 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/RunContainer.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/RunContainer.java
+@@ -1007,8 +1007,8 @@ public final class RunContainer extends Container implements Cloneable {
+   @Override
+   public int getCardinality() {
+     int sum = nbrruns;// lengths are returned -1
+-    for (int k = 0; k < nbrruns; ++k) {
+-      sum = sum + (getLength(k))/* + 1 */;
++    for (int k = 1; k < nbrruns * 2; k += 2) {
++      sum += valueslength[k];
+     }
+     return sum;
+   }
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MappeableRunContainer.java b/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MappeableRunContainer.java
+index 28c87f31..78a3516c 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MappeableRunContainer.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MappeableRunContainer.java
+@@ -914,14 +914,15 @@ public final class MappeableRunContainer extends MappeableContainer implements C
+   @Override
+   public int getCardinality() {
+     int sum = nbrruns; // lengths are stored -1
++    int limit = nbrruns * 2;
+     if (isArrayBacked()) {
+       char[] vl = valueslength.array();
+-      for (int k = 0; k < nbrruns; ++k) {
+-        sum = sum + (vl[2 * k + 1])/* + 1 */;
++      for (int k = 1; k < limit; k += 2) {
++        sum += vl[k];
+       }
+     } else {
+-      for (int k = 0; k < nbrruns; ++k) {
+-        sum = sum + (getLength(k))/* + 1 */;
++      for (int k = 1; k < limit; k += 2) {
++        sum += valueslength.get(k);
+       }
+     }
+     return sum;
