@@ -1,0 +1,113 @@
+commit efd0834416c3ec1b6080681c55380b5050555e22
+Author: Karol Sobczak <karol.sobczak@karolsobczak.com>
+Date:   Mon Nov 5 11:56:33 2018 +0100
+
+    Update retained size in PageProcessor less eagerly
+    
+    Two observations:
+    1. It is allowed to not account for the retained size of in-flight pages.
+       Therefore, in PageProcessor we can get rid of the retained size calculations
+       if the page is not being retained for further processing.
+    2. When page processor is created it will be immediately asked for a page.
+       Therefore construction time page memory accounting is not needed.
+    
+    Benchmarks runs after this change :
+    PageProcessorBenchmark.columnOriented              4                true  varchar  avgt  100     8079,359 ±   23,942  ns/op
+    PageProcessorBenchmark.columnOriented              4                true   bigint  avgt  100     7216,566 ±   30,264  ns/op
+    
+    PageProcessorBenchmark.columnOriented              8                true  varchar  avgt  100    13814,018 ±   22,518  ns/op
+    PageProcessorBenchmark.columnOriented              8                true   bigint  avgt  100    12123,872 ±   41,617  ns/op
+    
+    PageProcessorBenchmark.columnOriented             16                true  varchar  avgt  100    25385,354 ±   45,014  ns/op
+    PageProcessorBenchmark.columnOriented             16                true   bigint  avgt  100    21864,345 ±   56,244  ns/op
+    
+    PageProcessorBenchmark.columnOriented             32                true  varchar  avgt  100    49770,337 ±  138,455  ns/op
+    PageProcessorBenchmark.columnOriented             32                true   bigint  avgt  100    42554,134 ±   97,979  ns/op
+    
+    Best benchmarks runs before this change:
+    PageProcessorBenchmark.columnOriented              4                true  varchar  avgt  100     8492,099 ±    64,626  ns/op
+    PageProcessorBenchmark.columnOriented              4                true   bigint  avgt  100     7631,967 ±    58,890  ns/op
+    
+    PageProcessorBenchmark.columnOriented              8                true  varchar  avgt  100    15073,985 ±   31,890  ns/op
+    PageProcessorBenchmark.columnOriented              8                true   bigint  avgt  100    13517,819 ±   53,616  ns/op
+    
+    PageProcessorBenchmark.columnOriented             16                true  varchar  avgt  100    28601,589 ±   78,549  ns/op
+    PageProcessorBenchmark.columnOriented             16                true   bigint  avgt  100    25268,339 ±   98,642  ns/op
+    
+    PageProcessorBenchmark.columnOriented             32                true  varchar  avgt  100    56747,235 ±  154,714  ns/op
+    PageProcessorBenchmark.columnOriented             32                true   bigint  avgt  100    49163,406 ±  126,056  ns/op
+
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java b/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java
+index 01eaa20925..2a8457c7ea 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java
+@@ -44,6 +44,7 @@ import static com.facebook.presto.operator.WorkProcessor.ProcessState.ofResult;
+ import static com.facebook.presto.operator.WorkProcessor.ProcessState.yield;
+ import static com.facebook.presto.operator.project.SelectedPositions.positionsRange;
+ import static com.facebook.presto.spi.block.DictionaryId.randomDictionaryId;
++import static com.google.common.base.Preconditions.checkArgument;
+ import static com.google.common.base.Verify.verify;
+ import static com.google.common.collect.ImmutableList.toImmutableList;
+ import static java.util.Objects.requireNonNull;
+@@ -135,8 +136,8 @@ public class PageProcessor
+         private final ConnectorSession session;
+         private final DriverYieldSignal yieldSignal;
+         private final LocalMemoryContext memoryContext;
+-        private final Page page;
+ 
++        private Page page;
+         private Block[] previouslyComputedResults;
+         private SelectedPositions selectedPositions;
+         private long retainedSizeInBytes;
+@@ -148,13 +149,14 @@ public class PageProcessor
+ 
+         private ProjectSelectedPositions(ConnectorSession session, DriverYieldSignal yieldSignal, LocalMemoryContext memoryContext, Page page, SelectedPositions selectedPositions)
+         {
++            checkArgument(!selectedPositions.isEmpty(), "selectedPositions is empty");
++
+             this.session = session;
+             this.yieldSignal = yieldSignal;
+             this.page = page;
+             this.memoryContext = memoryContext;
+             this.selectedPositions = selectedPositions;
+             this.previouslyComputedResults = new Block[projections.size()];
+-            updateRetainedSize();
+         }
+ 
+         @Override
+@@ -163,7 +165,6 @@ public class PageProcessor
+             int batchSize;
+             while (true) {
+                 if (selectedPositions.isEmpty()) {
+-                    memoryContext.setBytes(0);
+                     verify(!lastComputeYielded);
+                     return finished();
+                 }
+@@ -185,6 +186,7 @@ public class PageProcessor
+                     // if we are running out of time, save the batch size and continue next time
+                     lastComputeYielded = true;
+                     lastComputeBatchSize = batchSize;
++                    updateRetainedSize();
+                     return yield();
+                 }
+ 
+@@ -220,7 +222,18 @@ public class PageProcessor
+                     }
+                 }
+ 
+-                updateRetainedSize();
++                if (!selectedPositions.isEmpty()) {
++                    // there are still some positions to process therefore we need to retain page and account its memory
++                    updateRetainedSize();
++                }
++                else {
++                    page = null;
++                    for (int i = 0; i < previouslyComputedResults.length; i++) {
++                        previouslyComputedResults[i] = null;
++                    }
++                    memoryContext.setBytes(0);
++                }
++
+                 return ofResult(resultPage);
+             }
+         }

@@ -1,0 +1,65 @@
+commit 239f726d9072a39167a0a5817fbdda2e025e6c55
+Author: Andrii Rosa <andriirosa@fb.com>
+Date:   Mon Mar 19 17:19:23 2018 -0400
+
+    Optimize ST_Intersects geometry function
+    
+    Try to deserialize and check envelopes first. If envelopes intersect than do the
+    full deserialization and a fair slow check.
+    
+    Below are the becnhmark results. Score is a number of operations per second.
+    Bigger is better.
+    
+    Original:
+    
+    ```
+    Benchmark                                                                Mode  Cnt       Score       Error  Units
+    BenchmarkSTIntersects.stIntersectsCrossingLine                          thrpt   15    3283.622 ±   167.239  ops/s
+    BenchmarkSTIntersects.stIntersectsCrossingLineSimpleGeometry            thrpt   15  400249.628 ±  6911.584  ops/s
+    BenchmarkSTIntersects.stIntersectsInnerLine                             thrpt   15    2389.466 ±   108.045  ops/s
+    BenchmarkSTIntersects.stIntersectsInnerLineSimpleGeometry               thrpt   15  378110.330 ±  5722.562  ops/s
+    BenchmarkSTIntersects.stIntersectsOuterLineInEnvelope                   thrpt   15    2467.781 ±   165.310  ops/s
+    BenchmarkSTIntersects.stIntersectsOuterLineInEnvelopeSimpleGeometry     thrpt   15  374974.848 ± 11822.304  ops/s
+    BenchmarkSTIntersects.stIntersectsOuterLineNotInEnvelope                thrpt   15    5817.151 ±   205.039  ops/s
+    BenchmarkSTIntersects.stIntersectsOuterLineNotInEnvelopeSimpleGeometry  thrpt   15  766485.338 ± 12150.271  ops/s
+    ```
+    
+    Modified:
+    
+    ```
+    Benchmark                                                                Mode  Cnt        Score        Error  Units
+    BenchmarkSTIntersects.stIntersectsCrossingLine                          thrpt   15     3312.916 ±    182.780  ops/s
+    BenchmarkSTIntersects.stIntersectsCrossingLineSimpleGeometry            thrpt   15   385701.159 ±  12637.764  ops/s
+    BenchmarkSTIntersects.stIntersectsInnerLine                             thrpt   15     2425.224 ±    111.010  ops/s
+    BenchmarkSTIntersects.stIntersectsInnerLineSimpleGeometry               thrpt   15   362100.862 ±   9446.807  ops/s
+    BenchmarkSTIntersects.stIntersectsOuterLineInEnvelope                   thrpt   15     2378.565 ±    106.855  ops/s
+    BenchmarkSTIntersects.stIntersectsOuterLineInEnvelopeSimpleGeometry     thrpt   15   359020.076 ±   6955.090  ops/s
+    BenchmarkSTIntersects.stIntersectsOuterLineNotInEnvelope                thrpt   15  7726620.862 ± 186465.089  ops/s
+    BenchmarkSTIntersects.stIntersectsOuterLineNotInEnvelopeSimpleGeometry  thrpt   15  7742866.387 ± 156396.092  ops/s
+    ```
+    
+    For a negative case, when a full deserialization is required to be made
+    anyway (intersects, evelope intersects) small regression is noticed. ~4% performance
+    hit for simple geometries, where deserialization time is neligible. And <1% performance
+    hit for complex geometries, where deserialization takas most of the time.
+    
+    However for a positive case, when full deserialization is not needed performance gain
+    is much significant. For the complex geometry case `intersects` operation is 1300 times
+    faster.
+
+diff --git a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+index 73db90dd6d..1fc0afcb41 100644
+--- a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
++++ b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+@@ -570,6 +570,11 @@ public final class GeoFunctions
+     @SqlType(StandardTypes.BOOLEAN)
+     public static Boolean stIntersects(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
++        Envelope leftEnvelope = deserializeEnvelope(left);
++        Envelope rightEnvelope = deserializeEnvelope(right);
++        if (leftEnvelope == null || rightEnvelope == null || !leftEnvelope.intersect(rightEnvelope)) {
++            return false;
++        }
+         OGCGeometry leftGeometry = deserialize(left);
+         OGCGeometry rightGeometry = deserialize(right);
+         verifySameSpatialReference(leftGeometry, rightGeometry);

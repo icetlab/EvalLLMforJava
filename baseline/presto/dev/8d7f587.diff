@@ -1,0 +1,49 @@
+commit 8d7f5870671ba198603e030be1138e0f9b963a7e
+Author: Masha Basmanova <mbasmanova@fb.com>
+Date:   Tue Feb 13 17:57:19 2018 -0500
+
+    Optimize the ST_Envelope function
+    
+    Modified ST_Envelope to deserialize only bounding box information from
+    the Slice instead of full geometry. Added a benchmark.
+    
+    Benchmark results before the change:
+    
+    Benchmark                                      Mode  Cnt       Score       Error  Units
+    BenchmarkSTEnvelope.complexGeometry  avgt   20  173054.303 ± 24902.172  ns/op
+    BenchmarkSTEnvelope.simpleGeometry   avgt   20    1866.689 ±   388.987  ns/op
+    
+    and after:
+    
+    Benchmark                                      Mode  Cnt     Score    Error  Units
+    BenchmarkSTEnvelope.complexGeometry  avgt   20   977.294 ± 55.636  ns/op
+    BenchmarkSTEnvelope.simpleGeometry   avgt   20  1016.174 ± 57.284  ns/op
+
+diff --git a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+index de0d7c23a6..89f5b12948 100644
+--- a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
++++ b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+@@ -60,6 +60,7 @@ import static java.lang.String.format;
+ public final class GeoFunctions
+ {
+     private static final Joiner OR_JOINER = Joiner.on(" or ");
++    private static final Slice EMPTY_POLYGON = serialize(createFromEsriGeometry(new Polygon(), null));
+ 
+     private GeoFunctions() {}
+ 
+@@ -392,10 +393,11 @@ public final class GeoFunctions
+     @SqlType(GEOMETRY_TYPE_NAME)
+     public static Slice stEnvelope(@SqlType(GEOMETRY_TYPE_NAME) Slice input)
+     {
+-        OGCGeometry geometry = deserialize(input);
+-        SpatialReference reference = geometry.getEsriSpatialReference();
+-        Envelope envelope = getEnvelope(geometry);
+-        return serialize(createFromEsriGeometry(envelope, reference));
++        Envelope envelope = deserializeEnvelope(input);
++        if (envelope == null) {
++            return EMPTY_POLYGON;
++        }
++        return serialize(createFromEsriGeometry(envelope, null));
+     }
+ 
+     @Description("Returns the Geometry value that represents the point set difference of two geometries")

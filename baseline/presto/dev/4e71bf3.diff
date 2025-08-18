@@ -1,0 +1,74 @@
+commit 4e71bf3dc95c67396a345f19195d6e3c716ea528
+Author: Ying Su <yingsu@fb.com>
+Date:   Sun Nov 10 22:25:30 2019 -0800
+
+    Optimize byte reader when reading contiguous rows with no nulls and no filter
+    
+    JMH benchmark results show 2x improvement when there is no nulls and no filters.
+    
+    Before
+    Benchmark                             (typeSignature)  (withNulls)  Mode  Cnt  Score   Error  Units
+    BenchmarkSelectiveStreamReaders.read          tinyint         true  avgt   20  0.045 ± 0.001   s/op
+    BenchmarkSelectiveStreamReaders.read          tinyint        false  avgt   20  0.039 ± 0.001   s/op
+    
+    After
+    Benchmark                             (typeSignature)  (withNulls)  Mode  Cnt  Score   Error  Units
+    BenchmarkSelectiveStreamReaders.read          tinyint         true  avgt   20  0.043 ± 0.002   s/op
+    BenchmarkSelectiveStreamReaders.read          tinyint        false  avgt   20  0.018 ± 0.001   s/op
+
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+index da887a9ba3..3e0b29e932 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+@@ -257,6 +257,13 @@ public class ByteSelectiveStreamReader
+             throws IOException
+     {
+         // filter == null implies outputRequired == true
++        if (presentStream == null && positions[positionCount - 1] == positionCount - 1) {
++            // contiguous chunk of rows, no nulls
++            dataStream.next(values, positionCount);
++            outputPositionCount = positionCount;
++            return positionCount;
++        }
++
+         int streamPosition = 0;
+         for (int i = 0; i < positionCount; i++) {
+             int position = positions[i];
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java b/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java
+index 21edc123eb..0cbc8b944f 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java
+@@ -21,6 +21,8 @@ import com.facebook.presto.spi.type.Type;
+ import java.io.IOException;
+ import java.util.Arrays;
+ 
++import static java.lang.Math.min;
++
+ public class ByteInputStream
+         implements ValueInputStream<ByteStreamCheckpoint>
+ {
+@@ -126,4 +128,24 @@ public class ByteInputStream
+             type.writeLong(builder, next());
+         }
+     }
++
++    public void next(byte[] values, int items)
++            throws IOException
++    {
++        int outputOffset = 0;
++        while (outputOffset < items) {
++            if (offset == length) {
++                readNextBlock();
++            }
++            if (length == 0) {
++                throw new OrcCorruptionException(input.getOrcDataSourceId(), "Unexpected end of stream");
++            }
++
++            int chunkSize = min(items - outputOffset, length - offset);
++            System.arraycopy(buffer, offset, values, outputOffset, chunkSize);
++
++            outputOffset += chunkSize;
++            offset += chunkSize;
++        }
++    }
+ }

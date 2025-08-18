@@ -1,0 +1,217 @@
+commit 290f5be2e284b79af7c0430fa20b77804a3e5071
+Author: Ying Su <yingsu@fb.com>
+Date:   Wed Oct 31 21:35:17 2018 -0700
+
+    Replace floorMod with faster reduction function
+    
+    Building hashtable in map column uses 30% of CPU out of the scan cost
+    on that column, and Math.floorMod() uses 60% CPU out of building
+    hashtable. We tested 5 custom range reduction functions and chose
+    computePositionWithBitShifting(), which is one of the top 3
+    implementations in performance and does not require the hash table size
+    to be power of 2. It can reduce the uniform distributed 64-bit hashcode
+    to [0, hashTableSize) in uniform distribution. After the change
+    buildHashTable improved 31% and the total CPU for the test select map
+    query improved 14%.
+    
+    The following table shows the CPU percentage for computePosition,
+    getHashPosition and buildHashTable and the total CPU hours for a
+    select checksum query on a map column.
+    
+                            computePosition% getHashPosition% buildHashTable% Total CPU Hours
+    computePositionWithMod          16.62           21.89           28.04             14.37
+    computePositionWithMask         0.51            9.53            14.44             12.24
+    computePositionWithBitShifting  4.61            11.66           18.97             12.32
+    computePositionWithFloorMod     16.22           22.03           27.33             14.21
+    
+    The JMH benchmark results on JDK 10:
+    Benchmark                                                Mode  Cnt   Score   Error  Units
+    BenchmarkComputePosition.computePositionWithBitShifting  avgt   30   2.954 ± 0.122  ns/op
+    BenchmarkComputePosition.computePositionWithDivision     avgt   30   2.852 ± 0.145  ns/op
+    BenchmarkComputePosition.computePositionWithFloorMod     avgt   30  11.212 ± 0.215  ns/op
+    BenchmarkComputePosition.computePositionWithMask         avgt   30   2.455 ± 0.054  ns/op
+    BenchmarkComputePosition.computePositionWithMod          avgt   30   4.490 ± 0.113  ns/op
+    
+    The performance on JDK 8 and 11 are similar for all methods.
+
+diff --git a/presto-spi/src/main/java/com/facebook/presto/spi/block/MapBlockBuilder.java b/presto-spi/src/main/java/com/facebook/presto/spi/block/MapBlockBuilder.java
+index fba99d6ed9..d7f3e6e979 100644
+--- a/presto-spi/src/main/java/com/facebook/presto/spi/block/MapBlockBuilder.java
++++ b/presto-spi/src/main/java/com/facebook/presto/spi/block/MapBlockBuilder.java
+@@ -534,6 +534,13 @@ public class MapBlockBuilder
+             throw new RuntimeException(throwable);
+         }
+ 
+-        return (int) Math.floorMod(hashCode, hashTableSize);
++        return computePosition(hashCode, hashTableSize);
++    }
++
++    // This function reduces the 64 bit hashcode to [0, hashTableSize) uniformly. It first reduces the hashcode to 32 bit
++    // integer x then normalize it to x / 2^32 * hashSize to reduce the range of x from [0, 2^32) to [0, hashTableSize)
++    static int computePosition(long hashcode, int hashTableSize)
++    {
++        return (int) ((Integer.toUnsignedLong(Long.hashCode(hashcode)) * hashTableSize) >> 32);
+     }
+ }
+diff --git a/presto-spi/src/main/java/com/facebook/presto/spi/block/SingleMapBlock.java b/presto-spi/src/main/java/com/facebook/presto/spi/block/SingleMapBlock.java
+index 72762b5ba9..9b7a2666d7 100644
+--- a/presto-spi/src/main/java/com/facebook/presto/spi/block/SingleMapBlock.java
++++ b/presto-spi/src/main/java/com/facebook/presto/spi/block/SingleMapBlock.java
+@@ -24,6 +24,7 @@ import java.util.function.BiConsumer;
+ import static com.facebook.presto.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
+ import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
+ import static com.facebook.presto.spi.block.AbstractMapBlock.HASH_MULTIPLIER;
++import static com.facebook.presto.spi.block.MapBlockBuilder.computePosition;
+ import static io.airlift.slice.SizeOf.sizeOf;
+ import static io.airlift.slice.SizeOf.sizeOfIntArray;
+ import static java.lang.String.format;
+@@ -153,9 +154,9 @@ public class SingleMapBlock
+ 
+         int hashTableOffset = offset / 2 * HASH_MULTIPLIER;
+         int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;
+-        int hash = (int) Math.floorMod(hashCode, hashTableSize);
++        int position = computePosition(hashCode, hashTableSize);
+         while (true) {
+-            int keyPosition = hashTable[hashTableOffset + hash];
++            int keyPosition = hashTable[hashTableOffset + position];
+             if (keyPosition == -1) {
+                 return -1;
+             }
+@@ -171,9 +172,9 @@ public class SingleMapBlock
+             if (match) {
+                 return keyPosition * 2 + 1;
+             }
+-            hash++;
+-            if (hash == hashTableSize) {
+-                hash = 0;
++            position++;
++            if (position == hashTableSize) {
++                position = 0;
+             }
+         }
+     }
+@@ -200,9 +201,9 @@ public class SingleMapBlock
+ 
+         int hashTableOffset = offset / 2 * HASH_MULTIPLIER;
+         int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;
+-        int hash = (int) Math.floorMod(hashCode, hashTableSize);
++        int position = computePosition(hashCode, hashTableSize);
+         while (true) {
+-            int keyPosition = hashTable[hashTableOffset + hash];
++            int keyPosition = hashTable[hashTableOffset + position];
+             if (keyPosition == -1) {
+                 return -1;
+             }
+@@ -218,9 +219,9 @@ public class SingleMapBlock
+             if (match) {
+                 return keyPosition * 2 + 1;
+             }
+-            hash++;
+-            if (hash == hashTableSize) {
+-                hash = 0;
++            position++;
++            if (position == hashTableSize) {
++                position = 0;
+             }
+         }
+     }
+@@ -244,9 +245,9 @@ public class SingleMapBlock
+ 
+         int hashTableOffset = offset / 2 * HASH_MULTIPLIER;
+         int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;
+-        int hash = (int) Math.floorMod(hashCode, hashTableSize);
++        int position = computePosition(hashCode, hashTableSize);
+         while (true) {
+-            int keyPosition = hashTable[hashTableOffset + hash];
++            int keyPosition = hashTable[hashTableOffset + position];
+             if (keyPosition == -1) {
+                 return -1;
+             }
+@@ -262,9 +263,9 @@ public class SingleMapBlock
+             if (match) {
+                 return keyPosition * 2 + 1;
+             }
+-            hash++;
+-            if (hash == hashTableSize) {
+-                hash = 0;
++            position++;
++            if (position == hashTableSize) {
++                position = 0;
+             }
+         }
+     }
+@@ -288,9 +289,9 @@ public class SingleMapBlock
+ 
+         int hashTableOffset = offset / 2 * HASH_MULTIPLIER;
+         int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;
+-        int hash = (int) Math.floorMod(hashCode, hashTableSize);
++        int position = computePosition(hashCode, hashTableSize);
+         while (true) {
+-            int keyPosition = hashTable[hashTableOffset + hash];
++            int keyPosition = hashTable[hashTableOffset + position];
+             if (keyPosition == -1) {
+                 return -1;
+             }
+@@ -306,9 +307,9 @@ public class SingleMapBlock
+             if (match) {
+                 return keyPosition * 2 + 1;
+             }
+-            hash++;
+-            if (hash == hashTableSize) {
+-                hash = 0;
++            position++;
++            if (position == hashTableSize) {
++                position = 0;
+             }
+         }
+     }
+@@ -332,9 +333,9 @@ public class SingleMapBlock
+ 
+         int hashTableOffset = offset / 2 * HASH_MULTIPLIER;
+         int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;
+-        int hash = (int) Math.floorMod(hashCode, hashTableSize);
++        int position = computePosition(hashCode, hashTableSize);
+         while (true) {
+-            int keyPosition = hashTable[hashTableOffset + hash];
++            int keyPosition = hashTable[hashTableOffset + position];
+             if (keyPosition == -1) {
+                 return -1;
+             }
+@@ -350,9 +351,9 @@ public class SingleMapBlock
+             if (match) {
+                 return keyPosition * 2 + 1;
+             }
+-            hash++;
+-            if (hash == hashTableSize) {
+-                hash = 0;
++            position++;
++            if (position == hashTableSize) {
++                position = 0;
+             }
+         }
+     }
+@@ -376,9 +377,9 @@ public class SingleMapBlock
+ 
+         int hashTableOffset = offset / 2 * HASH_MULTIPLIER;
+         int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;
+-        int hash = (int) Math.floorMod(hashCode, hashTableSize);
++        int position = computePosition(hashCode, hashTableSize);
+         while (true) {
+-            int keyPosition = hashTable[hashTableOffset + hash];
++            int keyPosition = hashTable[hashTableOffset + position];
+             if (keyPosition == -1) {
+                 return -1;
+             }
+@@ -394,9 +395,9 @@ public class SingleMapBlock
+             if (match) {
+                 return keyPosition * 2 + 1;
+             }
+-            hash++;
+-            if (hash == hashTableSize) {
+-                hash = 0;
++            position++;
++            if (position == hashTableSize) {
++                position = 0;
+             }
+         }
+     }

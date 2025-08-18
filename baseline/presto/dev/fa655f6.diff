@@ -1,0 +1,49 @@
+commit fa655f6cc8a3d92634acd26d2359ceab4abebc0b
+Author: Ying Su <yingsu@fb.com>
+Date:   Mon Jun 1 20:44:57 2020 -0700
+
+    Do not create Slice while comparing keys in SingleMapBlock
+    
+    When seeking a key represented in Slice format, the comparison of the
+    key value and the value in the SingleMapBlock at the position of the
+    hashCode was done through keyBlockNativeEquals.invokeExact(), which
+    creates a new Slice object. When there are many map subscript operations
+    in a query, many small Slice objects are created and this causes high
+    GC overhead which may lead to reliability problems. This commit uses
+    the newly introduced Block.equals(int, Slice) to do the comparison and
+    it does not create the Slice objects.
+    
+    It also improves the map subscript operation on varchars by up to 30%.
+    
+    Before:
+    
+    Benchmark                           (mapSize)      (name)  Mode  Cnt     Score     Error  Units
+    BenchmarkMapSubscript.mapSubscript          1   fix-width  avgt   20    43.658 ±   2.070  ns/op
+    BenchmarkMapSubscript.mapSubscript          1   var-width  avgt   20    76.798 ±   1.174  ns/op
+    BenchmarkMapSubscript.mapSubscript          1  dictionary  avgt   20    71.693 ±   1.728  ns/op
+    BenchmarkMapSubscript.mapSubscript         13   fix-width  avgt   20   673.659 ±  35.320  ns/op
+    BenchmarkMapSubscript.mapSubscript         13   var-width  avgt   20  1549.805 ± 114.924  ns/op
+    BenchmarkMapSubscript.mapSubscript         13  dictionary  avgt   20  1505.389 ±  55.895  ns/op
+    After:
+    
+    Benchmark                           (mapSize)      (name)  Mode  Cnt     Score    Error  Units
+    BenchmarkMapSubscript.mapSubscript          1   fix-width  avgt   20    31.709 ±  1.050  ns/op
+    BenchmarkMapSubscript.mapSubscript          1   var-width  avgt   20    56.716 ±  1.767  ns/op
+    BenchmarkMapSubscript.mapSubscript          1  dictionary  avgt   20    66.426 ±  2.030  ns/op
+    BenchmarkMapSubscript.mapSubscript         13   fix-width  avgt   20   569.891 ± 21.386  ns/op
+    BenchmarkMapSubscript.mapSubscript         13   var-width  avgt   20  1061.052 ± 49.004  ns/op
+    BenchmarkMapSubscript.mapSubscript         13  dictionary  avgt   20  1118.587 ± 71.122  ns/op
+
+diff --git a/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java b/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java
+index ea2cf982de..1532c7fb6d 100644
+--- a/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java
++++ b/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java
+@@ -352,7 +352,7 @@ public class SingleMapBlock
+             Boolean match;
+             try {
+                 // assuming maps with indeterminate keys are not supported
+-                match = (Boolean) mapBlock.keyBlockNativeEquals.invokeExact(mapBlock.getRawKeyBlock(), offset / 2 + keyPosition, nativeValue);
++                match = mapBlock.getRawKeyBlock().bytesEqual(offset / 2 + keyPosition, 0, nativeValue, 0, nativeValue.length());
+             }
+             catch (Throwable throwable) {
+                 throw handleThrowable(throwable);

@@ -1,0 +1,84 @@
+commit 469637d75bab64782455d13b3cfe4452cee748f8
+Author: Andrii Rosa <andriirosa@fb.com>
+Date:   Tue Dec 10 16:31:36 2019 -0500
+
+    Set boolean value to 0 if the position is null
+    
+    Setting the actual value to a random 0 or 1 is rather not
+    intuitive and error prone. We may expect the boolean (or integer) value
+    to be set to 0 if the position is null in some places across the code
+    
+    Benchmarks
+    
+    Before:
+    
+    Benchmark                                                 (typeSignature)  (withNulls)  Mode  Cnt  Score   Error  Units
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithJni             boolean      PARTIAL  avgt   20  0.022 ± 0.002   s/op
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithJni             tinyint      PARTIAL  avgt   20  0.022 ± 0.003   s/op
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithJni            smallint      PARTIAL  avgt   20  0.075 ± 0.006   s/op
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithJni             integer      PARTIAL  avgt   20  0.107 ± 0.010   s/op
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithJni              bigint      PARTIAL  avgt   20  0.167 ± 0.010   s/op
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithoutJni          boolean      PARTIAL  avgt   20  0.023 ± 0.003   s/op
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithoutJni          tinyint      PARTIAL  avgt   20  0.022 ± 0.004   s/op
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithoutJni         smallint      PARTIAL  avgt   20  0.091 ± 0.006   s/op
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithoutJni          integer      PARTIAL  avgt   20  0.122 ± 0.008   s/op
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithoutJni           bigint      PARTIAL  avgt   20  0.199 ± 0.011   s/op
+    
+    After:
+    
+    Benchmark                                                 (typeSignature)  (withNulls)  Mode  Cnt  Score   Error  Units
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithJni             boolean      PARTIAL  avgt   20  0.022 ± 0.004   s/op
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithJni             tinyint      PARTIAL  avgt   20  0.021 ± 0.004   s/op
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithJni            smallint      PARTIAL  avgt   20  0.073 ± 0.006   s/op
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithJni             integer      PARTIAL  avgt   20  0.103 ± 0.011   s/op
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithJni              bigint      PARTIAL  avgt   20  0.172 ± 0.010   s/op
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithoutJni          boolean      PARTIAL  avgt   20  0.022 ± 0.003   s/op
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithoutJni          tinyint      PARTIAL  avgt   20  0.021 ± 0.004   s/op
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithoutJni         smallint      PARTIAL  avgt   20  0.093 ± 0.010   s/op
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithoutJni          integer      PARTIAL  avgt   20  0.123 ± 0.011   s/op
+    BenchmarkBatchStreamReadersWithZstd.readBlocksWithoutJni           bigint      PARTIAL  avgt   20  0.196 ± 0.011   s/op
+
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java
+index d68806f9b7..720023399d 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java
+@@ -51,8 +51,8 @@ final class ReaderUtils
+ 
+         int position = 0;
+         for (int i = 0; i < isNull.length; i++) {
+-            result[i] = values[position];
+             if (!isNull[i]) {
++                result[i] = values[position];
+                 position++;
+             }
+         }
+@@ -65,8 +65,8 @@ final class ReaderUtils
+ 
+         int position = 0;
+         for (int i = 0; i < isNull.length; i++) {
+-            result[i] = values[position];
+             if (!isNull[i]) {
++                result[i] = values[position];
+                 position++;
+             }
+         }
+@@ -79,8 +79,8 @@ final class ReaderUtils
+ 
+         int position = 0;
+         for (int i = 0; i < isNull.length; i++) {
+-            result[i] = values[position];
+             if (!isNull[i]) {
++                result[i] = values[position];
+                 position++;
+             }
+         }
+@@ -93,8 +93,8 @@ final class ReaderUtils
+ 
+         int position = 0;
+         for (int i = 0; i < isNull.length; i++) {
+-            result[i] = values[position];
+             if (!isNull[i]) {
++                result[i] = values[position];
+                 position++;
+             }
+         }

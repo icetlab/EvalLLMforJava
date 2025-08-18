@@ -1,0 +1,48 @@
+commit b54d2483c76afe2d7b57c7ae56c356ba25440e88
+Author: Ying Su <yingsu@fb.com>
+Date:   Sat Oct 26 20:26:11 2019 -0700
+
+    Improve HashGenerator.getPartition performance
+    
+    Change the mod operation to bit shifting in HashGenerator.getPartition.
+    BenchmarkPartitionedOutputOperator shows 35% gain.
+    
+    Bigint Before:
+    Benchmark                                            (hasNull)  Mode  Cnt    Score     Error  Units
+    BenchmarkPartitionedOutputOperator.optimizedAddPage       true  avgt   30  847.520 ± 111.003  ms/op
+    BenchmarkPartitionedOutputOperator.optimizedAddPage      false  avgt   30  820.443 ±  63.596  ms/op
+    
+    Bigint After:
+    Benchmark                                            (hasNull)  Mode  Cnt    Score    Error  Units
+    BenchmarkPartitionedOutputOperator.optimizedAddPage       true  avgt   30  565.254 ± 64.455  ms/op
+    BenchmarkPartitionedOutputOperator.optimizedAddPage      false  avgt   30  558.286 ± 47.540  ms/op
+
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java b/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java
+index f9e7ee73b4..9a247f2faa 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java
+@@ -15,8 +15,6 @@ package com.facebook.presto.operator;
+ 
+ import com.facebook.presto.spi.Page;
+ 
+-import static com.google.common.base.Preconditions.checkState;
+-
+ public interface HashGenerator
+ {
+     long hashPosition(int position, Page page);
+@@ -25,12 +23,8 @@ public interface HashGenerator
+     {
+         long rawHash = hashPosition(position, page);
+ 
+-        // clear the sign bit
+-        rawHash &= 0x7fff_ffff_ffff_ffffL;
+-
+-        int partition = (int) (rawHash % partitionCount);
+-
+-        checkState(partition >= 0 && partition < partitionCount);
+-        return partition;
++        // This function reduces the 64 bit rawHash to [0, partitionCount) uniformly. It first reduces the rawHash to 32 bit
++        // integer x then normalize it to x / 2^32 * partitionCount to reduce the range of x from [0, 2^32) to [0, partitionCount)
++        return (int) ((Integer.toUnsignedLong(Long.hashCode(rawHash)) * partitionCount) >> 32);
+     }
+ }

@@ -1,0 +1,93 @@
+commit 53aa7f67c8156a904c9114e4faae2586c630968c
+Author: Ying Su <yingsu@fb.com>
+Date:   Wed Sep 30 15:06:39 2020 -0700
+
+    Reserve memory before projecting rows
+    
+    BenchmarkPageProcessor shows 33% improvement in throughput
+    (higher is better) and 4x reduction in gc.alloc.rate.norm
+    (lower is better) in GC benchmarks.
+    
+    Before
+    Benchmark                                                         (projectionDataType)   Mode  Cnt       Score        Error   Units
+    BenchmarkPageProcessor.compiled                                                 BIGINT  thrpt   10    8374.449 ±   1023.859   ops/s
+    BenchmarkPageProcessor.compiled:·gc.alloc.rate                                  BIGINT  thrpt   10    1451.783 ±    179.079  MB/sec
+    BenchmarkPageProcessor.compiled:·gc.alloc.rate.norm                             BIGINT  thrpt   10  363640.395 ±      1.385    B/op
+    BenchmarkPageProcessor.compiled:·gc.churn.PS_Eden_Space                         BIGINT  thrpt   10    1448.711 ±   1904.852  MB/sec
+    BenchmarkPageProcessor.compiled:·gc.churn.PS_Eden_Space.norm                    BIGINT  thrpt   10  368448.852 ± 487748.838    B/op
+    BenchmarkPageProcessor.compiled:·gc.churn.PS_Survivor_Space                     BIGINT  thrpt   10       0.019 ±      0.054  MB/sec
+    BenchmarkPageProcessor.compiled:·gc.churn.PS_Survivor_Space.norm                BIGINT  thrpt   10       4.904 ±     13.838    B/op
+    BenchmarkPageProcessor.compiled:·gc.count                                       BIGINT  thrpt   10       6.000               counts
+    BenchmarkPageProcessor.compiled:·gc.time                                        BIGINT  thrpt   10      27.000                   ms
+    BenchmarkPageProcessor.compiled                                                 DOUBLE  thrpt   10    8805.494 ±    916.612   ops/s
+    BenchmarkPageProcessor.compiled:·gc.alloc.rate                                  DOUBLE  thrpt   10    1527.888 ±    159.617  MB/sec
+    BenchmarkPageProcessor.compiled:·gc.alloc.rate.norm                             DOUBLE  thrpt   10  363640.100 ±      0.011    B/op
+    BenchmarkPageProcessor.compiled:·gc.churn.PS_Eden_Space                         DOUBLE  thrpt   10    1716.294 ±   1812.190  MB/sec
+    BenchmarkPageProcessor.compiled:·gc.churn.PS_Eden_Space.norm                    DOUBLE  thrpt   10  414368.217 ± 436717.530    B/op
+    BenchmarkPageProcessor.compiled:·gc.churn.PS_Survivor_Space                     DOUBLE  thrpt   10       0.008 ±      0.023  MB/sec
+    BenchmarkPageProcessor.compiled:·gc.churn.PS_Survivor_Space.norm                DOUBLE  thrpt   10       1.942 ±      5.771    B/op
+    BenchmarkPageProcessor.compiled:·gc.count                                       DOUBLE  thrpt   10       7.000               counts
+    BenchmarkPageProcessor.compiled:·gc.time                                        DOUBLE  thrpt   10      30.000                   ms
+    
+    Benchmark                                                         (projectionDataType)   Mode  Cnt       Score        Error   Units
+    BenchmarkPageProcessor.compiled                                                 BIGINT  thrpt   10   11584.658 ±   1122.544   ops/s
+    BenchmarkPageProcessor.compiled:·gc.alloc.rate                                  BIGINT  thrpt   10     514.595 ±     49.501  MB/sec
+    BenchmarkPageProcessor.compiled:·gc.alloc.rate.norm                             BIGINT  thrpt   10   93152.294 ±      1.029    B/op
+    BenchmarkPageProcessor.compiled:·gc.churn.PS_Eden_Space                         BIGINT  thrpt   10     557.664 ±    901.262  MB/sec
+    BenchmarkPageProcessor.compiled:·gc.churn.PS_Eden_Space.norm                    BIGINT  thrpt   10  101729.476 ± 165414.127    B/op
+    BenchmarkPageProcessor.compiled:·gc.churn.PS_Survivor_Space                     BIGINT  thrpt   10       0.016 ±      0.051  MB/sec
+    BenchmarkPageProcessor.compiled:·gc.churn.PS_Survivor_Space.norm                BIGINT  thrpt   10       2.907 ±      9.407    B/op
+    BenchmarkPageProcessor.compiled:·gc.count                                       BIGINT  thrpt   10       5.000               counts
+    BenchmarkPageProcessor.compiled:·gc.time                                        BIGINT  thrpt   10      19.000                   ms
+    BenchmarkPageProcessor.compiled                                                 DOUBLE  thrpt   10   11823.376 ±    625.466   ops/s
+    BenchmarkPageProcessor.compiled:·gc.alloc.rate                                  DOUBLE  thrpt   10     525.309 ±     27.507  MB/sec
+    BenchmarkPageProcessor.compiled:·gc.alloc.rate.norm                             DOUBLE  thrpt   10   93152.074 ±      0.007    B/op
+    BenchmarkPageProcessor.compiled:·gc.churn.PS_Eden_Space                         DOUBLE  thrpt   10     489.386 ±    957.448  MB/sec
+    BenchmarkPageProcessor.compiled:·gc.churn.PS_Eden_Space.norm                    DOUBLE  thrpt   10   88371.107 ± 172982.262    B/op
+    BenchmarkPageProcessor.compiled:·gc.churn.PS_Survivor_Space                     DOUBLE  thrpt   10       0.009 ±      0.032  MB/sec
+    BenchmarkPageProcessor.compiled:·gc.churn.PS_Survivor_Space.norm                DOUBLE  thrpt   10       1.684 ±      5.744    B/op
+    BenchmarkPageProcessor.compiled:·gc.count                                       DOUBLE  thrpt   10       4.000               counts
+    BenchmarkPageProcessor.compiled:·gc.time                                        DOUBLE  thrpt   10      18.000                   ms
+
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java b/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java
+index bc8850802d..8304746891 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java
+@@ -17,6 +17,7 @@ import com.facebook.presto.common.Page;
+ import com.facebook.presto.common.block.Block;
+ import com.facebook.presto.common.block.BlockBuilder;
+ import com.facebook.presto.common.function.SqlFunctionProperties;
++import com.facebook.presto.common.type.Type;
+ import com.facebook.presto.operator.DriverYieldSignal;
+ import com.facebook.presto.operator.Work;
+ import com.facebook.presto.spi.relation.RowExpression;
+@@ -36,8 +37,7 @@ public class GeneratedPageProjection
+     private final boolean isDeterministic;
+     private final InputChannels inputChannels;
+     private final MethodHandle pageProjectionWorkFactory;
+-
+-    private List<BlockBuilder> blockBuilders;
++    private List<Type> types;
+ 
+     public GeneratedPageProjection(List<RowExpression> projections, boolean isDeterministic, InputChannels inputChannels, MethodHandle pageProjectionWorkFactory)
+     {
+@@ -45,7 +45,7 @@ public class GeneratedPageProjection
+         this.isDeterministic = isDeterministic;
+         this.inputChannels = requireNonNull(inputChannels, "inputChannels is null");
+         this.pageProjectionWorkFactory = requireNonNull(pageProjectionWorkFactory, "pageProjectionWorkFactory is null");
+-        this.blockBuilders = projections.stream().map(RowExpression::getType).map(type -> type.createBlockBuilder(null, 1)).collect(toImmutableList());
++        this.types = projections.stream().map(RowExpression::getType).collect(toImmutableList());
+     }
+ 
+     @Override
+@@ -63,7 +63,9 @@ public class GeneratedPageProjection
+     @Override
+     public Work<List<Block>> project(SqlFunctionProperties properties, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions)
+     {
+-        blockBuilders = blockBuilders.stream().map(blockBuilder -> blockBuilder.newBlockBuilderLike(null)).collect(toImmutableList());
++        List<BlockBuilder> blockBuilders = types.stream()
++                .map(type -> type.createBlockBuilder(null, selectedPositions.size()))
++                .collect(toImmutableList());
+         try {
+             return (Work<List<Block>>) pageProjectionWorkFactory.invoke(blockBuilders, properties, page, selectedPositions);
+         }

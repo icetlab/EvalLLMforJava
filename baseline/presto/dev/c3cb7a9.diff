@@ -1,0 +1,119 @@
+commit c3cb7a9bf833a4d54b17d00ebe6b9f2307b95e1b
+Author: HolyLow <jiaming.xie7@gmail.com>
+Date:   Tue Mar 7 14:38:52 2023 +0800
+
+    Optimize WindowOp's findEndPosition
+    
+    The BenchmarkWindowOperator result is as follows:
+    === original version:
+    Benchmark                          (numberOfPregroupedColumns)  (partitionsPerGroup)  (rowsPerPartition)  Mode  Cnt     Score    Error  Units
+    BenchmarkWindowOperator.benchmark                            0                    10                  10  avgt   30   700.616 ±  4.559  ms/op
+    BenchmarkWindowOperator.benchmark                            0                    10                  20  avgt   30   695.732 ±  4.924  ms/op
+    BenchmarkWindowOperator.benchmark                            0                    10                 100  avgt   30   707.174 ±  5.311  ms/op
+    BenchmarkWindowOperator.benchmark                            0                    50                  10  avgt   30   733.482 ±  5.765  ms/op
+    BenchmarkWindowOperator.benchmark                            0                    50                  20  avgt   30   728.373 ±  5.993  ms/op
+    BenchmarkWindowOperator.benchmark                            0                    50                 100  avgt   30   737.095 ±  4.459  ms/op
+    BenchmarkWindowOperator.benchmark                            0                   100                  10  avgt   30   752.398 ±  6.749  ms/op
+    BenchmarkWindowOperator.benchmark                            0                   100                  20  avgt   30   737.018 ±  3.572  ms/op
+    BenchmarkWindowOperator.benchmark                            0                   100                 100  avgt   30   746.745 ±  2.801  ms/op
+    BenchmarkWindowOperator.benchmark                            1                    10                  10  avgt   30  1765.731 ± 12.322  ms/op
+    BenchmarkWindowOperator.benchmark                            1                    10                  20  avgt   30  1036.354 ± 10.082  ms/op
+    BenchmarkWindowOperator.benchmark                            1                    10                 100  avgt   30   475.949 ±  2.957  ms/op
+    BenchmarkWindowOperator.benchmark                            1                    50                  10  avgt   30  1762.729 ± 13.232  ms/op
+    BenchmarkWindowOperator.benchmark                            1                    50                  20  avgt   30  1041.532 ± 12.324  ms/op
+    BenchmarkWindowOperator.benchmark                            1                    50                 100  avgt   30   472.625 ±  2.115  ms/op
+    BenchmarkWindowOperator.benchmark                            1                   100                  10  avgt   30  1776.041 ± 11.636  ms/op
+    BenchmarkWindowOperator.benchmark                            1                   100                  20  avgt   30  1041.865 ±  9.900  ms/op
+    BenchmarkWindowOperator.benchmark                            1                   100                 100  avgt   30   472.171 ±  2.555  ms/op
+    BenchmarkWindowOperator.benchmark                            2                    10                  10  avgt   30  1737.301 ± 14.790  ms/op
+    BenchmarkWindowOperator.benchmark                            2                    10                  20  avgt   30   996.549 ±  7.150  ms/op
+    BenchmarkWindowOperator.benchmark                            2                    10                 100  avgt   30   400.209 ±  2.197  ms/op
+    BenchmarkWindowOperator.benchmark                            2                    50                  10  avgt   30  1717.488 ± 10.154  ms/op
+    BenchmarkWindowOperator.benchmark                            2                    50                  20  avgt   30   994.112 ±  9.849  ms/op
+    BenchmarkWindowOperator.benchmark                            2                    50                 100  avgt   30   395.716 ±  1.259  ms/op
+    BenchmarkWindowOperator.benchmark                            2                   100                  10  avgt   30  1758.551 ± 10.122  ms/op
+    BenchmarkWindowOperator.benchmark                            2                   100                  20  avgt   30   998.985 ±  8.318  ms/op
+    BenchmarkWindowOperator.benchmark                            2                   100                 100  avgt   30   399.848 ±  2.589  ms/op
+    BenchmarkWindowOperator.benchmark                            3                    10                  10  avgt   30  1644.488 ± 12.779  ms/op
+    BenchmarkWindowOperator.benchmark                            3                    10                  20  avgt   30   926.691 ±  6.709  ms/op
+    BenchmarkWindowOperator.benchmark                            3                    10                 100  avgt   30   343.890 ±  1.405  ms/op
+    BenchmarkWindowOperator.benchmark                            3                    50                  10  avgt   30  1650.040 ± 13.265  ms/op
+    BenchmarkWindowOperator.benchmark                            3                    50                  20  avgt   30   938.816 ±  8.706  ms/op
+    BenchmarkWindowOperator.benchmark                            3                    50                 100  avgt   30   342.894 ±  1.600  ms/op
+    BenchmarkWindowOperator.benchmark                            3                   100                  10  avgt   30  1656.581 ± 14.444  ms/op
+    BenchmarkWindowOperator.benchmark                            3                   100                  20  avgt   30   925.327 ±  5.614  ms/op
+    BenchmarkWindowOperator.benchmark                            3                   100                 100  avgt   30   344.084 ±  2.885  ms/op
+    
+    === optimized version:
+    Benchmark                          (numberOfPregroupedColumns)  (partitionsPerGroup)  (rowsPerPartition)  Mode  Cnt     Score    Error  Units
+    BenchmarkWindowOperator.benchmark                            0                    10                  10  avgt   30   645.297 ±  8.617  ms/op
+    BenchmarkWindowOperator.benchmark                            0                    10                  20  avgt   30   648.716 ±  3.302  ms/op
+    BenchmarkWindowOperator.benchmark                            0                    10                 100  avgt   30   688.400 ±  3.369  ms/op
+    BenchmarkWindowOperator.benchmark                            0                    50                  10  avgt   30   663.195 ±  4.747  ms/op
+    BenchmarkWindowOperator.benchmark                            0                    50                  20  avgt   30   684.179 ±  4.845  ms/op
+    BenchmarkWindowOperator.benchmark                            0                    50                 100  avgt   30   721.614 ±  4.947  ms/op
+    BenchmarkWindowOperator.benchmark                            0                   100                  10  avgt   30   674.597 ±  3.185  ms/op
+    BenchmarkWindowOperator.benchmark                            0                   100                  20  avgt   30   687.674 ±  3.652  ms/op
+    BenchmarkWindowOperator.benchmark                            0                   100                 100  avgt   30   731.528 ±  5.161  ms/op
+    BenchmarkWindowOperator.benchmark                            1                    10                  10  avgt   30  1741.319 ± 19.024  ms/op
+    BenchmarkWindowOperator.benchmark                            1                    10                  20  avgt   30  1038.099 ± 10.631  ms/op
+    BenchmarkWindowOperator.benchmark                            1                    10                 100  avgt   30   473.309 ±  1.929  ms/op
+    BenchmarkWindowOperator.benchmark                            1                    50                  10  avgt   30  1770.178 ± 17.064  ms/op
+    BenchmarkWindowOperator.benchmark                            1                    50                  20  avgt   30  1042.908 ± 13.984  ms/op
+    BenchmarkWindowOperator.benchmark                            1                    50                 100  avgt   30   474.386 ±  2.288  ms/op
+    BenchmarkWindowOperator.benchmark                            1                   100                  10  avgt   30  1739.539 ± 11.079  ms/op
+    BenchmarkWindowOperator.benchmark                            1                   100                  20  avgt   30  1030.195 ±  8.632  ms/op
+    BenchmarkWindowOperator.benchmark                            1                   100                 100  avgt   30   475.686 ±  2.196  ms/op
+    BenchmarkWindowOperator.benchmark                            2                    10                  10  avgt   30  1722.640 ± 13.876  ms/op
+    BenchmarkWindowOperator.benchmark                            2                    10                  20  avgt   30   991.375 ± 11.181  ms/op
+    BenchmarkWindowOperator.benchmark                            2                    10                 100  avgt   30   400.614 ±  1.706  ms/op
+    BenchmarkWindowOperator.benchmark                            2                    50                  10  avgt   30  1717.584 ± 17.311  ms/op
+    BenchmarkWindowOperator.benchmark                            2                    50                  20  avgt   30   991.110 ±  9.748  ms/op
+    BenchmarkWindowOperator.benchmark                            2                    50                 100  avgt   30   412.863 ±  7.089  ms/op
+    BenchmarkWindowOperator.benchmark                            2                   100                  10  avgt   30  1719.436 ± 16.452  ms/op
+    BenchmarkWindowOperator.benchmark                            2                   100                  20  avgt   30   993.676 ± 10.118  ms/op
+    BenchmarkWindowOperator.benchmark                            2                   100                 100  avgt   30   397.772 ±  1.702  ms/op
+    BenchmarkWindowOperator.benchmark                            3                    10                  10  avgt   30  1642.302 ± 17.166  ms/op
+    BenchmarkWindowOperator.benchmark                            3                    10                  20  avgt   30   932.037 ±  8.653  ms/op
+    BenchmarkWindowOperator.benchmark                            3                    10                 100  avgt   30   344.209 ±  1.993  ms/op
+    BenchmarkWindowOperator.benchmark                            3                    50                  10  avgt   30  1648.120 ± 15.865  ms/op
+    BenchmarkWindowOperator.benchmark                            3                    50                  20  avgt   30   934.902 ±  7.550  ms/op
+    BenchmarkWindowOperator.benchmark                            3                    50                 100  avgt   30   343.727 ±  1.455  ms/op
+    BenchmarkWindowOperator.benchmark                            3                   100                  10  avgt   30  1631.518 ± 14.879  ms/op
+    BenchmarkWindowOperator.benchmark                            3                   100                  20  avgt   30   927.362 ±  7.432  ms/op
+    BenchmarkWindowOperator.benchmark                            3                   100                 100  avgt   30   342.234 ±  1.881  ms/op
+
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
+index 6813ba04fa..688e919de1 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
+@@ -924,17 +924,19 @@ public class WindowOperator
+         checkArgument(startPosition < endPosition, "startPosition (%s) must be less than endPosition (%s)", startPosition, endPosition);
+ 
+         int left = startPosition;
+-        int right = endPosition;
+-
+-        while (left + 1 < right) {
+-            int middle = (left + right) >>> 1;
+-
+-            if (comparator.test(startPosition, middle)) {
+-                left = middle;
+-            }
+-            else {
+-                right = middle;
++        int right = left + 1;
++
++        while (right < endPosition) {
++            int distance = 1;
++            for (; distance < endPosition - left; distance *= 2) {
++                right = left + distance;
++                if (!comparator.test(startPosition, right)) {
++                    endPosition = right;
++                    break;
++                }
+             }
++            left = left + distance / 2;
++            right = left + 1;
+         }
+ 
+         return right;

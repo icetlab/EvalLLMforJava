@@ -1,0 +1,34 @@
+commit 3a4f2e3e53e741b82297c8f2416c78047f2aa308
+Author: Eugene Kalenkovich <kalenkov@fb.com>
+Date:   Thu Jan 2 10:30:29 2020 -0800
+
+    Optimize boolean reader when reading contiguous rows with no nulls and no filter
+    
+    JMH benchmark results show 2x improvement when there is no nulls and no filters.
+    
+        Before:
+        Benchmark                             (typeSignature)  (withNulls)  Mode  Cnt  Score   Error  Units
+        BenchmarkSelectiveStreamReaders.read          boolean        false  avgt   20  0.042 ± 0.001   s/op
+    
+        After:
+        Benchmark                             (typeSignature)  (withNulls)  Mode  Cnt  Score   Error  Units
+        BenchmarkSelectiveStreamReaders.read          boolean        false  avgt   20  0.022 ± 0.001   s/op
+
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
+index aab2765889..38c735dc8e 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
+@@ -272,6 +272,13 @@ public class BooleanSelectiveStreamReader
+             throws IOException
+     {
+         // filter == null implies outputRequired == true
++        if (presentStream == null && positions[positionCount - 1] == positionCount - 1) {
++            // contiguous chunk of rows, no nulls
++            dataStream.getSetBits(positionCount, values);
++            outputPositionCount = positionCount;
++            return positionCount;
++        }
++
+         int streamPosition = 0;
+         for (int i = 0; i < positionCount; i++) {
+             int position = positions[i];

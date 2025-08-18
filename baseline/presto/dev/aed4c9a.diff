@@ -1,0 +1,204 @@
+commit aed4c9a857a959c18b36b97f6cf2ab1a972d7f12
+Author: Andrii Rosa <andriirosa@fb.com>
+Date:   Wed Mar 21 17:51:15 2018 -0400
+
+    Improve envelope deserialization
+    
+    Support recursive complex geometries.
+    
+    Benchmarks
+    
+    >>> ORIGINAL
+    
+    ```
+    BenchmarkGeometrySerde.deserializeComplexGeometryCollectionEnvelope  thrpt   10   2327091.342 ±   81915.016  ops/s
+    BenchmarkGeometrySerde.deserializeComplexLineStringEnvelope          thrpt   10  13244856.589 ±  350726.692  ops/s
+    BenchmarkGeometrySerde.deserializeComplexMultiLineStringEnvelope     thrpt   10  13391909.091 ±  456269.290  ops/s
+    BenchmarkGeometrySerde.deserializeComplexMultiPolygonEnvelope        thrpt   10  13023131.622 ± 1292713.445  ops/s
+    BenchmarkGeometrySerde.deserializeComplexMultipointEnvelope          thrpt   10  13560684.255 ± 1005223.242  ops/s
+    BenchmarkGeometrySerde.deserializeComplexPolygonEnvelope             thrpt   10  13325190.946 ±  661770.603  ops/s
+    BenchmarkGeometrySerde.deserializePointEnvelope                      thrpt   10  15586694.080 ±  828802.352  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleGeometryCollectionEnvelope   thrpt   10   1818771.197 ±   28945.897  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleLineStringEnvelope           thrpt   10  13599343.680 ±  201780.534  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleMultiLineStringEnvelope      thrpt   10  13480469.315 ±  527138.048  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleMultiPolygonEnvelope         thrpt   10  13131151.410 ±  905083.633  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleMultipointEnvelope           thrpt   10  13279433.921 ±  223943.216  ops/s
+    BenchmarkGeometrySerde.deserializeSimplePolygonEnvelope              thrpt   10  12775275.650 ± 1404278.531  ops/s
+    ```
+    
+    >>> REFACTOR
+    
+    ```
+    BenchmarkGeometrySerde.deserializeComplexGeometryCollectionEnvelope  thrpt   10   2685464.892 ±  76119.030  ops/s
+    BenchmarkGeometrySerde.deserializeComplexLineStringEnvelope          thrpt   10  18061928.413 ± 547568.891  ops/s
+    BenchmarkGeometrySerde.deserializeComplexMultiLineStringEnvelope     thrpt   10  18461212.253 ± 820231.518  ops/s
+    BenchmarkGeometrySerde.deserializeComplexMultiPolygonEnvelope        thrpt   10  17939783.282 ± 420536.849  ops/s
+    BenchmarkGeometrySerde.deserializeComplexMultipointEnvelope          thrpt   10  17847105.284 ± 533751.006  ops/s
+    BenchmarkGeometrySerde.deserializeComplexPolygonEnvelope             thrpt   10  18225225.524 ± 378894.266  ops/s
+    BenchmarkGeometrySerde.deserializePointEnvelope                      thrpt   10  20773283.214 ± 714780.908  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleGeometryCollectionEnvelope   thrpt   10   2188832.187 ±  90806.770  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleLineStringEnvelope           thrpt   10  18066227.878 ± 574097.715  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleMultiLineStringEnvelope      thrpt   10  18207424.009 ± 514167.996  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleMultiPolygonEnvelope         thrpt   10  18299827.453 ± 627439.598  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleMultipointEnvelope           thrpt   10  17749150.712 ± 259116.216  ops/s
+    BenchmarkGeometrySerde.deserializeSimplePolygonEnvelope              thrpt   10  18052557.619 ± 547410.500  ops/s
+    ```
+    
+    10% - 50% performance gain due to usage of `skip` method instead of copying extra bytes to a temporary buffer
+
+diff --git a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+index b4ee62feed..350f609b45 100644
+--- a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
++++ b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+@@ -41,15 +41,13 @@ import java.util.List;
+ 
+ import static com.esri.core.geometry.Geometry.Type.Unknown;
+ import static com.esri.core.geometry.GeometryEngine.geometryToEsriShape;
++import static com.facebook.presto.geospatial.GeometryUtils.isEsriNaN;
+ import static com.google.common.base.Verify.verify;
+ import static java.lang.Math.toIntExact;
+-import static java.nio.ByteOrder.LITTLE_ENDIAN;
+ import static java.util.Objects.requireNonNull;
+ 
+ public class GeometrySerde
+ {
+-    private static final int POINT_TYPE = 1;
+-
+     private GeometrySerde() {}
+ 
+     public static Slice serialize(OGCGeometry input)
+@@ -195,51 +193,94 @@ public class GeometrySerde
+     @Nullable
+     public static Envelope deserializeEnvelope(Slice shape)
+     {
+-        if (shape == null) {
++        requireNonNull(shape, "shape is null");
++        BasicSliceInput input = shape.getInput();
++
++        if (input.available() == 0) {
+             return null;
+         }
+-        BasicSliceInput input = shape.getInput();
+ 
+-        Envelope overallEnvelope = null;
+-        if (input.available() > 0) {
+-            byte code = input.readByte();
+-            boolean isGeometryCollection = (code == GeometryType.GEOMETRY_COLLECTION.code());
+-            while (input.available() > 0) {
+-                int length = isGeometryCollection ? input.readInt() : input.available();
+-                ByteBuffer buffer = input.readSlice(length).toByteBuffer().order(LITTLE_ENDIAN);
+-                int type = buffer.getInt();
+-                Envelope envelope = null;
+-                if (type == POINT_TYPE) {    // point
+-                    double x = buffer.getDouble();
+-                    double y = buffer.getDouble();
+-                    if (!GeometryUtils.isEsriNaN(x)) {
+-                        verify(!GeometryUtils.isEsriNaN(y));
+-                        envelope = new Envelope(x, y, x, y);
+-                    }
+-                }
+-                else {
+-                    double xMin = buffer.getDouble();
+-                    double yMin = buffer.getDouble();
+-                    double xMax = buffer.getDouble();
+-                    double yMax = buffer.getDouble();
+-                    if (!GeometryUtils.isEsriNaN(xMin)) {
+-                        verify(!GeometryUtils.isEsriNaN(xMax));
+-                        verify(!GeometryUtils.isEsriNaN(yMin));
+-                        verify(!GeometryUtils.isEsriNaN(yMax));
+-                        envelope = new Envelope(xMin, yMin, xMax, yMax);
+-                    }
+-                }
+-                if (envelope != null) {
+-                    if (overallEnvelope == null) {
+-                        overallEnvelope = envelope;
+-                    }
+-                    else {
+-                        overallEnvelope.merge(envelope);
+-                    }
+-                }
+-            }
++        int length = input.available() - 1;
++        GeometryType type = GeometryType.getForCode(input.readByte());
++        return getEnvelope(input, type, length);
++    }
++
++    private static Envelope getEnvelope(BasicSliceInput input, GeometryType type, int length)
++    {
++        switch (type) {
++            case POINT:
++                return getPointEnvelope(input);
++            case MULTI_POINT:
++            case LINE_STRING:
++            case MULTI_LINE_STRING:
++            case POLYGON:
++            case MULTI_POLYGON:
++                return getSimpleGeometryEnvelope(input, length);
++            case GEOMETRY_COLLECTION:
++                return getGeometryCollectionOverallEnvelope(input);
++            default:
++                throw new IllegalArgumentException("Unexpected type: " + type);
+         }
++    }
+ 
++    private static Envelope getGeometryCollectionOverallEnvelope(BasicSliceInput input)
++    {
++        Envelope overallEnvelope = null;
++        while (input.available() > 0) {
++            int length = input.readInt() - 1;
++            GeometryType type = GeometryType.getForCode(input.readByte());
++            Envelope envelope = getEnvelope(input, type, length);
++            overallEnvelope = merge(overallEnvelope, envelope);
++        }
+         return overallEnvelope;
+     }
++
++    private static Envelope getSimpleGeometryEnvelope(BasicSliceInput input, int length)
++    {
++        // skip type injected by esri
++        input.readInt();
++
++        double xMin = input.readDouble();
++        double yMin = input.readDouble();
++        double xMax = input.readDouble();
++        double yMax = input.readDouble();
++
++        int skipLength = length - (4 * Double.BYTES) - Integer.BYTES;
++        verify(input.skip(skipLength) == skipLength);
++
++        if (isEsriNaN(xMin) || isEsriNaN(yMin) || isEsriNaN(xMax) || isEsriNaN(yMax)) {
++            // TODO: isn't it better to return empty envelope instead?
++            return null;
++        }
++        return new Envelope(xMin, yMin, xMax, yMax);
++    }
++
++    private static Envelope getPointEnvelope(BasicSliceInput input)
++    {
++        // skip type injected by esri
++        input.readInt();
++
++        double x = input.readDouble();
++        double y = input.readDouble();
++        if (isEsriNaN(x) || isEsriNaN(y)) {
++            // TODO: isn't it better to return empty envelope instead?
++            return null;
++        }
++        return new Envelope(x, y, x, y);
++    }
++
++    @Nullable
++    private static Envelope merge(@Nullable Envelope left, @Nullable Envelope right)
++    {
++        if (left == null) {
++            return right;
++        }
++        else if (right == null) {
++            return left;
++        }
++        else {
++            right.merge(left);
++        }
++        return right;
++    }
+ }

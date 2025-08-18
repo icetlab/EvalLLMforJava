@@ -1,0 +1,33 @@
+commit 297b089ea5fd786114d3944554d507470af25e76
+Author: Ying Su <yingsu@fb.com>
+Date:   Mon Nov 9 18:43:43 2020 -0800
+
+    Improve reading the lengthVector in SliceDirectSelectiveStreamReader
+    
+    This commit uses a more CPU friendly API next() to read all lengths.
+    
+    JMH benchmark when reading unbounded varchar for all rows:
+    
+    Baseline
+    Benchmark                                      (withNulls)  Mode  Cnt  Score   Error  Units
+    BenchmarkSelectiveStreamReaders.readAllBlocks      PARTIAL  avgt    5  0.109 ± 0.018   s/op
+    BenchmarkSelectiveStreamReaders.readAllBlocks         NONE  avgt    5  0.102 ± 0.008   s/op
+    
+    After
+    Benchmark                                      (withNulls)  Mode  Cnt  Score   Error  Units
+    BenchmarkSelectiveStreamReaders.readAllBlocks      PARTIAL  avgt    5  0.107 ± 0.015   s/op
+    BenchmarkSelectiveStreamReaders.readAllBlocks         NONE  avgt    5  0.084 ± 0.005   s/op
+
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java
+index 79b56c6971..d77c0c0577 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java
+@@ -646,7 +646,7 @@ public class SliceDirectSelectiveStreamReader
+         if (lengthStream != null) {
+             int nonNullCount = totalPositions - nullCount;
+             lengthVector = ensureCapacity(lengthVector, nonNullCount);
+-            lengthStream.nextIntVector(nonNullCount, lengthVector, 0);
++            lengthStream.next(lengthVector, nonNullCount);
+ 
+             if (useBatchMode(positionCount, totalPositions)) {
+                 for (int i = 0; i < nonNullCount; i++) {

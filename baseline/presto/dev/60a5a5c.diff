@@ -1,0 +1,121 @@
+commit 60a5a5c379e3570366b99d6b034404877497474c
+Author: Ying Su <yingsu@fb.com>
+Date:   Wed Aug 14 23:16:44 2019 -0700
+
+    Reuse compressionBuffer when serializing pages
+    
+    BenchmarkPartitionedOutputOperator shows 8% gain in elapsed time:
+    
+    Always allocate compressionBuffer (existing behavior):
+    Benchmark                                   Mode  Cnt     Score     Error  Units
+    BenchmarkPartitionedOutputOperator.addPage  avgt   20  4749.447 ± 380.463  ms/op
+    
+    Reuse compressionBuffer (current commit):
+    Benchmark                                   Mode  Cnt     Score     Error  Units
+    BenchmarkPartitionedOutputOperator.addPage  avgt   30  4380.171 ± 148.011  ms/op
+    
+    BenchmarkCompressToByteBuffer shows using ByteBuffer and byte[] as compression
+    buffer has similar performance. We used byte[] because the code is
+    cleaner.
+    
+    Benchmark                                          Mode  Cnt    Score   Error  Units
+    BenchmarkCompressToByteBuffer.compressToByteArray  avgt   60  181.677 ± 9.927  us/op
+    BenchmarkCompressToByteBuffer.compressToByteBuffer  avgt   60  189.371 ± 3.747  us/op
+
+diff --git a/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java b/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java
+index 74b77228f0..467d1cd4f2 100644
+--- a/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java
++++ b/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java
+@@ -28,14 +28,17 @@ import javax.annotation.concurrent.NotThreadSafe;
+ import java.nio.ByteBuffer;
+ import java.util.Optional;
+ 
++import static com.facebook.presto.array.Arrays.ensureCapacity;
+ import static com.facebook.presto.execution.buffer.PageCodecMarker.COMPRESSED;
+ import static com.facebook.presto.execution.buffer.PageCodecMarker.ENCRYPTED;
+ import static com.facebook.presto.execution.buffer.PagesSerdeUtil.readRawPage;
+ import static com.facebook.presto.execution.buffer.PagesSerdeUtil.writeRawPage;
+ import static com.google.common.base.Preconditions.checkArgument;
+ import static com.google.common.base.Preconditions.checkState;
++import static io.airlift.slice.SizeOf.sizeOf;
+ import static java.lang.Math.toIntExact;
+ import static java.util.Objects.requireNonNull;
++import static sun.misc.Unsafe.ARRAY_BYTE_BASE_OFFSET;
+ 
+ @NotThreadSafe
+ public class PagesSerde
+@@ -47,6 +50,8 @@ public class PagesSerde
+     private final Optional<Decompressor> decompressor;
+     private final Optional<SpillCipher> spillCipher;
+ 
++    private byte[] compressionBuffer;
++
+     public PagesSerde(BlockEncodingSerde blockEncodingSerde, Optional<Compressor> compressor, Optional<Decompressor> decompressor, Optional<SpillCipher> spillCipher)
+     {
+         this.blockEncodingSerde = requireNonNull(blockEncodingSerde, "blockEncodingSerde is null");
+@@ -62,15 +67,23 @@ public class PagesSerde
+         SliceOutput serializationBuffer = new DynamicSliceOutput(toIntExact(page.getSizeInBytes() + Integer.BYTES)); // block length is an int
+         writeRawPage(page, serializationBuffer, blockEncodingSerde);
+         Slice slice = serializationBuffer.slice();
++
+         int uncompressedSize = serializationBuffer.size();
+         byte markers = PageCodecMarker.none();
+ 
+         if (compressor.isPresent()) {
+-            ByteBuffer compressionBuffer = ByteBuffer.allocate(compressor.get().maxCompressedLength(uncompressedSize));
+-            compressor.get().compress(slice.toByteBuffer(), compressionBuffer);
+-            compressionBuffer.flip();
+-            if ((((double) compressionBuffer.remaining()) / uncompressedSize) <= MINIMUM_COMPRESSION_RATIO) {
+-                slice = Slices.wrappedBuffer(compressionBuffer);
++            int maxCompressedSize = compressor.get().maxCompressedLength(uncompressedSize);
++            compressionBuffer = ensureCapacity(compressionBuffer, maxCompressedSize);
++            int compressedSize = compressor.get().compress(
++                    (byte[]) slice.getBase(),
++                    (int) (slice.getAddress() - ARRAY_BYTE_BASE_OFFSET),
++                    uncompressedSize,
++                    compressionBuffer,
++                    0,
++                    maxCompressedSize);
++
++            if (compressedSize / (double) uncompressedSize <= MINIMUM_COMPRESSION_RATIO) {
++                slice = Slices.copyOf(Slices.wrappedBuffer(compressionBuffer, 0, compressedSize));
+                 markers = COMPRESSED.set(markers);
+             }
+         }
+@@ -114,4 +127,14 @@ public class PagesSerde
+ 
+         return readRawPage(serializedPage.getPositionCount(), slice.getInput(), blockEncodingSerde);
+     }
++
++    public long getSizeInBytes()
++    {
++        return compressionBuffer == null ? 0 : compressionBuffer.length;
++    }
++
++    public long getRetainedSizeInBytes()
++    {
++        return sizeOf(compressionBuffer);
++    }
+ }
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java
+index d3b9621b8e..b34c4045ef 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java
+@@ -350,7 +350,7 @@ public class PartitionedOutputOperator
+         {
+             // We use a foreach loop instead of streams
+             // as it has much better performance.
+-            long sizeInBytes = 0;
++            long sizeInBytes = serde.getSizeInBytes();
+             for (PageBuilder pageBuilder : pageBuilders) {
+                 sizeInBytes += pageBuilder.getSizeInBytes();
+             }
+@@ -362,7 +362,7 @@ public class PartitionedOutputOperator
+          */
+         public long getRetainedSizeInBytes()
+         {
+-            long sizeInBytes = 0;
++            long sizeInBytes = serde.getRetainedSizeInBytes();
+             for (PageBuilder pageBuilder : pageBuilders) {
+                 sizeInBytes += pageBuilder.getRetainedSizeInBytes();
+             }

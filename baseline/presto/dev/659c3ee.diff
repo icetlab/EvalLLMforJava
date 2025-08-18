@@ -1,0 +1,72 @@
+commit 659c3ee91bbddfb0f61cce4c7bc544c4010f3633
+Author: Ying Su <yingsu@fb.com>
+Date:   Thu Jan 2 22:23:34 2020 -0800
+
+    Optimize ByteSelectiveStreamReader for no filter with nulls
+    
+    Benchmark shows 25% improvements:
+    
+    Before:
+    Benchmark                             Mode  Cnt  Score   Error  Units
+    BenchmarkSelectiveStreamReaders.read  avgt   20  0.055 ± 0.002   s/op
+    
+    After:
+    Benchmark                             Mode  Cnt  Score   Error  Units
+    BenchmarkSelectiveStreamReaders.read  avgt   20  0.041 ± 0.002   s/op
+
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+index 93aeb97e76..6501b8e17d 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+@@ -37,6 +37,7 @@ import java.util.Optional;
+ import static com.facebook.presto.array.Arrays.ensureCapacity;
+ import static com.facebook.presto.orc.metadata.Stream.StreamKind.DATA;
+ import static com.facebook.presto.orc.metadata.Stream.StreamKind.PRESENT;
++import static com.facebook.presto.orc.reader.ReaderUtils.unpackByteNulls;
+ import static com.facebook.presto.orc.reader.SelectiveStreamReaders.initializeOutputPositions;
+ import static com.facebook.presto.orc.stream.MissingInputStreamSource.missingStreamSource;
+ import static com.facebook.presto.spi.type.TinyintType.TINYINT;
+@@ -257,9 +258,16 @@ public class ByteSelectiveStreamReader
+             throws IOException
+     {
+         // filter == null implies outputRequired == true
+-        if (presentStream == null && positions[positionCount - 1] == positionCount - 1) {
+-            // contiguous chunk of rows, no nulls
+-            dataStream.next(values, positionCount);
++        if (positions[positionCount - 1] == positionCount - 1) {
++            if (presentStream != null) {
++                int nonNullCount = positionCount - presentStream.getUnsetBits(positionCount, nulls);
++                dataStream.next(values, nonNullCount);
++                unpackByteNulls(values, nulls, positionCount, nonNullCount);
++            }
++            else {
++                // contiguous chunk of rows, no nulls
++                dataStream.next(values, positionCount);
++            }
+             outputPositionCount = positionCount;
+             return positionCount;
+         }
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java
+index 720023399d..4b5404a064 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java
+@@ -59,6 +59,19 @@ final class ReaderUtils
+         return result;
+     }
+ 
++    public static void unpackByteNulls(byte[] values, boolean[] isNull, int positionCount, int nonNullCount)
++    {
++        int position = nonNullCount - 1;
++        for (int i = positionCount - 1; i >= 0; i--) {
++            if (!isNull[i]) {
++                values[i] = values[position--];
++            }
++            else {
++                values[i] = 0;
++            }
++        }
++    }
++
+     public static short[] unpackShortNulls(short[] values, boolean[] isNull)
+     {
+         short[] result = new short[isNull.length];

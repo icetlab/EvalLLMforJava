@@ -1,0 +1,52 @@
+commit 8abba9e905c0a8b7225caea6746596507fb1fed6
+Author: James A. Gill <jagill@fb.com>
+Date:   Thu Oct 31 11:32:57 2019 -0400
+
+    Use JTS for ST_Buffer
+    
+    JTS is generally more efficient (see benchmarks below).  Also, ESRI
+    returns an empty geometry when you buffer by small distances (< 1e-9);
+    JTS handles these correctly.
+    
+    JTS
+    Benchmark                                        Mode  Cnt        Score       Error  Units
+    BenchmarkSTBuffer.stBufferPoint                  avgt   20       14.221       2.408  us/op
+    BenchmarkSTBuffer.stBufferMultiPointSparse       avgt   20      810.414      43.980  us/op
+    BenchmarkSTBuffer.stBufferMultiPointDense        avgt   20    18539.600     998.499  us/op
+    BenchmarkSTBuffer.stBufferMultiPointReallyDense  avgt   20  1650058.575   71342.838  us/op
+    BenchmarkSTBuffer.stBufferLineStringCircle       avgt   20      562.464      26.039  us/op
+    BenchmarkSTBuffer.stBufferLineStringDense        avgt   20   316479.586   29001.318  us/op
+    BenchmarkSTBuffer.stBufferPolygonSimple          avgt   20       11.892       0.711  us/op
+    BenchmarkSTBuffer.stBufferPolygonNormal          avgt   20    46390.604    2958.109  us/op
+    BenchmarkSTBuffer.stBufferPolygonDense           avgt   20    72822.143    6841.961  us/op
+    
+    Esri
+    Benchmark                                        Mode  Cnt        Score        Error  Units
+    BenchmarkSTBuffer.stBufferPoint                  avgt   20        8.290        0.541  us/op
+    BenchmarkSTBuffer.stBufferMultiPointSparse       avgt   20    16521.536      818.169  us/op
+    BenchmarkSTBuffer.stBufferMultiPointDense        avgt   20   450394.639    94490.620  us/op
+    BenchmarkSTBuffer.stBufferMultiPointReallyDense  avgt   20  3856960.148   300968.259  us/op
+    BenchmarkSTBuffer.stBufferLineStringCircle       avgt   20    13470.522     1308.101  us/op
+    BenchmarkSTBuffer.stBufferLineStringDense        avgt   20   440081.641    37944.614  us/op
+    BenchmarkSTBuffer.stBufferPolygonSimple          avgt   20       21.796        0.871  us/op
+    BenchmarkSTBuffer.stBufferPolygonNormal          avgt   20    16648.597     1348.367  us/op
+    BenchmarkSTBuffer.stBufferPolygonDense           avgt   20  1159728.778    27607.808  us/op
+
+diff --git a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+index 0ee404f93c..3c559b21eb 100644
+--- a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
++++ b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+@@ -345,11 +345,11 @@ public final class GeoFunctions
+             return input;
+         }
+ 
+-        OGCGeometry geometry = EsriGeometrySerde.deserialize(input);
++        Geometry geometry = deserialize(input);
+         if (geometry.isEmpty()) {
+             return null;
+         }
+-        return EsriGeometrySerde.serialize(geometry.buffer(distance));
++        return serialize(geometry.buffer(distance));
+     }
+ 
+     @Description("Returns the Point value that is the mathematical centroid of a Geometry")

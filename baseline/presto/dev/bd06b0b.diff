@@ -1,0 +1,67 @@
+commit bd06b0b05fdef05349d605ae18bb3e5529f595a7
+Author: Nezih Yigitbasi <nezihy@fb.com>
+Date:   Fri Feb 2 11:05:25 2018 -0800
+
+    Replace stream with a foreach when calculating retained size
+    
+    Benchmark shows that streams perform significantly worse than foreach
+    loops.
+    
+    Benchmark    (pageCount)  (partitionCount)  Mode  Cnt    Score   Error  Units
+    withForeach        10000                 4  avgt   30    6.282 ± 0.159  ns/op
+    withForeach        10000                 8  avgt   30    6.127 ± 0.118  ns/op
+    withForeach        10000                16  avgt   30    6.073 ± 0.128  ns/op
+    withForeach        10000                32  avgt   30    6.441 ± 0.663  ns/op
+    withStream         10000                 4  avgt   30  154.350 ± 4.254  ns/op
+    withStream         10000                 8  avgt   30  153.498 ± 4.690  ns/op
+    withStream         10000                16  avgt   30  151.721 ± 5.144  ns/op
+    withStream         10000                32  avgt   30  149.756 ± 3.190  ns/op
+
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java
+index e97219ca85..0d3e148472 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java
+@@ -351,9 +351,13 @@ public class PartitionedOutputOperator
+         // Does not include size of SharedBuffer
+         public long getRetainedSizeInBytes()
+         {
+-            return pageBuilders.stream()
+-                    .mapToLong(PageBuilder::getRetainedSizeInBytes)
+-                    .sum();
++            // We use a foreach loop instead of streams
++            // as it has much better performance.
++            long retainedSizeInBytes = 0;
++            for (PageBuilder pageBuilder : pageBuilders) {
++                retainedSizeInBytes += pageBuilder.getRetainedSizeInBytes();
++            }
++            return retainedSizeInBytes;
+         }
+ 
+         public PartitionedOutputInfo getInfo()
+diff --git a/presto-spi/src/main/java/com/facebook/presto/spi/PageBuilder.java b/presto-spi/src/main/java/com/facebook/presto/spi/PageBuilder.java
+index bdea771651..0145d9e7da 100644
+--- a/presto-spi/src/main/java/com/facebook/presto/spi/PageBuilder.java
++++ b/presto-spi/src/main/java/com/facebook/presto/spi/PageBuilder.java
+@@ -22,7 +22,6 @@ import com.facebook.presto.spi.type.Type;
+ import java.util.ArrayList;
+ import java.util.List;
+ import java.util.Optional;
+-import java.util.stream.Stream;
+ 
+ import static com.facebook.presto.spi.block.BlockBuilderStatus.DEFAULT_MAX_BLOCK_SIZE_IN_BYTES;
+ import static com.facebook.presto.spi.block.PageBuilderStatus.DEFAULT_MAX_PAGE_SIZE_IN_BYTES;
+@@ -155,7 +154,13 @@ public class PageBuilder
+ 
+     public long getRetainedSizeInBytes()
+     {
+-        return Stream.of(blockBuilders).mapToLong(BlockBuilder::getRetainedSizeInBytes).sum();
++        // We use a foreach loop instead of streams
++        // as it has much better performance.
++        long retainedSizeInBytes = 0;
++        for (BlockBuilder blockBuilder : blockBuilders) {
++            retainedSizeInBytes += blockBuilder.getRetainedSizeInBytes();
++        }
++        return retainedSizeInBytes;
+     }
+ 
+     public Page build()

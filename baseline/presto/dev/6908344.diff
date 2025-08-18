@@ -1,0 +1,252 @@
+commit 690834490eafd639d9de935b6e3ee4a3d4595c69
+Author: Andrii Rosa <andriirosa@fb.com>
+Date:   Wed Mar 21 17:56:38 2018 -0400
+
+    Implement custom serialization for Point geometry
+    
+    Avoid serializing ESRI Point type that is needed to figure out the type of
+    a point (2D, 3D, with ID, etc.)  during deserialization.
+    
+    It improves seriazation / deserialization throughput of Point by as much as
+    ~100% and saves additional 4 bytes per point.
+    
+    BENCHMARKS
+    
+    BEFORE
+    
+    ```
+    BenchmarkGeometrySerde.deserializeComplexGeometryCollection          thrpt   10      2172.882 ±      52.510  ops/s
+    BenchmarkGeometrySerde.deserializeComplexLineString                  thrpt   10     10946.128 ±     395.754  ops/s
+    BenchmarkGeometrySerde.deserializeComplexMultiLineString             thrpt   10     14190.268 ±     327.621  ops/s
+    BenchmarkGeometrySerde.deserializeComplexMultiPolygon                thrpt   10     14098.757 ±     165.729  ops/s
+    BenchmarkGeometrySerde.deserializeComplexMultipoint                  thrpt   10     15161.957 ±     314.833  ops/s
+    BenchmarkGeometrySerde.deserializeComplexPolygon                     thrpt   10      5864.741 ±     140.505  ops/s
+    BenchmarkGeometrySerde.deserializePoint                              thrpt   10   9764694.869 ±  254617.798  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleGeometryCollection           thrpt   10    368499.025 ±   22511.188  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleLineString                   thrpt   10   1935884.854 ±  108421.458  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleMultiLineString              thrpt   10   1933285.766 ±   56556.726  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleMultiPolygon                 thrpt   10   2009050.891 ±   56072.982  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleMultipoint                   thrpt   10   3934265.190 ±  152752.942  ops/s
+    BenchmarkGeometrySerde.deserializeSimplePolygon                      thrpt   10   1729798.147 ±   67932.326  ops/s
+    BenchmarkGeometrySerde.serializeComplexGeometryCollection            thrpt   10      2291.324 ±      89.471  ops/s
+    BenchmarkGeometrySerde.serializeComplexLineString                    thrpt   10     12893.858 ±     275.689  ops/s
+    BenchmarkGeometrySerde.serializeComplexMultiLineString               thrpt   10     13561.591 ±     333.744  ops/s
+    BenchmarkGeometrySerde.serializeComplexMultiPolygon                  thrpt   10     13182.367 ±     429.740  ops/s
+    BenchmarkGeometrySerde.serializeComplexMultipoint                    thrpt   10     13410.220 ±     577.669  ops/s
+    BenchmarkGeometrySerde.serializeComplexPolygon                       thrpt   10     13354.510 ±     281.080  ops/s
+    BenchmarkGeometrySerde.serializePoint                                thrpt   10  11189873.531 ±  809206.347  ops/s
+    BenchmarkGeometrySerde.serializeSimpleGeometryCollection             thrpt   10    408959.807 ±   23905.994  ops/s
+    BenchmarkGeometrySerde.serializeSimpleLineString                     thrpt   10   3712088.424 ±  184612.003  ops/s
+    BenchmarkGeometrySerde.serializeSimpleMultiLineString                thrpt   10   1967109.508 ±   78110.815  ops/s
+    BenchmarkGeometrySerde.serializeSimpleMultiPolygon                   thrpt   10   1947098.599 ±  102635.116  ops/s
+    BenchmarkGeometrySerde.serializeSimpleMultipoint                     thrpt   10   4537204.295 ±  220150.262  ops/s
+    BenchmarkGeometrySerde.serializeSimplePolygon                        thrpt   10   3840923.438 ±  127846.629  ops/s
+    ```
+    
+    AFTER
+    
+    ```
+    BenchmarkGeometrySerde.deserializeComplexGeometryCollection          thrpt   10      2190.786 ±      60.491  ops/s
+    BenchmarkGeometrySerde.deserializeComplexLineString                  thrpt   10     11016.094 ±     286.098  ops/s
+    BenchmarkGeometrySerde.deserializeComplexMultiLineString             thrpt   10     14280.887 ±     186.826  ops/s
+    BenchmarkGeometrySerde.deserializeComplexMultiPolygon                thrpt   10     14578.544 ±     440.394  ops/s
+    BenchmarkGeometrySerde.deserializeComplexMultipoint                  thrpt   10     15386.215 ±     508.900  ops/s
+    BenchmarkGeometrySerde.deserializeComplexPolygon                     thrpt   10      6061.227 ±     104.819  ops/s
+    BenchmarkGeometrySerde.deserializePoint                              thrpt   10  16916202.165 ±  348358.472  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleGeometryCollection           thrpt   10    376432.627 ±   19691.023  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleLineString                   thrpt   10   1877227.277 ±   31464.777  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleMultiLineString              thrpt   10   1908653.922 ±   66441.821  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleMultiPolygon                 thrpt   10   1939010.790 ±   52236.220  ops/s
+    BenchmarkGeometrySerde.deserializeSimpleMultipoint                   thrpt   10   3984877.091 ±  209591.030  ops/s
+    BenchmarkGeometrySerde.deserializeSimplePolygon                      thrpt   10   1765280.711 ±   76386.276  ops/s
+    BenchmarkGeometrySerde.serializeComplexGeometryCollection            thrpt   10      2307.110 ±      67.721  ops/s
+    BenchmarkGeometrySerde.serializeComplexLineString                    thrpt   10     13011.777 ±     239.007  ops/s
+    BenchmarkGeometrySerde.serializeComplexMultiLineString               thrpt   10     13330.610 ±     436.434  ops/s
+    BenchmarkGeometrySerde.serializeComplexMultiPolygon                  thrpt   10     13013.547 ±     463.828  ops/s
+    BenchmarkGeometrySerde.serializeComplexMultipoint                    thrpt   10     13389.229 ±     445.278  ops/s
+    BenchmarkGeometrySerde.serializeComplexPolygon                       thrpt   10     13282.957 ±     462.811  ops/s
+    BenchmarkGeometrySerde.serializePoint                                thrpt   10  19303941.733 ±  803976.721  ops/s
+    BenchmarkGeometrySerde.serializeSimpleGeometryCollection             thrpt   10    402979.574 ±   19921.142  ops/s
+    BenchmarkGeometrySerde.serializeSimpleLineString                     thrpt   10   3900575.360 ±  172957.593  ops/s
+    BenchmarkGeometrySerde.serializeSimpleMultiLineString                thrpt   10   1976865.125 ±  102337.161  ops/s
+    BenchmarkGeometrySerde.serializeSimpleMultiPolygon                   thrpt   10   1931721.129 ±   57467.318  ops/s
+    BenchmarkGeometrySerde.serializeSimpleMultipoint                     thrpt   10   4449211.026 ±  127019.368  ops/s
+    BenchmarkGeometrySerde.serializeSimplePolygon                        thrpt   10   3702193.337 ±  185521.474  ops/s
+    ```
+
+diff --git a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+index 350f609b45..fdda7a50e1 100644
+--- a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
++++ b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+@@ -20,6 +20,7 @@ import com.esri.core.geometry.OperatorImportFromESRIShape;
+ import com.esri.core.geometry.Point;
+ import com.esri.core.geometry.Polygon;
+ import com.esri.core.geometry.Polyline;
++import com.esri.core.geometry.VertexDescription;
+ import com.esri.core.geometry.ogc.OGCConcreteGeometryCollection;
+ import com.esri.core.geometry.ogc.OGCGeometry;
+ import com.esri.core.geometry.ogc.OGCGeometryCollection;
+@@ -43,6 +44,8 @@ import static com.esri.core.geometry.Geometry.Type.Unknown;
+ import static com.esri.core.geometry.GeometryEngine.geometryToEsriShape;
+ import static com.facebook.presto.geospatial.GeometryUtils.isEsriNaN;
+ import static com.google.common.base.Verify.verify;
++import static java.lang.Double.NaN;
++import static java.lang.Double.isNaN;
+ import static java.lang.Math.toIntExact;
+ import static java.util.Objects.requireNonNull;
+ 
+@@ -63,6 +66,8 @@ public class GeometrySerde
+         GeometryType type = GeometryType.getForEsriGeometryType(geometry.geometryType());
+         switch (type) {
+             case POINT:
++                writePoint(output, geometry);
++                break;
+             case MULTI_POINT:
+             case LINE_STRING:
+             case MULTI_LINE_STRING:
+@@ -106,6 +111,26 @@ public class GeometrySerde
+         output.appendBytes(shape);
+     }
+ 
++    private static void writePoint(DynamicSliceOutput output, OGCGeometry geometry)
++    {
++        Geometry esriGeometry = geometry.getEsriGeometry();
++        verify(esriGeometry instanceof Point, "geometry is expected to be an instance of Point");
++        Point point = (Point) esriGeometry;
++        verify(!point.hasAttribute(VertexDescription.Semantics.Z) &&
++                        !point.hasAttribute(VertexDescription.Semantics.M) &&
++                        !point.hasAttribute(VertexDescription.Semantics.ID),
++                "Only 2D points with no ID nor M attribute are supported");
++        output.appendByte(GeometryType.POINT.code());
++        if (!point.isEmpty()) {
++            output.appendDouble(point.getX());
++            output.appendDouble(point.getY());
++        }
++        else {
++            output.appendDouble(NaN);
++            output.appendDouble(NaN);
++        }
++    }
++
+     public static OGCGeometry deserialize(Slice shape)
+     {
+         requireNonNull(shape, "shape is null");
+@@ -120,6 +145,7 @@ public class GeometrySerde
+     {
+         switch (type) {
+             case POINT:
++                return readPoint(input);
+             case MULTI_POINT:
+             case LINE_STRING:
+             case MULTI_LINE_STRING:
+@@ -190,6 +216,20 @@ public class GeometrySerde
+         }
+     }
+ 
++    private static OGCPoint readPoint(BasicSliceInput input)
++    {
++        double x = input.readDouble();
++        double y = input.readDouble();
++        Point point;
++        if (isNaN(x) || isNaN(y)) {
++            point = new Point();
++        }
++        else {
++            point = new Point(x, y);
++        }
++        return new OGCPoint(point, null);
++    }
++
+     @Nullable
+     public static Envelope deserializeEnvelope(Slice shape)
+     {
+@@ -257,12 +297,9 @@ public class GeometrySerde
+ 
+     private static Envelope getPointEnvelope(BasicSliceInput input)
+     {
+-        // skip type injected by esri
+-        input.readInt();
+-
+         double x = input.readDouble();
+         double y = input.readDouble();
+-        if (isEsriNaN(x) || isEsriNaN(y)) {
++        if (isNaN(x) || isNaN(y)) {
+             // TODO: isn't it better to return empty envelope instead?
+             return null;
+         }
+diff --git a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java
+index 0030a0bf84..94cb66616b 100644
+--- a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java
++++ b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java
+@@ -31,11 +31,12 @@ import org.locationtech.jts.geom.Polygon;
+ import java.util.ArrayList;
+ import java.util.List;
+ 
+-import static com.facebook.presto.geospatial.GeometryUtils.isEsriNaN;
+ import static com.facebook.presto.geospatial.GeometryUtils.translateToAVNaN;
+ import static com.google.common.base.Verify.verify;
+ import static com.google.common.collect.Iterables.getOnlyElement;
+ import static io.airlift.slice.SizeOf.SIZE_OF_DOUBLE;
++import static java.lang.Double.NaN;
++import static java.lang.Double.isNaN;
+ import static java.util.Objects.requireNonNull;
+ 
+ public class JtsGeometrySerde
+@@ -58,7 +59,7 @@ public class JtsGeometrySerde
+     {
+         switch (type) {
+             case POINT:
+-                return readPoint(input, true);
++                return readPoint(input);
+             case MULTI_POINT:
+                 return readMultiPoint(input);
+             case LINE_STRING:
+@@ -76,13 +77,10 @@ public class JtsGeometrySerde
+         }
+     }
+ 
+-    private static Point readPoint(SliceInput input, boolean skipType)
++    private static Point readPoint(SliceInput input)
+     {
+-        if (skipType) {
+-            skipEsriType(input);
+-        }
+         Coordinate coordinates = readCoordinate(input);
+-        if (isEsriNaN(coordinates.x) || isEsriNaN(coordinates.y)) {
++        if (isNaN(coordinates.x) || isNaN(coordinates.y)) {
+             return GEOMETRY_FACTORY.createPoint();
+         }
+         return GEOMETRY_FACTORY.createPoint(coordinates);
+@@ -95,7 +93,7 @@ public class JtsGeometrySerde
+         int pointCount = input.readInt();
+         Point[] points = new Point[pointCount];
+         for (int i = 0; i < pointCount; i++) {
+-            points[i] = readPoint(input, false);
++            points[i] = readPoint(input);
+         }
+         return GEOMETRY_FACTORY.createMultiPoint(points);
+     }
+@@ -280,12 +278,12 @@ public class JtsGeometrySerde
+     private static void writePoint(Point point, SliceOutput output)
+     {
+         output.writeByte(GeometryType.POINT.code());
+-        output.writeInt(EsriShapeType.POINT.code);
+         if (!point.isEmpty()) {
+             writeCoordinate(point.getCoordinate(), output);
+         }
+         else {
+-            writeCoordinate(new Coordinate(translateToAVNaN(Double.NaN), translateToAVNaN(Double.NaN)), output);
++            output.writeDouble(NaN);
++            output.writeDouble(NaN);
+         }
+     }
+ 
+@@ -425,7 +423,7 @@ public class JtsGeometrySerde
+     {
+         if (geometry.isEmpty()) {
+             for (int i = 0; i < 4; i++) {
+-                output.writeDouble(Double.NaN);
++                output.writeDouble(NaN);
+             }
+             return;
+         }

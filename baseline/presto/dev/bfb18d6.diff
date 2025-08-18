@@ -1,0 +1,67 @@
+commit bfb18d6c21999f7fe9cb6fb9822af3ef1b6003a1
+Author: James A. Gill <jagill@fb.com>
+Date:   Fri Feb 14 15:11:49 2020 -0500
+
+    Add cheap ST_Intersection method for certain cases
+    
+    To find the intersection of an envelope that contains a geometry,
+    we can simple return the geometry.  This adds a check for that case,
+    short-circuiting the expensive intersection logic.
+    
+    It reduces the benchmark cost for these types of intersections with small
+    polygons by 200x, and large polygons by 100,000x.
+    
+    Original
+    Benchmark                                                          Mode  Cnt      Score     Error  Units
+    **BenchmarkSTIntersection.stIntersectionComplexPolygonLargeEnvelope  avgt   15  11572.428 ± 298.935  us/op**
+    BenchmarkSTIntersection.stIntersectionComplexPolygonSmallEnvelope  avgt   15   1405.820 ±  50.947  us/op
+    BenchmarkSTIntersection.stIntersectionComplexPolygons              avgt   15  18024.312 ±  93.407  us/op
+    BenchmarkSTIntersection.stIntersectionSimpleComplexPolygons        avgt   15   3624.582 ±  54.135  us/op
+    **BenchmarkSTIntersection.stIntersectionSimplePolygonLargeEnvelope   avgt   15     23.695 ±   0.296  us/op**
+    BenchmarkSTIntersection.stIntersectionSimplePolygonSmallEnvelope   avgt   15     47.711 ±   0.757  us/op
+    BenchmarkSTIntersection.stIntersectionSimplePolygons               avgt   15     17.121 ±   0.290  us/op
+    
+    With Envelope Shortcut
+    Benchmark                                                          Mode  Cnt      Score     Error  Units
+    **BenchmarkSTIntersection.stIntersectionComplexPolygonLargeEnvelope  avgt   15      0.090 ±   0.007  us/op**
+    BenchmarkSTIntersection.stIntersectionComplexPolygonSmallEnvelope  avgt   15   1426.323 ±  52.648  us/op
+    BenchmarkSTIntersection.stIntersectionComplexPolygons              avgt   15  18471.559 ± 410.481  us/op
+    BenchmarkSTIntersection.stIntersectionSimpleComplexPolygons        avgt   15   3722.377 ±  67.931  us/op
+    **BenchmarkSTIntersection.stIntersectionSimplePolygonLargeEnvelope   avgt   15      0.087 ±   0.001  us/op**
+    BenchmarkSTIntersection.stIntersectionSimplePolygonSmallEnvelope   avgt   15     47.280 ±   0.524  us/op
+    BenchmarkSTIntersection.stIntersectionSimplePolygons               avgt   15     16.877 ±   0.364  us/op
+
+diff --git a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+index cff4f39085..2c72bc0361 100644
+--- a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
++++ b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+@@ -1040,7 +1040,10 @@ public final class GeoFunctions
+     @SqlType(GEOMETRY_TYPE_NAME)
+     public static Slice stIntersection(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
+-        if (deserializeType(left) == GeometrySerializationType.ENVELOPE && deserializeType(right) == GeometrySerializationType.ENVELOPE) {
++        GeometrySerializationType leftType = deserializeType(left);
++        GeometrySerializationType rightType = deserializeType(right);
++
++        if (leftType == GeometrySerializationType.ENVELOPE && rightType == GeometrySerializationType.ENVELOPE) {
+             Envelope leftEnvelope = deserializeEnvelope(left);
+             Envelope rightEnvelope = deserializeEnvelope(right);
+ 
+@@ -1064,6 +1067,17 @@ public final class GeoFunctions
+             return EsriGeometrySerde.serialize(intersection);
+         }
+ 
++        // If one side is an envelope, then if it contains the other's envelope we can just return the other geometry.
++        if (leftType == GeometrySerializationType.ENVELOPE
++                && deserializeEnvelope(left).contains(deserializeEnvelope(right))) {
++            return right;
++        }
++
++        if (rightType == GeometrySerializationType.ENVELOPE
++                && deserializeEnvelope(right).contains(deserializeEnvelope(left))) {
++            return left;
++        }
++
+         OGCGeometry leftGeometry = EsriGeometrySerde.deserialize(left);
+         OGCGeometry rightGeometry = EsriGeometrySerde.deserialize(right);
+         verifySameSpatialReference(leftGeometry, rightGeometry);
