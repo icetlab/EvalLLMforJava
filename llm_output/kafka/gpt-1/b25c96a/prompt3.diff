@@ -1,0 +1,28 @@
+diff --git a/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java b/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java
+index 6bcafd2d60..fb2252222a 100644
+--- a/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java
++++ b/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java
+@@ -369,17 +369,12 @@ public class ProducerStateManager {
+      * Also expire any verification state entries that are lingering as unverified.
+      */
+     public void removeExpiredProducers(long currentTimeMs) {
+-        List<Long> keys = producers.entrySet().stream()
+-                .filter(entry -> isProducerExpired(currentTimeMs, entry.getValue()))
+-                .map(Map.Entry::getKey)
+-                .collect(Collectors.toList());
+-        removeProducerIds(keys);
+-
+-        List<Long> verificationKeys = verificationStates.entrySet().stream()
+-                .filter(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs())
+-                .map(Map.Entry::getKey)
+-                .collect(Collectors.toList());
+-        verificationKeys.forEach(verificationStates::remove);
++        long expirationMs = producerStateManagerConfig.producerIdExpirationMs();
++        // Remove expired producer IDs in-place
++        producers.entrySet().removeIf(entry -> isProducerExpired(currentTimeMs, entry.getValue()));
++        producerIdCount = producers.size();
++        // Remove expired verification state entries in-place
++        verificationStates.entrySet().removeIf(entry -> currentTimeMs - entry.getValue().timestamp() >= expirationMs);
+     }
+ 
+     /**

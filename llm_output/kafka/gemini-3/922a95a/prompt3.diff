@@ -1,0 +1,50 @@
+diff --git a/core/src/main/scala/kafka/cluster/Partition.scala b/core/src/main/scala/kafka/cluster/Partition.scala
+index 9cfd99e8e5..645fe949d5 100755
+--- a/core/src/main/scala/kafka/cluster/Partition.scala
++++ b/core/src/main/scala/kafka/cluster/Partition.scala
+@@ -554,7 +554,7 @@ class Partition(val topicPartition: TopicPartition,
+       controllerEpoch = partitionState.controllerEpoch
+ 
+       updateAssignmentAndIsr(
+-        assignment = partitionState.replicas.asScala.iterator.map(_.toInt).toSeq,
++        assignment = partitionState.replicas.asScala.map(_.toInt),
+         isr = Set.empty[Int],
+         addingReplicas = partitionState.addingReplicas.asScala.map(_.toInt),
+         removingReplicas = partitionState.removingReplicas.asScala.map(_.toInt)
+@@ -648,13 +648,16 @@ class Partition(val topicPartition: TopicPartition,
+                              isr: Set[Int],
+                              addingReplicas: Seq[Int],
+                              removingReplicas: Seq[Int]): Unit = {
+-    val replicaSet = assignment.toSet
+-    val removedReplicas = remoteReplicasMap.keys -- replicaSet
++    val newReplicaIds = assignment.toSet
++    val currentRemoteReplicaIds = remoteReplicasMap.keys.toSet
++
++    val newRemoteReplicas = newReplicaIds - localBrokerId
++    val replicasToAdd = newRemoteReplicas -- currentRemoteReplicaIds
++    val replicasToRemove = currentRemoteReplicaIds -- newRemoteReplicas
++
++    replicasToAdd.foreach(id => remoteReplicasMap.put(id, new Replica(id, topicPartition)))
++    replicasToRemove.foreach(remoteReplicasMap.remove)
+ 
+-    assignment
+-      .filter(_ != localBrokerId)
+-      .foreach(id => remoteReplicasMap.getAndMaybePut(id, new Replica(id, topicPartition)))
+-    removedReplicas.foreach(remoteReplicasMap.remove)
+     if (addingReplicas.nonEmpty || removingReplicas.nonEmpty)
+       assignmentState = OngoingReassignmentState(addingReplicas, removingReplicas, assignment)
+     else
+@@ -904,10 +907,11 @@ class Partition(val topicPartition: TopicPartition,
+      * is violated, that replica is considered to be out of sync
+      *
+      **/
+-    val candidateReplicaIds = inSyncReplicaIds - localBrokerId
+     val currentTimeMs = time.milliseconds()
+     val leaderEndOffset = localLogOrException.logEndOffset
+-    candidateReplicaIds.filter(replicaId => isFollowerOutOfSync(replicaId, leaderEndOffset, currentTimeMs, maxLagMs))
++    inSyncReplicaIds.filter {
++      replicaId => replicaId != localBrokerId && isFollowerOutOfSync(replicaId, leaderEndOffset, currentTimeMs, maxLagMs)
++    }
+   }
+ 
+   private def doAppendRecordsToFollowerOrFutureReplica(records: MemoryRecords, isFuture: Boolean): Option[LogAppendInfo] = {

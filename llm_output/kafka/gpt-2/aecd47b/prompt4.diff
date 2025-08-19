@@ -1,0 +1,48 @@
+diff --git a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+index 679b59249d..b73270b5a6 100644
+--- a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
++++ b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+@@ -18,6 +18,8 @@ package org.apache.kafka.common.utils;
+ 
+ import java.nio.ByteBuffer;
+ import java.util.zip.Checksum;
++import java.lang.reflect.Method;
++import java.lang.reflect.InvocationTargetException;
+ 
+ /**
+  * Utility methods for `Checksum` instances.
+@@ -29,6 +31,17 @@ import java.util.zip.Checksum;
+  * NOTE: This class is intended for INTERNAL usage only within Kafka.
+  */
+ public final class Checksums {
++    private static final Method UPDATE_BYTEBUFFER_METHOD;
++
++    static {
++        Method method = null;
++        try {
++            method = Checksum.class.getMethod("update", ByteBuffer.class);
++        } catch (NoSuchMethodException e) {
++            // ignore if not available
++        }
++        UPDATE_BYTEBUFFER_METHOD = method;
++    }
+ 
+     private Checksums() {
+     }
+@@ -40,6 +53,16 @@ public final class Checksums {
+     public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {
+         if (buffer.hasArray()) {
+             checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);
++        } else if (UPDATE_BYTEBUFFER_METHOD != null) {
++            ByteBuffer duplicate = buffer.duplicate();
++            int start = buffer.position() + offset;
++            duplicate.position(start);
++            duplicate.limit(start + length);
++            try {
++                UPDATE_BYTEBUFFER_METHOD.invoke(checksum, duplicate);
++            } catch (IllegalAccessException | InvocationTargetException e) {
++                throw new RuntimeException(e);
++            }
+         } else {
+             int start = buffer.position() + offset;
+             for (int i = start; i < start + length; i++)

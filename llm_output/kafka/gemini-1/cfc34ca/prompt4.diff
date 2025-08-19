@@ -1,0 +1,57 @@
+diff --git a/core/src/main/scala/kafka/log/LogManager.scala b/core/src/main/scala/kafka/log/LogManager.scala
+index fc1e7195d7..219caf101d 100755
+--- a/core/src/main/scala/kafka/log/LogManager.scala
++++ b/core/src/main/scala/kafka/log/LogManager.scala
+@@ -568,9 +568,10 @@ class LogManager(logDirs: Seq[File],
+    * to avoid recovering the whole log on startup.
+    */
+   def checkpointLogRecoveryOffsets(): Unit = {
+-    logsByDir.foreach { case (dir, partitionToLogMap) =>
+-      liveLogDirs.find(_.getAbsolutePath.equals(dir)).foreach { f =>
+-        checkpointRecoveryOffsetsAndCleanSnapshot(f, partitionToLogMap.values.toSeq)
++    val allLogsByDir = logsByDir
++    liveLogDirs.foreach { dir =>
++      allLogsByDir.get(dir.getAbsolutePath).foreach { partitionToLogMap =>
++        checkpointRecoveryOffsetsAndCleanSnapshot(dir, partitionToLogMap.values.toSeq)
+       }
+     }
+   }
+@@ -580,7 +581,23 @@ class LogManager(logDirs: Seq[File],
+    * to avoid exposing data that have been deleted by DeleteRecordsRequest
+    */
+   def checkpointLogStartOffsets(): Unit = {
+-    liveLogDirs.foreach(checkpointLogStartOffsetsInDir)
++    val allLogsByDir = logsByDir
++    for (dir <- liveLogDirs) {
++      for {
++        partitionToLog <- allLogsByDir.get(dir.getAbsolutePath)
++        checkpoint <- logStartOffsetCheckpoints.get(dir)
++      } {
++        try {
++          val logStartOffsets = partitionToLog.collect {
++            case (k, log) if log.logStartOffset > log.logSegments.head.baseOffset => k -> log.logStartOffset
++          }
++          checkpoint.write(logStartOffsets)
++        } catch {
++          case e: IOException =>
++            logDirFailureChannel.maybeAddOfflineLogDir(dir.getAbsolutePath, s"Disk error while writing to logStartOffset file in directory $dir", e)
++        }
++      }
++    }
+   }
+ 
+   /**
+@@ -1004,8 +1021,11 @@ class LogManager(logDirs: Seq[File],
+    * Map of log dir to logs by topic and partitions in that dir
+    */
+   private def logsByDir: Map[String, Map[TopicPartition, Log]] = {
+-    (this.currentLogs.toList ++ this.futureLogs.toList).toMap
+-      .groupBy { case (_, log) => log.parentDir }
++    val logsByDir = new mutable.HashMap[String, mutable.Map[TopicPartition, Log]]()
++    (this.currentLogs.iterator ++ this.futureLogs.iterator).foreach { case (tp, log) =>
++      logsByDir.getOrElseUpdate(log.parentDir, new mutable.HashMap[TopicPartition, Log]()).put(tp, log)
++    }
++    logsByDir.map { case (k, v) => k -> v.toMap }.toMap
+   }
+ 
+   // logDir should be an absolute path

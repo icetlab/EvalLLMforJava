@@ -1,0 +1,64 @@
+diff --git a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+index 86f06981ff..2c08928e2c 100644
+--- a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
++++ b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+@@ -319,10 +319,55 @@ class AclAuthorizer extends Authorizer with Logging {
+     }
+ 
+     def aclsAllowAccess = {
+-      //we allow an operation if no acls are found and user has configured to allow all users
+-      //when no acls are found or if no deny acls are found and at least one allow acls matches.
+-      val acls = matchingAcls(resource.resourceType, resource.name)
+-      isEmptyAclAndAuthorized(acls) || (!denyAclExists(acls) && allowAclExists(acls))
++      // Separate retrieval of wildcard, literal, and prefixed ACL sets to avoid merging sets
++      val (wildcardAcls, literalAcls, prefixedAcls) = inReadLock(lock) {
++        val wildcard = aclCache.get(new ResourcePattern(resource.resourceType, ResourcePattern.WILDCARD_RESOURCE, PatternType.LITERAL)).map(_.acls).getOrElse(Set.empty[AclEntry])
++        val literal = aclCache.get(new ResourcePattern(resource.resourceType, resource.name, PatternType.LITERAL)).map(_.acls).getOrElse(Set.empty[AclEntry])
++        val prefixed = aclCache
++          .from(new ResourcePattern(resource.resourceType, resource.name, PatternType.PREFIXED))
++          .to(new ResourcePattern(resource.resourceType, resource.name.take(1), PatternType.PREFIXED))
++          .filterKeys(r => resource.name.startsWith(r.name))
++          .values
++          .flatMap(_.acls)
++        (wildcard, literal, prefixed)
++      }
++
++      // No merging of sets; apply logic directly on individual collections
++      val emptyAcls = wildcardAcls.isEmpty && literalAcls.isEmpty && !prefixedAcls.iterator.hasNext
++      if (emptyAcls) {
++        authorizerLogger.debug(s"No acl found for resource $resource, authorized = $shouldAllowEveryoneIfNoAclIsFound")
++        shouldAllowEveryoneIfNoAclIsFound
++      } else {
++        // Deny takes precedence
++        val denyInWildcard = matchingAclExists(operation, resource, principal, host, DENY, wildcardAcls)
++        val denyInLiteral  = matchingAclExists(operation, resource, principal, host, DENY, literalAcls)
++        val denyInPrefixed = prefixedAcls.exists(acl =>
++          acl.permissionType    == DENY &&
++          (acl.kafkaPrincipal  == principal || acl.kafkaPrincipal == AclEntry.WildcardPrincipal) &&
++          (acl.host            == host      || acl.host            == AclEntry.WildcardHost) &&
++          (operation           == acl.operation || acl.operation == AclOperation.ALL)
++        )
++        if (denyInWildcard || denyInLiteral || denyInPrefixed) {
++          false
++        } else {
++          // Check allow operations
++          val allowOps = operation match {
++            case DESCRIBE         => Set(DESCRIBE, READ, WRITE, DELETE, ALTER)
++            case DESCRIBE_CONFIGS => Set(DESCRIBE_CONFIGS, ALTER_CONFIGS)
++            case _                => Set(operation)
++          }
++          allowOps.exists { op =>
++            matchingAclExists(op, resource, principal, host, ALLOW, wildcardAcls)  ||
++            matchingAclExists(op, resource, principal, host, ALLOW, literalAcls)   ||
++            prefixedAcls.exists(acl =>
++              acl.permissionType    == ALLOW &&
++              (acl.kafkaPrincipal  == principal || acl.kafkaPrincipal == AclEntry.WildcardPrincipal) &&
++              (acl.host            == host      || acl.host            == AclEntry.WildcardHost) &&
++              (op                   == acl.operation || acl.operation == AclOperation.ALL)
++            )
++          }
++        }
++      }
+     }
+ 
+     // Evaluate if operation is allowed

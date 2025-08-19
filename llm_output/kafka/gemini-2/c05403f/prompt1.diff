@@ -1,0 +1,121 @@
+diff --git a/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java b/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java
+index 15868721da..c39be55fb9 100644
+--- a/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java
++++ b/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java
+@@ -75,7 +75,7 @@ public final class ByteUtils {
+      * @return The integer read (MUST BE TREATED WITH SPECIAL CARE TO AVOID SIGNEDNESS)
+      */
+     public static int readUnsignedIntLE(byte[] buffer, int offset) {
+-        return (buffer[offset] << 0 & 0xff)
++        return (buffer[offset] & 0xff)
+                 | ((buffer[offset + 1] & 0xff) << 8)
+                 | ((buffer[offset + 2] & 0xff) << 16)
+                 | ((buffer[offset + 3] & 0xff) << 24);
+@@ -140,16 +140,31 @@ public final class ByteUtils {
+      * @throws IllegalArgumentException if variable-length value does not terminate after 5 bytes have been read
+      */
+     public static int readUnsignedVarint(ByteBuffer buffer) {
+-        int value = 0;
+-        int i = 0;
+-        int b;
+-        while (((b = buffer.get()) & 0x80) != 0) {
+-            value |= (b & 0x7f) << i;
+-            i += 7;
+-            if (i > 28)
++        int b = buffer.get();
++        int value = b & 0x7f;
++        if ((b & 0x80) == 0) {
++            return value;
++        }
++        b = buffer.get();
++        value |= (b & 0x7f) << 7;
++        if ((b & 0x80) == 0) {
++            return value;
++        }
++        b = buffer.get();
++        value |= (b & 0x7f) << 14;
++        if ((b & 0x80) == 0) {
++            return value;
++        }
++        b = buffer.get();
++        value |= (b & 0x7f) << 21;
++        if ((b & 0x80) == 0) {
++            return value;
++        }
++        b = buffer.get();
++        value |= (b & 0x7f) << 28;
++        if ((b & 0x80) != 0) {
+             throw illegalVarintException(value);
+         }
+-        value |= b << i;
+         return value;
+     }
+ 
+@@ -164,16 +179,31 @@ public final class ByteUtils {
+      * @throws IOException              if {@link DataInput} throws {@link IOException}
+      */
+     public static int readUnsignedVarint(DataInput in) throws IOException {
+-        int value = 0;
+-        int i = 0;
+-        int b;
+-        while (((b = in.readByte()) & 0x80) != 0) {
+-            value |= (b & 0x7f) << i;
+-            i += 7;
+-            if (i > 28)
++        int b = in.readByte();
++        int value = b & 0x7f;
++        if ((b & 0x80) == 0) {
++            return value;
++        }
++        b = in.readByte();
++        value |= (b & 0x7f) << 7;
++        if ((b & 0x80) == 0) {
++            return value;
++        }
++        b = in.readByte();
++        value |= (b & 0x7f) << 14;
++        if ((b & 0x80) == 0) {
++            return value;
++        }
++        b = in.readByte();
++        value |= (b & 0x7f) << 21;
++        if ((b & 0x80) == 0) {
++            return value;
++        }
++        b = in.readByte();
++        value |= (b & 0x7f) << 28;
++        if ((b & 0x80) != 0) {
+             throw illegalVarintException(value);
+         }
+-        value |= b << i;
+         return value;
+     }
+ 
+@@ -392,12 +422,7 @@ public final class ByteUtils {
+      * @param value The signed value
+      */
+     public static int sizeOfUnsignedVarint(int value) {
+-        int bytes = 1;
+-        while ((value & 0xffffff80) != 0L) {
+-            bytes += 1;
+-            value >>>= 7;
+-        }
+-        return bytes;
++        return (31 - Integer.numberOfLeadingZeros(value)) / 7 + 1;
+     }
+ 
+     /**
+@@ -416,12 +441,7 @@ public final class ByteUtils {
+      */
+     public static int sizeOfVarlong(long value) {
+         long v = (value << 1) ^ (value >> 63);
+-        int bytes = 1;
+-        while ((v & 0xffffffffffffff80L) != 0L) {
+-            bytes += 1;
+-            v >>>= 7;
+-        }
+-        return bytes;
++        return (63 - Long.numberOfLeadingZeros(v)) / 7 + 1;
+     }
+ 
+     private static IllegalArgumentException illegalVarintException(int value) {

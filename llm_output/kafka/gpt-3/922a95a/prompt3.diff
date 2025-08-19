@@ -1,0 +1,15 @@
+diff --git a/core/src/main/scala/kafka/cluster/Partition.scala b/core/src/main/scala/kafka/cluster/Partition.scala
+index 9cfd99e8e5..e1e5652304 100755
+--- a/core/src/main/scala/kafka/cluster/Partition.scala
++++ b/core/src/main/scala/kafka/cluster/Partition.scala
+@@ -546,6 +546,10 @@ class Partition(val topicPartition: TopicPartition,
+                    partitionState: LeaderAndIsrPartitionState,
+                    correlationId: Int,
+                    highWatermarkCheckpoints: OffsetCheckpoints): Boolean = {
++    // short-circuit if leader and epoch are unchanged
++    val newLeaderBrokerId = partitionState.leader
++    val newLeaderEpoch = partitionState.leaderEpoch
++    if (leaderReplicaIdOpt.contains(newLeaderBrokerId) && newLeaderEpoch == leaderEpoch) return false
+     inWriteLock(leaderIsrUpdateLock) {
+       val newLeaderBrokerId = partitionState.leader
+       val oldLeaderEpoch = leaderEpoch

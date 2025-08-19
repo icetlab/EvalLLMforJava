@@ -1,0 +1,34 @@
+diff --git a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+index 58860be864..2b675d9acc 100644
+--- a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
++++ b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+@@ -62,9 +62,15 @@ object AclAuthorizer {
+     def exists: Boolean = zkVersion != ZkVersion.UnknownVersion
+   }
+ 
+-  class AclSets(sets: Set[AclEntry]*) {
+-    def find(p: AclEntry => Boolean): Option[AclEntry] = sets.flatMap(_.find(p)).headOption
+-    def isEmpty: Boolean = !sets.exists(_.nonEmpty)
++  class AclSets(sets: Iterable[AclEntry]*) {
++    def find(p: AclEntry => Boolean): Option[AclEntry] = {
++      for (set <- sets) {
++        val found = set.find(p)
++        if (found.isDefined) return found
++      }
++      None
++    }
++    def isEmpty: Boolean = sets.forall(_.isEmpty)
+   }
+ 
+   val NoAcls = VersionedAcls(Set.empty, ZkVersion.UnknownVersion)
+@@ -357,8 +363,8 @@ class AclAuthorizer extends Authorizer with Logging {
+       .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))
+       .filterKeys(resource => resourceName.startsWith(resource.name))
+       .values
+-      .flatMap { _.acls }
+-      .toSet
++      .view
++      .flatMap(_.acls)
+ 
+     new AclSets(prefixed, wildcard, literal)
+   }

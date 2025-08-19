@@ -1,0 +1,59 @@
+diff --git a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+index 679b59249d..5778d11d78 100644
+--- a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
++++ b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+@@ -42,26 +42,40 @@ public final class Checksums {
+             checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);
+         } else {
+             int start = buffer.position() + offset;
+-            for (int i = start; i < start + length; i++)
+-                checksum.update(buffer.get(i));
++            // bulk copy into byte[] to avoid per-byte checksum calls
++            ByteBuffer duplicate = buffer.duplicate();
++            duplicate.position(start);
++            duplicate.limit(start + length);
++            ByteBuffer slice = duplicate.slice();
++            byte[] tmp = new byte[length];
++            slice.get(tmp);
++            checksum.update(tmp, 0, length);
+         }
+     }
+     
+     public static void updateInt(Checksum checksum, int input) {
+-        checksum.update((byte) (input >> 24));
+-        checksum.update((byte) (input >> 16));
+-        checksum.update((byte) (input >> 8));
+-        checksum.update((byte) input /* >> 0 */);
++        // batch the four bytes into one array update
++        byte[] bytes = new byte[] {
++            (byte) (input >> 24),
++            (byte) (input >> 16),
++            (byte) (input >> 8),
++            (byte) input
++        };
++        checksum.update(bytes, 0, bytes.length);
+     }
+ 
+     public static void updateLong(Checksum checksum, long input) {
+-        checksum.update((byte) (input >> 56));
+-        checksum.update((byte) (input >> 48));
+-        checksum.update((byte) (input >> 40));
+-        checksum.update((byte) (input >> 32));
+-        checksum.update((byte) (input >> 24));
+-        checksum.update((byte) (input >> 16));
+-        checksum.update((byte) (input >> 8));
+-        checksum.update((byte) input /* >> 0 */);
++        // batch the eight bytes into one array update
++        byte[] bytes = new byte[] {
++            (byte) (input >> 56),
++            (byte) (input >> 48),
++            (byte) (input >> 40),
++            (byte) (input >> 32),
++            (byte) (input >> 24),
++            (byte) (input >> 16),
++            (byte) (input >> 8),
++            (byte) input
++        };
++        checksum.update(bytes, 0, bytes.length);
+     }
+ }

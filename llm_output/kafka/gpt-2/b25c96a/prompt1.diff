@@ -1,0 +1,35 @@
+diff --git a/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java b/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java
+index 6bcafd2d60..5a6e57b26b 100644
+--- a/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java
++++ b/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java
+@@ -733,19 +733,23 @@ public class ProducerStateManager {
+     }
+ 
+     private static boolean isSnapshotFile(Path path) {
+-        return Files.isRegularFile(path) && path.getFileName().toString().endsWith(LogFileUtils.PRODUCER_SNAPSHOT_FILE_SUFFIX);
++        File file = path.toFile();
++        return file.isFile() && path.getFileName().toString().endsWith(LogFileUtils.PRODUCER_SNAPSHOT_FILE_SUFFIX);
+     }
+ 
+     // visible for testing
+     public static List<SnapshotFile> listSnapshotFiles(File dir) throws IOException {
+-        if (dir.exists() && dir.isDirectory()) {
+-            try (Stream<Path> paths = Files.list(dir.toPath())) {
+-                return paths.filter(ProducerStateManager::isSnapshotFile)
+-                        .map(path -> new SnapshotFile(path.toFile())).collect(Collectors.toList());
+-            }
+-        } else {
++        File[] files = dir.listFiles((d, name) -> name.endsWith(LogFileUtils.PRODUCER_SNAPSHOT_FILE_SUFFIX));
++        if (files == null) {
+             return Collections.emptyList();
+         }
++        List<SnapshotFile> snapshotFiles = new ArrayList<>();
++        for (File file : files) {
++            if (file.isFile()) {
++                snapshotFiles.add(new SnapshotFile(file));
++            }
++        }
++        return snapshotFiles;
+     }
+ 
+ }

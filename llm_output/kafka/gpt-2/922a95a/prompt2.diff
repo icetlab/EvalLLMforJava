@@ -1,0 +1,29 @@
+diff --git a/core/src/main/scala/kafka/cluster/Partition.scala b/core/src/main/scala/kafka/cluster/Partition.scala
+index 9cfd99e8e5..7519e3215c 100755
+--- a/core/src/main/scala/kafka/cluster/Partition.scala
++++ b/core/src/main/scala/kafka/cluster/Partition.scala
+@@ -911,20 +911,16 @@ class Partition(val topicPartition: TopicPartition,
+   }
+ 
+   private def doAppendRecordsToFollowerOrFutureReplica(records: MemoryRecords, isFuture: Boolean): Option[LogAppendInfo] = {
+-    // The read lock is needed to handle race condition if request handler thread tries to
+-    // remove future replica after receiving AlterReplicaLogDirsRequest.
+-    inReadLock(leaderIsrUpdateLock) {
+     if (isFuture) {
+-        // Note the replica may be undefined if it is removed by a non-ReplicaAlterLogDirsThread before
+-        // this method is called
++      // Guard future log against concurrent alter-dir swaps
++      inReadLock(leaderIsrUpdateLock) {
+         futureLog.map { _.appendAsFollower(records) }
++      }
+     } else {
+-        // The read lock is needed to prevent the follower replica from being updated while ReplicaAlterDirThread
+-        // is executing maybeDeleteAndSwapFutureReplica() to replace follower replica with the future replica.
++      // Direct append for follower to avoid blocking makeFollower()
+       Some(localLogOrException.appendAsFollower(records))
+     }
+   }
+-  }
+ 
+   def appendRecordsToFollowerOrFutureReplica(records: MemoryRecords, isFuture: Boolean): Option[LogAppendInfo] = {
+     try {

@@ -1,0 +1,36 @@
+diff --git a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+index 679b59249d..2e0cd815d7 100644
+--- a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
++++ b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+@@ -18,6 +18,8 @@ package org.apache.kafka.common.utils;
+ 
+ import java.nio.ByteBuffer;
+ import java.util.zip.Checksum;
++import java.lang.reflect.Method;
++import java.lang.reflect.InvocationTargetException;
+ 
+ /**
+  * Utility methods for `Checksum` instances.
+@@ -41,11 +43,21 @@ public final class Checksums {
+         if (buffer.hasArray()) {
+             checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);
+         } else {
++            try {
++                Method updateBB = checksum.getClass().getMethod("update", ByteBuffer.class);
++                ByteBuffer slice = buffer.duplicate();
+                 int start = buffer.position() + offset;
+-            for (int i = start; i < start + length; i++)
++                slice.position(start);
++                slice.limit(start + length);
++                updateBB.invoke(checksum, slice);
++            } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
++                int start = buffer.position() + offset;
++                for (int i = start; i < start + length; i++) {
+                     checksum.update(buffer.get(i));
+                 }
+             }
++        }
++    }
+     
+     public static void updateInt(Checksum checksum, int input) {
+         checksum.update((byte) (input >> 24));

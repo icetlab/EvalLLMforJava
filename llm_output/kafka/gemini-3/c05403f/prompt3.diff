@@ -1,0 +1,45 @@
+diff --git a/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java b/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java
+index 15868721da..b8c7c589c7 100644
+--- a/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java
++++ b/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java
+@@ -75,7 +75,7 @@ public final class ByteUtils {
+      * @return The integer read (MUST BE TREATED WITH SPECIAL CARE TO AVOID SIGNEDNESS)
+      */
+     public static int readUnsignedIntLE(byte[] buffer, int offset) {
+-        return (buffer[offset] << 0 & 0xff)
++        return (buffer[offset] & 0xff)
+                 | ((buffer[offset + 1] & 0xff) << 8)
+                 | ((buffer[offset + 2] & 0xff) << 16)
+                 | ((buffer[offset + 3] & 0xff) << 24);
+@@ -392,12 +392,9 @@ public final class ByteUtils {
+      * @param value The signed value
+      */
+     public static int sizeOfUnsignedVarint(int value) {
+-        int bytes = 1;
+-        while ((value & 0xffffff80) != 0L) {
+-            bytes += 1;
+-            value >>>= 7;
+-        }
+-        return bytes;
++        // The number of bytes is ceil(bits/7). For a 32-bit integer, this can be computed based on the number
++        // of leading zeros, which is faster than a loop.
++        return (31 - Integer.numberOfLeadingZeros(value)) / 7 + 1;
+     }
+ 
+     /**
+@@ -416,12 +413,9 @@ public final class ByteUtils {
+      */
+     public static int sizeOfVarlong(long value) {
+         long v = (value << 1) ^ (value >> 63);
+-        int bytes = 1;
+-        while ((v & 0xffffffffffffff80L) != 0L) {
+-            bytes += 1;
+-            v >>>= 7;
+-        }
+-        return bytes;
++        // The number of bytes is ceil(bits/7). For a 64-bit long, this can be computed based on the number
++        // of leading zeros of the zig-zag encoded value, which is faster than a loop.
++        return (63 - Long.numberOfLeadingZeros(v)) / 7 + 1;
+     }
+ 
+     private static IllegalArgumentException illegalVarintException(int value) {

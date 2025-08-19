@@ -1,0 +1,42 @@
+diff --git a/core/src/main/scala/kafka/server/AbstractFetcherThread.scala b/core/src/main/scala/kafka/server/AbstractFetcherThread.scala
+index 0f3b06952a..ec4409be61 100755
+--- a/core/src/main/scala/kafka/server/AbstractFetcherThread.scala
++++ b/core/src/main/scala/kafka/server/AbstractFetcherThread.scala
+@@ -435,17 +435,16 @@ abstract class AbstractFetcherThread(name: String,
+     * @param fetchOffsets the partitions to update fetch offset and maybe mark truncation complete
+     */
+   private def updateFetchOffsetAndMaybeMarkTruncationComplete(fetchOffsets: Map[TopicPartition, OffsetTruncationState]): Unit = {
+-    val newStates: Map[TopicPartition, PartitionFetchState] = partitionStates.partitionStates.asScala
+-      .map { state =>
+-        val currentFetchState = state.value
+-        val maybeTruncationComplete = fetchOffsets.get(state.topicPartition) match {
++    val newStates: Map[TopicPartition, PartitionFetchState] = partitionStates.partitionStateMap.asScala
++      .map { case (tp, currentFetchState) =>
++        val maybeTruncationComplete = fetchOffsets.get(tp) match {
+           case Some(offsetTruncationState) =>
+             val state = if (offsetTruncationState.truncationCompleted) Fetching else Truncating
+             PartitionFetchState(offsetTruncationState.offset, currentFetchState.lag,
+               currentFetchState.currentLeaderEpoch, currentFetchState.delay, state)
+           case None => currentFetchState
+         }
+-        (state.topicPartition, maybeTruncationComplete)
++        (tp, maybeTruncationComplete)
+       }.toMap
+     partitionStates.set(newStates.asJava)
+   }
+@@ -648,11 +647,11 @@ abstract class AbstractFetcherThread(name: String,
+   }
+ 
+   private[server] def partitionsAndOffsets: Map[TopicPartition, InitialFetchState] = inLock(partitionMapLock) {
+-    partitionStates.partitionStates.asScala.map { state =>
++    partitionStates.partitionStateMap.asScala.map { case (tp, fetchState) =>
+       val initialFetchState = InitialFetchState(sourceBroker,
+-        currentLeaderEpoch = state.value.currentLeaderEpoch,
+-        initOffset = state.value.fetchOffset)
+-      state.topicPartition -> initialFetchState
++        currentLeaderEpoch = fetchState.currentLeaderEpoch,
++        initOffset = fetchState.fetchOffset)
++      tp -> initialFetchState
+     }.toMap
+   }
+ 

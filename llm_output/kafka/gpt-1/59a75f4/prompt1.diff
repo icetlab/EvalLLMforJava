@@ -1,0 +1,54 @@
+diff --git a/clients/src/main/java/org/apache/kafka/common/internals/PartitionStates.java b/clients/src/main/java/org/apache/kafka/common/internals/PartitionStates.java
+index c289eaa59b..bf874e04d4 100644
+--- a/clients/src/main/java/org/apache/kafka/common/internals/PartitionStates.java
++++ b/clients/src/main/java/org/apache/kafka/common/internals/PartitionStates.java
+@@ -43,7 +43,7 @@ import java.util.stream.Stream;
+  */
+ public class PartitionStates<S> {
+ 
+-    private final LinkedHashMap<TopicPartition, S> map = new LinkedHashMap<>();
++    private final LinkedHashMap<TopicPartition, S> map = new LinkedHashMap<>(16, 0.75f, true);
+     private final Set<TopicPartition> partitionSetView = Collections.unmodifiableSet(map.keySet());
+ 
+     /* the number of partitions that are currently assigned available in a thread safe manner */
+@@ -52,13 +52,12 @@ public class PartitionStates<S> {
+     public PartitionStates() {}
+ 
+     public void moveToEnd(TopicPartition topicPartition) {
+-        S state = map.remove(topicPartition);
+-        if (state != null)
+-            map.put(topicPartition, state);
++        // Access the entry to move it to the end if it exists
++        map.get(topicPartition);
+     }
+ 
+     public void updateAndMoveToEnd(TopicPartition topicPartition, S state) {
+-        map.remove(topicPartition);
++        // Using access-order LinkedHashMap, put moves entry to end
+         map.put(topicPartition, state);
+         updateSize();
+     }
+@@ -139,15 +138,14 @@ public class PartitionStates<S> {
+     }
+ 
+     private void update(Map<TopicPartition, S> partitionToState) {
+-        LinkedHashMap<String, List<TopicPartition>> topicToPartitions = new LinkedHashMap<>();
+-        for (TopicPartition tp : partitionToState.keySet()) {
+-            List<TopicPartition> partitions = topicToPartitions.computeIfAbsent(tp.topic(), k -> new ArrayList<>());
+-            partitions.add(tp);
+-        }
+-        for (Map.Entry<String, List<TopicPartition>> entry : topicToPartitions.entrySet()) {
+-            for (TopicPartition tp : entry.getValue()) {
+-                S state = partitionToState.get(tp);
+-                map.put(tp, state);
++        // Group entries by topic to reduce lookups
++        LinkedHashMap<String, List<Map.Entry<TopicPartition, S>>> topicToEntries = new LinkedHashMap<>();
++        for (Map.Entry<TopicPartition, S> entry : partitionToState.entrySet()) {
++            topicToEntries.computeIfAbsent(entry.getKey().topic(), k -> new ArrayList<>()).add(entry);
++        }
++        for (List<Map.Entry<TopicPartition, S>> entries : topicToEntries.values()) {
++            for (Map.Entry<TopicPartition, S> entry : entries) {
++                map.put(entry.getKey(), entry.getValue());
+             }
+         }
+     }

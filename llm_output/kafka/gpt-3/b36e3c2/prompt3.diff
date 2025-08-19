@@ -1,0 +1,28 @@
+diff --git a/core/src/main/scala/kafka/log/LogValidator.scala b/core/src/main/scala/kafka/log/LogValidator.scala
+index 48b9f57d9a..a8d339dab1 100644
+--- a/core/src/main/scala/kafka/log/LogValidator.scala
++++ b/core/src/main/scala/kafka/log/LogValidator.scala
+@@ -232,9 +232,10 @@ private[log] object LogValidator extends Logging {
+     val builder = MemoryRecords.builder(newBuffer, toMagicValue, CompressionType.NONE, timestampType,
+       offsetCounter.value, now, producerId, producerEpoch, sequence, isTransactional, partitionLeaderEpoch)
+ 
++    val batches = records.batches.asScala
+     val firstBatch = getFirstBatchAndMaybeValidateNoMoreBatches(records, NoCompressionCodec)
+ 
+-    for (batch <- records.batches.asScala) {
++    for (batch <- batches) {
+       validateBatch(topicPartition, firstBatch, batch, origin, toMagicValue, brokerTopicStats)
+ 
+       val recordErrors = new ArrayBuffer[ApiRecordError](0)
+@@ -277,9 +278,10 @@ private[log] object LogValidator extends Logging {
+     var offsetOfMaxTimestamp = -1L
+     val initialOffset = offsetCounter.value
+ 
++    val batches = records.batches.asScala
+     val firstBatch = getFirstBatchAndMaybeValidateNoMoreBatches(records, NoCompressionCodec)
+ 
+-    for (batch <- records.batches.asScala) {
++    for (batch <- batches) {
+       validateBatch(topicPartition, firstBatch, batch, origin, magic, brokerTopicStats)
+ 
+       var maxBatchTimestamp = RecordBatch.NO_TIMESTAMP

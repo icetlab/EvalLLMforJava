@@ -1,0 +1,30 @@
+diff --git a/clients/src/main/java/org/apache/kafka/common/internals/PartitionStates.java b/clients/src/main/java/org/apache/kafka/common/internals/PartitionStates.java
+index c289eaa59b..e1414ccbb1 100644
+--- a/clients/src/main/java/org/apache/kafka/common/internals/PartitionStates.java
++++ b/clients/src/main/java/org/apache/kafka/common/internals/PartitionStates.java
+@@ -43,7 +43,7 @@ import java.util.stream.Stream;
+  */
+ public class PartitionStates<S> {
+ 
+-    private final LinkedHashMap<TopicPartition, S> map = new LinkedHashMap<>();
++    private final LinkedHashMap<TopicPartition, S> map = new LinkedHashMap<>(16, 0.75f, true);
+     private final Set<TopicPartition> partitionSetView = Collections.unmodifiableSet(map.keySet());
+ 
+     /* the number of partitions that are currently assigned available in a thread safe manner */
+@@ -52,13 +52,12 @@ public class PartitionStates<S> {
+     public PartitionStates() {}
+ 
+     public void moveToEnd(TopicPartition topicPartition) {
+-        S state = map.remove(topicPartition);
+-        if (state != null)
+-            map.put(topicPartition, state);
++        // Access-order map will move an existing key to the end on get()
++        map.get(topicPartition);
+     }
+ 
+     public void updateAndMoveToEnd(TopicPartition topicPartition, S state) {
+-        map.remove(topicPartition);
++        // put(...) on an access-order map updates value and moves key to end
+         map.put(topicPartition, state);
+         updateSize();
+     }

@@ -1,0 +1,32 @@
+diff --git a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+index 86f06981ff..ad1793988d 100644
+--- a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
++++ b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+@@ -78,7 +78,7 @@ object AclAuthorizer {
+         if (rnt != 0)
+           rnt
+         else
+-          (a.name compare b.name) * -1
++          (b.name compare a.name)
+       }
+     }
+   }
+@@ -367,14 +367,13 @@ class AclAuthorizer extends Authorizer with Logging {
+                                 host: String,
+                                 permissionType: AclPermissionType,
+                                 acls: Set[AclEntry]): Boolean = {
+-    acls.find { acl =>
+-      acl.permissionType == permissionType &&
++    acls.exists { acl =>
++      val matches = acl.permissionType == permissionType &&
+         (acl.kafkaPrincipal == principal || acl.kafkaPrincipal == AclEntry.WildcardPrincipal) &&
+         (operation == acl.operation || acl.operation == AclOperation.ALL) &&
+         (acl.host == host || acl.host == AclEntry.WildcardHost)
+-    }.exists { acl =>
+-      authorizerLogger.debug(s"operation = $operation on resource = $resource from host = $host is $permissionType based on acl = $acl")
+-      true
++      if (matches) authorizerLogger.debug(s"operation = $operation on resource = $resource from host = $host is $permissionType based on acl = $acl")
++      matches
+     }
+   }
+ 

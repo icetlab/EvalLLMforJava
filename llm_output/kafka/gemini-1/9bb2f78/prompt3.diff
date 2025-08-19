@@ -1,0 +1,26 @@
+diff --git a/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java b/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java
+index fb02577e99..11ff3acbdc 100644
+--- a/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java
++++ b/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java
+@@ -80,8 +80,8 @@ public abstract class ReplaceField<R extends ConnectRecord<R>> implements Transf
+ 
+     private static final String PURPOSE = "field replacement";
+ 
+-    private List<String> exclude;
+-    private List<String> include;
++    private java.util.Set<String> exclude;
++    private java.util.Set<String> include;
+     private Map<String, String> renames;
+     private Map<String, String> reverseRenames;
+ 
+@@ -94,8 +94,8 @@ public abstract class ReplaceField<R extends ConnectRecord<R>> implements Transf
+             {ConfigName.EXCLUDE, "blacklist"},
+         }));
+ 
+-        exclude = config.getList(ConfigName.EXCLUDE);
+-        include = config.getList(ConfigName.INCLUDE);
++        exclude = new java.util.HashSet<>(config.getList(ConfigName.EXCLUDE));
++        include = new java.util.HashSet<>(config.getList(ConfigName.INCLUDE));
+         renames = parseRenameMappings(config.getList(ConfigName.RENAME));
+         reverseRenames = invert(renames);
+ 

@@ -1,0 +1,39 @@
+diff --git a/core/src/main/scala/kafka/log/LogManager.scala b/core/src/main/scala/kafka/log/LogManager.scala
+index fc1e7195d7..75e70fb126 100755
+--- a/core/src/main/scala/kafka/log/LogManager.scala
++++ b/core/src/main/scala/kafka/log/LogManager.scala
+@@ -568,10 +568,11 @@ class LogManager(logDirs: Seq[File],
+    * to avoid recovering the whole log on startup.
+    */
+   def checkpointLogRecoveryOffsets(): Unit = {
+-    logsByDir.foreach { case (dir, partitionToLogMap) =>
+-      liveLogDirs.find(_.getAbsolutePath.equals(dir)).foreach { f =>
+-        checkpointRecoveryOffsetsAndCleanSnapshot(f, partitionToLogMap.values.toSeq)
+-      }
++    for (dir <- liveLogDirs) {
++      val logsInDir = (currentLogs.iterator ++ futureLogs.iterator).collect {
++        case (_, log) if log.parentDirFile == dir => log
++      }.toSeq
++      checkpointRecoveryOffsetsAndCleanSnapshot(dir, logsInDir)
+     }
+   }
+ 
+@@ -614,14 +615,11 @@ class LogManager(logDirs: Seq[File],
+    * Checkpoint log start offset for all logs in provided directory.
+    */
+   private def checkpointLogStartOffsetsInDir(dir: File): Unit = {
+-    for {
+-      partitionToLog <- logsByDir.get(dir.getAbsolutePath)
+-      checkpoint <- logStartOffsetCheckpoints.get(dir)
+-    } {
++    logStartOffsetCheckpoints.get(dir).foreach { checkpoint =>
+       try {
+-        val logStartOffsets = partitionToLog.collect {
+-          case (k, log) if log.logStartOffset > log.logSegments.head.baseOffset => k -> log.logStartOffset
+-        }
++        val logStartOffsets = (currentLogs.iterator ++ futureLogs.iterator).collect {
++          case (tp, log) if log.parentDirFile == dir && log.logStartOffset > log.logSegments.head.baseOffset => tp -> log.logStartOffset
++        }.toMap
+         checkpoint.write(logStartOffsets)
+       } catch {
+         case e: IOException =>

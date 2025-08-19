@@ -1,0 +1,77 @@
+diff --git a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+index 679b59249d..58a742c20e 100644
+--- a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
++++ b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+@@ -30,6 +30,9 @@ import java.util.zip.Checksum;
+  */
+ public final class Checksums {
+ 
++    private static final ThreadLocal<byte[]> TL_INT_BUFFER = ThreadLocal.withInitial(() -> new byte[4]);
++    private static final ThreadLocal<byte[]> TL_LONG_BUFFER = ThreadLocal.withInitial(() -> new byte[8]);
++
+     private Checksums() {
+     }
+ 
+@@ -38,30 +41,46 @@ public final class Checksums {
+     }
+ 
+     public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {
+-        if (buffer.hasArray()) {
++        if (buffer.hasArray() && !buffer.isReadOnly()) {
+             checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);
+         } else {
+-            int start = buffer.position() + offset;
+-            for (int i = start; i < start + length; i++)
+-                checksum.update(buffer.get(i));
++            int originalPosition = buffer.position();
++            try {
++                buffer.position(originalPosition + offset);
++                int remaining = length;
++                // Checksums.update() performance with DirectByteBuffers is poor, so we chunk into a heap buffer
++                byte[] batch = new byte[Math.min(length, 8192)];
++                while (remaining > 0) {
++                    int toRead = Math.min(remaining, batch.length);
++                    buffer.get(batch, 0, toRead);
++                    checksum.update(batch, 0, toRead);
++                    remaining -= toRead;
++                }
++            } finally {
++                buffer.position(originalPosition);
++            }
+         }
+     }
+     
+     public static void updateInt(Checksum checksum, int input) {
+-        checksum.update((byte) (input >> 24));
+-        checksum.update((byte) (input >> 16));
+-        checksum.update((byte) (input >> 8));
+-        checksum.update((byte) input /* >> 0 */);
++        byte[] buffer = TL_INT_BUFFER.get();
++        buffer[0] = (byte) (input >> 24);
++        buffer[1] = (byte) (input >> 16);
++        buffer[2] = (byte) (input >> 8);
++        buffer[3] = (byte) input;
++        checksum.update(buffer, 0, 4);
+     }
+ 
+     public static void updateLong(Checksum checksum, long input) {
+-        checksum.update((byte) (input >> 56));
+-        checksum.update((byte) (input >> 48));
+-        checksum.update((byte) (input >> 40));
+-        checksum.update((byte) (input >> 32));
+-        checksum.update((byte) (input >> 24));
+-        checksum.update((byte) (input >> 16));
+-        checksum.update((byte) (input >> 8));
+-        checksum.update((byte) input /* >> 0 */);
++        byte[] buffer = TL_LONG_BUFFER.get();
++        buffer[0] = (byte) (input >> 56);
++        buffer[1] = (byte) (input >> 48);
++        buffer[2] = (byte) (input >> 40);
++        buffer[3] = (byte) (input >> 32);
++        buffer[4] = (byte) (input >> 24);
++        buffer[5] = (byte) (input >> 16);
++        buffer[6] = (byte) (input >> 8);
++        buffer[7] = (byte) input;
++        checksum.update(buffer, 0, 8);
+     }
+ }

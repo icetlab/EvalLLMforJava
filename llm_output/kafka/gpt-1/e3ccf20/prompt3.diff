@@ -1,0 +1,27 @@
+diff --git a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+index 86f06981ff..6e7f184cb5 100644
+--- a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
++++ b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+@@ -349,13 +349,16 @@ class AclAuthorizer extends Authorizer with Logging {
+         .map(_.acls)
+         .getOrElse(Set.empty)
+ 
+-      val prefixed = aclCache
+-        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))
+-        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))
+-        .filterKeys(resource => resourceName.startsWith(resource.name))
+-        .values
+-        .flatMap { _.acls }
++      val prefixed = {
++          // Efficiently collect prefixed ACLs without filterKeys
++          val iter = aclCache.iteratorFrom(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))
++          iter.takeWhile { case (pattern, _) =>
++            pattern.resourceType == resourceType && pattern.patternType == PatternType.PREFIXED
++          }
++          .filter { case (pattern, _) => resourceName.startsWith(pattern.name) }
++          .flatMap { case (_, versioned) => versioned.acls }
+           .toSet
++        }
+ 
+       prefixed ++ wildcard ++ literal
+     }

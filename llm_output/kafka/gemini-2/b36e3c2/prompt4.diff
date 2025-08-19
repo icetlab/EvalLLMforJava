@@ -1,0 +1,38 @@
+diff --git a/core/src/main/scala/kafka/log/LogValidator.scala b/core/src/main/scala/kafka/log/LogValidator.scala
+index 48b9f57d9a..f7cd4105fb 100644
+--- a/core/src/main/scala/kafka/log/LogValidator.scala
++++ b/core/src/main/scala/kafka/log/LogValidator.scala
+@@ -238,12 +238,14 @@ private[log] object LogValidator extends Logging {
+       validateBatch(topicPartition, firstBatch, batch, origin, toMagicValue, brokerTopicStats)
+ 
+       val recordErrors = new ArrayBuffer[ApiRecordError](0)
+-      for ((record, batchIndex) <- batch.asScala.view.zipWithIndex) {
++      var batchIndex = 0
++      for (record <- batch.asScala) {
+         validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,
+           timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)
+         // we fail the batch if any record fails, so we stop appending if any record fails
+         if (recordErrors.isEmpty)
+           builder.appendWithOffset(offsetCounter.getAndIncrement(), record)
++        batchIndex += 1
+       }
+ 
+       processRecordErrors(recordErrors)
+@@ -286,7 +288,8 @@ private[log] object LogValidator extends Logging {
+       var offsetOfMaxBatchTimestamp = -1L
+ 
+       val recordErrors = new ArrayBuffer[ApiRecordError](0)
+-      for ((record, batchIndex) <- batch.asScala.view.zipWithIndex) {
++      var batchIndex = 0
++      for (record <- batch.asScala) {
+         validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,
+           timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)
+ 
+@@ -295,6 +298,7 @@ private[log] object LogValidator extends Logging {
+           maxBatchTimestamp = record.timestamp
+           offsetOfMaxBatchTimestamp = offset
+         }
++        batchIndex += 1
+       }
+ 
+       processRecordErrors(recordErrors)
