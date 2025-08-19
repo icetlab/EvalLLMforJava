@@ -1,0 +1,40 @@
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MutableRoaringBitmap.java b/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MutableRoaringBitmap.java
+index fb9e35b4..f533bff0 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MutableRoaringBitmap.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MutableRoaringBitmap.java
+@@ -1623,6 +1623,35 @@ public class MutableRoaringBitmap extends ImmutableRoaringBitmap
+     getMappeableRoaringArray().writeExternal(out);
+   }
+ 
++  /**
++   * Checks whether the parameter is a subset of this MutableRoaringBitmap or not
++   * @param subset the potential subset
++   * @return true if the parameter is a subset of this bitmap
++   */
++  public boolean contains(MutableRoaringBitmap subset) {
++    final int length1 = this.highLowContainer.size();
++    final int length2 = subset.highLowContainer.size();
++    int pos1 = 0, pos2 = 0;
++    while (pos1 < length1 && pos2 < length2) {
++      final char s1 = this.highLowContainer.getKeyAtIndex(pos1);
++      final char s2 = subset.highLowContainer.getKeyAtIndex(pos2);
++      if (s1 == s2) {
++        final MappeableContainer c1 = this.highLowContainer.getContainerAtIndex(pos1);
++        final MappeableContainer c2 = subset.highLowContainer.getContainerAtIndex(pos2);
++        if (!c1.contains(c2)) {
++          return false;
++        }
++        ++pos1;
++        ++pos2;
++      } else if (s1 - s2 > 0) {
++        return false;
++      } else {
++        pos1 = this.highLowContainer.advanceUntil(s2, pos1);
++      }
++    }
++    return pos2 == length2;
++  }
++
+ 
+ 
+   /**

@@ -1,0 +1,122 @@
+diff --git a/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java b/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
+index c40c836b..2e896f7a 100644
+--- a/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
++++ b/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
+@@ -107,30 +107,21 @@ public class BitSliceIndexBase {
+     batchSize = Math.min(batchSize, 65536);
+ 
+ 
+-    List<int[]> batches = new ArrayList<>();
+-
++    List<CompletableFuture<R>> futures = new ArrayList<>();
+     final BatchIterator batchIterator = foundSet.getBatchIterator();
+     while (batchIterator.hasNext()) {
+       int[] buffer = new int[batchSize];
+       int cardinality = batchIterator.nextBatch(buffer);
+       if (cardinality > 0) {
++        final int[] batch;
+         if (cardinality == batchSize) {
+-          batches.add(buffer);
++          batch = buffer;
+         } else {
+-          int[] buff = new int[cardinality];
+-          System.arraycopy(buffer, 0, buff, 0, cardinality);
+-          batches.add(buff);
++          batch = java.util.Arrays.copyOf(buffer, cardinality);
+         }
++        futures.add(invokeAsync(() -> func.apply(batch), null, pool));
+       }
+     }
+-
+-    List<CompletableFuture<R>> futures = new ArrayList<>();
+-    for (int[] batch : batches) {
+-      CompletableFuture<R> future = invokeAsync(() -> {
+-        return func.apply(batch);
+-      }, null, pool);
+-      futures.add(future);
+-    }
+     return futures;
+   }
+ 
+@@ -193,32 +184,37 @@ public class BitSliceIndexBase {
+ 
+     MutableRoaringBitmap GT = new MutableRoaringBitmap();
+     MutableRoaringBitmap LT = new MutableRoaringBitmap();
+-    ImmutableRoaringBitmap EQ = this.ebM;
++    MutableRoaringBitmap EQ = this.ebM.toMutableRoaringBitmap();
+ 
+ 
+     for (int i = this.bitCount() - 1; i >= 0; i--) {
+       int bit = (predicate >> i) & 1;
++      ImmutableRoaringBitmap slice = this.bA[i];
+       if (bit == 1) {
+-        LT = ImmutableRoaringBitmap.or(LT, ImmutableRoaringBitmap.andNot(EQ, this.bA[i]));
+-        EQ = ImmutableRoaringBitmap.and(EQ, this.bA[i]);
++        LT.or(ImmutableRoaringBitmap.andNot(EQ, slice));
++        EQ.and(slice);
+       } else {
+-        GT = ImmutableRoaringBitmap.or(GT, ImmutableRoaringBitmap.and(EQ, this.bA[i]));
+-        EQ = ImmutableRoaringBitmap.andNot(EQ, this.bA[i]);
++        GT.or(ImmutableRoaringBitmap.and(EQ, slice));
++        EQ.andNot(slice);
+       }
+ 
+     }
+-    EQ = ImmutableRoaringBitmap.and(fixedFoundSet, EQ);
++    EQ.and(fixedFoundSet);
+     switch (operation) {
+       case EQ:
+         return EQ;
+       case GT:
+-        return ImmutableRoaringBitmap.and(GT, fixedFoundSet);
++        GT.and(fixedFoundSet);
++        return GT;
+       case LT:
+-        return ImmutableRoaringBitmap.and(LT, fixedFoundSet);
++        LT.and(fixedFoundSet);
++        return LT;
+       case LE:
+-        return ImmutableRoaringBitmap.or(LT, EQ);
++        LT.or(EQ);
++        return LT;
+       case GE:
+-        return ImmutableRoaringBitmap.or(GT, EQ);
++        GT.or(EQ);
++        return GT;
+       default:
+         throw new IllegalArgumentException("");
+     }
+@@ -233,7 +229,7 @@ public class BitSliceIndexBase {
+    */
+   private ImmutableRoaringBitmap owenGreatEqual(int predicate,
+                           ImmutableRoaringBitmap foundSet) {
+-    ImmutableRoaringBitmap lastSpineGate = null;
++    MutableRoaringBitmap lastSpineGate = null;
+     int beGtrThan = predicate - 1;
+     List<ImmutableRoaringBitmap> orInputs = new ArrayList<>();
+     int leastSignifZero = Long.numberOfTrailingZeros(~beGtrThan);
+@@ -247,10 +243,11 @@ public class BitSliceIndexBase {
+           orInputs.add(MutableRoaringBitmap.and(lastSpineGate, this.bA[workingBit]));
+         }
+       } else {
+-        if (lastSpineGate == null)
+-          lastSpineGate = this.bA[workingBit];
+-        else
+-          lastSpineGate = ImmutableRoaringBitmap.and(lastSpineGate, this.bA[workingBit]);
++        if (lastSpineGate == null) {
++          lastSpineGate = this.bA[workingBit].toMutableRoaringBitmap();
++        } else {
++          lastSpineGate.and(this.bA[workingBit]);
++        }
+       }
+     }
+ 
+@@ -518,7 +515,7 @@ public class BitSliceIndexBase {
+     }
+     long count = foundSet.getLongCardinality();
+ 
+-    Long sum = IntStream.range(0, this.bitCount())
++    Long sum = IntStream.range(0, this.bitCount()).parallel()
+         .mapToLong(x -> (long) (1 << x) * ImmutableRoaringBitmap.andCardinality(this.bA[x], foundSet))
+         .sum();
+ 

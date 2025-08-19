@@ -1,0 +1,41 @@
+diff --git a/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java b/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
+index c40c836b..daeff487 100644
+--- a/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
++++ b/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
+@@ -14,6 +14,7 @@ import org.roaringbitmap.buffer.MutableRoaringBitmap;
+ import java.util.ArrayList;
+ import java.util.List;
+ import java.util.Set;
++import java.util.Arrays;
+ import java.util.concurrent.CompletableFuture;
+ import java.util.concurrent.ExecutionException;
+ import java.util.concurrent.Executor;
+@@ -100,8 +101,8 @@ public class BitSliceIndexBase {
+                               ImmutableRoaringBitmap foundSet,
+                               ExecutorService pool) {
+     int batchSize = foundSet.getCardinality() / parallelism;
+-    // fix when batchSize < parallelism
+-    batchSize = Math.max(batchSize, parallelism);
++    // fix when batchSize < 1
++    batchSize = Math.max(batchSize, 1);
+ 
+     // todo RoaringBitmap's batchIterator return max 2^16
+     batchSize = Math.min(batchSize, 65536);
+@@ -114,13 +115,10 @@ public class BitSliceIndexBase {
+       int[] buffer = new int[batchSize];
+       int cardinality = batchIterator.nextBatch(buffer);
+       if (cardinality > 0) {
+-        if (cardinality == batchSize) {
+-          batches.add(buffer);
+-        } else {
+-          int[] buff = new int[cardinality];
+-          System.arraycopy(buffer, 0, buff, 0, cardinality);
+-          batches.add(buff);
+-        }
++        batches.add(cardinality == batchSize
++            ? buffer
++            : Arrays.copyOf(buffer, cardinality)
++        );
+       }
+     }
+ 

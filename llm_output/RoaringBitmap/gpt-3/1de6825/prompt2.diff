@@ -1,0 +1,61 @@
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java b/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java
+index de6dddea..658b6663 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java
+@@ -19,22 +19,25 @@ public class Node16 extends Node {
+ 
+   @Override
+   public int getChildPos(byte k) {
+-    byte[] firstBytes = LongUtils.toBDBytes(firstV);
+     if (count <= 8) {
+-      return Node.binarySearch(firstBytes, 0, count, k);
+-    } else {
+-      int pos = Node.binarySearch(firstBytes, 0, 8, k);
+-      if (pos != ILLEGAL_IDX) {
+-        return pos;
+-      } else {
+-        byte[] secondBytes = LongUtils.toBDBytes(secondV);
+-        pos = Node.binarySearch(secondBytes, 0, (count - 8), k);
+-        if (pos != ILLEGAL_IDX) {
+-          return 8 + pos;
+-        } else {
++      for (int i = 0; i < count; i++) {
++        if ((byte)(firstV >>> ((7 - i) * 8)) == k) {
++          return i;
++        }
++      }
+       return ILLEGAL_IDX;
++    } else {
++      for (int i = 0; i < 8; i++) {
++        if ((byte)(firstV >>> ((7 - i) * 8)) == k) {
++          return i;
+         }
+       }
++      for (int i = 0; i < (count - 8); i++) {
++        if ((byte)(secondV >>> ((7 - i) * 8)) == k) {
++          return 8 + i;
++        }
++      }
++      return ILLEGAL_IDX;
+     }
+   }
+ 
+@@ -84,15 +87,11 @@ public class Node16 extends Node {
+ 
+   @Override
+   public byte getChildKey(int pos) {
+-    int posInLong;
+     if (pos <= 7) {
+-      posInLong = pos;
+-      byte[] firstBytes = LongUtils.toBDBytes(firstV);
+-      return firstBytes[posInLong];
++      return (byte)(firstV >>> ((7 - pos) * 8));
+     } else {
+-      posInLong = pos - 8;
+-      byte[] secondBytes = LongUtils.toBDBytes(secondV);
+-      return secondBytes[posInLong];
++      int posInLong = pos - 8;
++      return (byte)(secondV >>> ((7 - posInLong) * 8));
+     }
+   }
+ 

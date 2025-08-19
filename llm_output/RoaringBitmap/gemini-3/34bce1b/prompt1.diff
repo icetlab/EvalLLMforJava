@@ -1,0 +1,34 @@
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/IntegerUtil.java b/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/IntegerUtil.java
+index ed36adf0..a7870fdf 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/IntegerUtil.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/IntegerUtil.java
+@@ -50,9 +50,26 @@ public class IntegerUtil {
+    * @return a fresh integer value
+    */
+   public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {
+-    byte[] initialVal = toBDBytes(v);
+-    System.arraycopy(initialVal, pos + 1, initialVal, pos, count);
+-    return fromBDBytes(initialVal);
++    if (count == 0) {
++      return v;
++    }
++    // The original implementation would throw an ArrayIndexOutOfBoundsException from
++    // System.arraycopy for invalid pos/count. We replicate this behavior for correctness.
++    if (pos < 0 || count < 0 || pos + 1 + count > 4 || pos + count > 4) {
++      // This will throw an appropriate exception, matching original behavior.
++      byte[] dummy = new byte[4];
++      System.arraycopy(dummy, pos + 1, dummy, pos, count);
++    }
++
++    // mask for high bytes, from 0 to pos-1
++    int highMask = (int) (-1L << ((4 - pos) * 8));
++    // mask for low bytes, from pos+count to 3
++    int lowMask = (1 << ((4 - (pos + count)) * 8)) - 1;
++
++    int preservedPart = v & (highMask | lowMask);
++    int shiftedPart = (v << 8) & ~(highMask | lowMask);
++
++    return preservedPart | shiftedPart;
+   }
+ 
+   /**

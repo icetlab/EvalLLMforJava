@@ -1,0 +1,105 @@
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java b/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java
+index de6dddea..df21d925 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java
+@@ -9,6 +9,27 @@ import org.roaringbitmap.longlong.LongUtils;
+ 
+ public class Node16 extends Node {
+ 
++  // helper to extract the big‐endian byte at index 0..7 from a long
++  private static byte extractByte(long v, int index) {
++    return (byte)(v >>> ((7 - index) << 3));
++  }
++
++  // fill 8 bytes from a long into bytes[offset..offset+7] in big‐endian order
++  private static void fillBytesFromLong(long v, byte[] bytes, int offset) {
++    for (int i = 0; i < 8; i++) {
++      bytes[offset + i] = (byte)(v >>> ((7 - i) * 8));
++    }
++  }
++
++  // compose a long from bytes[offset..offset+7] in big‐endian order
++  private static long bytesToLong(byte[] bytes, int offset) {
++    long r = 0L;
++    for (int i = 0; i < 8; i++) {
++      r = (r << 8) | (bytes[offset + i] & 0xFFL);
++    }
++    return r;
++  }
++
+   long firstV = 0L;
+   long secondV = 0L;
+   Node[] children = new Node[16];
+@@ -84,15 +105,10 @@ public class Node16 extends Node {
+ 
+   @Override
+   public byte getChildKey(int pos) {
+-    int posInLong;
+     if (pos <= 7) {
+-      posInLong = pos;
+-      byte[] firstBytes = LongUtils.toBDBytes(firstV);
+-      return firstBytes[posInLong];
++      return extractByte(firstV, pos);
+     } else {
+-      posInLong = pos - 8;
+-      byte[] secondBytes = LongUtils.toBDBytes(secondV);
+-      return secondBytes[posInLong];
++      return extractByte(secondV, pos - 8);
+     }
+   }
+ 
+@@ -145,26 +161,24 @@ public class Node16 extends Node {
+   public static Node insert(Node node, Node child, byte key) {
+     Node16 currentNode16 = (Node16) node;
+     if (currentNode16.count < 8) {
+-      //first
+-      byte[] bytes = LongUtils.toBDBytes(currentNode16.firstV);
++      byte[] bytes = new byte[8];
++      fillBytesFromLong(currentNode16.firstV, bytes, 0);
+       bytes[currentNode16.count] = key;
+-      currentNode16.firstV = LongUtils.fromBDBytes(bytes);
+       currentNode16.children[currentNode16.count] = child;
+       sortSmallByteArray(bytes, currentNode16.children, 0, currentNode16.count);
+       currentNode16.count++;
+-      currentNode16.firstV = LongUtils.fromBDBytes(bytes);
++      currentNode16.firstV = bytesToLong(bytes, 0);
+       return currentNode16;
+     } else if (currentNode16.count < 16) {
+-      //second
+-      ByteBuffer byteBuffer = ByteBuffer.allocate(16).order(ByteOrder.BIG_ENDIAN);
+-      byteBuffer.putLong(currentNode16.firstV);
+-      byteBuffer.putLong(currentNode16.secondV);
+-      byteBuffer.put(currentNode16.count, key);
++      byte[] bytes = new byte[16];
++      fillBytesFromLong(currentNode16.firstV, bytes, 0);
++      fillBytesFromLong(currentNode16.secondV, bytes, 8);
++      bytes[currentNode16.count] = key;
+       currentNode16.children[currentNode16.count] = child;
+-      sortSmallByteArray(byteBuffer.array(), currentNode16.children, 0, currentNode16.count);
++      sortSmallByteArray(bytes, currentNode16.children, 0, currentNode16.count);
+       currentNode16.count++;
+-      currentNode16.firstV = byteBuffer.getLong(0);
+-      currentNode16.secondV = byteBuffer.getLong(8);
++      currentNode16.firstV = bytesToLong(bytes, 0);
++      currentNode16.secondV = bytesToLong(bytes, 8);
+       return currentNode16;
+     } else {
+       Node48 node48 = new Node48(currentNode16.prefixLength);
+@@ -194,12 +208,13 @@ public class Node16 extends Node {
+   @Override
+   public Node remove(int pos) {
+     children[pos] = null;
+-    ByteBuffer byteBuffer = ByteBuffer.allocate(16).order(ByteOrder.BIG_ENDIAN);
+-    byte[] bytes = byteBuffer.putLong(firstV).putLong(secondV).array();
++    byte[] bytes = new byte[16];
++    fillBytesFromLong(firstV, bytes, 0);
++    fillBytesFromLong(secondV, bytes, 8);
+     System.arraycopy(bytes, pos + 1, bytes, pos, (16 - pos - 1));
+     System.arraycopy(children, pos + 1, children, pos, (16 - pos - 1));
+-    firstV = byteBuffer.getLong(0);
+-    secondV = byteBuffer.getLong(8);
++    firstV = bytesToLong(bytes, 0);
++    secondV = bytesToLong(bytes, 8);
+     count--;
+     if (count <= 3) {
+       //shrink to node4

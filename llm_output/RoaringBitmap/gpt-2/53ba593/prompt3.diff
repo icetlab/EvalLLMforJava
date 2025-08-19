@@ -1,0 +1,33 @@
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java b/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java
+index 9ae064da..5c92b99e 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java
+@@ -1557,23 +1557,19 @@ public class RoaringBitmap implements Cloneable, Serializable, Iterable<Integer>
+    */
+   public boolean checkedAdd(final int x) {
+     final char hb = Util.highbits(x);
++    final char lb = Util.lowbits(x);
+     final int i = highLowContainer.getIndex(hb);
+     if (i >= 0) {
+       Container c = highLowContainer.getContainerAtIndex(i);
+-      int oldCard = c.getCardinality();
+-      // we need to keep the newContainer if a switch between containers type
+-      // occur, in order to get the new cardinality
+-      Container newCont = c.add(Util.lowbits(x));
++      boolean present = c.contains(lb);
++      Container newCont = c.add(lb);
+       highLowContainer.setContainerAtIndex(i, newCont);
+-      if (newCont.getCardinality() > oldCard) {
+-        return true;
+-      }
++      return !present;
+     } else {
+       final ArrayContainer newac = new ArrayContainer();
+-      highLowContainer.insertNewKeyValueAt(-i - 1, hb, newac.add(Util.lowbits(x)));
++      highLowContainer.insertNewKeyValueAt(-i - 1, hb, newac.add(lb));
+       return true;
+     }
+-    return false;
+   }
+ 
+   /**

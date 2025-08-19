@@ -1,0 +1,121 @@
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java b/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java
+index de6dddea..c72c476f 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java
+@@ -19,16 +19,14 @@ public class Node16 extends Node {
+ 
+   @Override
+   public int getChildPos(byte k) {
+-    byte[] firstBytes = LongUtils.toBDBytes(firstV);
+     if (count <= 8) {
+-      return Node.binarySearch(firstBytes, 0, count, k);
++      return binarySearchOnLong(firstV, 0, count, k);
+     } else {
+-      int pos = Node.binarySearch(firstBytes, 0, 8, k);
++      int pos = binarySearchOnLong(firstV, 0, 8, k);
+       if (pos != ILLEGAL_IDX) {
+         return pos;
+       } else {
+-        byte[] secondBytes = LongUtils.toBDBytes(secondV);
+-        pos = Node.binarySearch(secondBytes, 0, (count - 8), k);
++        pos = binarySearchOnLong(secondV, 0, (count - 8), k);
+         if (pos != ILLEGAL_IDX) {
+           return 8 + pos;
+         } else {
+@@ -40,21 +38,19 @@ public class Node16 extends Node {
+ 
+   @Override
+   public SearchResult getNearestChildPos(byte k) {
+-    byte[] firstBytes = LongUtils.toBDBytes(firstV);
+     if (count <= 8) {
+-      return Node.binarySearchWithResult(firstBytes, 0, count, k);
++      return binarySearchWithResultOnLong(firstV, 0, count, k);
+     } else {
+-      SearchResult firstResult = Node.binarySearchWithResult(
+-              firstBytes, 0, 8, k);
++      SearchResult firstResult = binarySearchWithResultOnLong(
++              firstV, 0, 8, k);
+       // given the values are "in order" if we found a match or a value larger than
+       // the target we are done.
+       if (firstResult.outcome == SearchResult.Outcome.FOUND
+               || firstResult.hasNextLargerPos()) {
+         return firstResult;
+       } else {
+-        byte[] secondBytes = LongUtils.toBDBytes(secondV);
+-        SearchResult secondResult = Node.binarySearchWithResult(
+-                secondBytes, 0, (count - 8), k);
++        SearchResult secondResult = binarySearchWithResultOnLong(
++                secondV, 0, (count - 8), k);
+ 
+         switch(secondResult.outcome) {
+           case FOUND:
+@@ -84,15 +80,11 @@ public class Node16 extends Node {
+ 
+   @Override
+   public byte getChildKey(int pos) {
+-    int posInLong;
+     if (pos <= 7) {
+-      posInLong = pos;
+-      byte[] firstBytes = LongUtils.toBDBytes(firstV);
+-      return firstBytes[posInLong];
++      return (byte) (firstV >> (8 * (7 - pos)));
+     } else {
+-      posInLong = pos - 8;
+-      byte[] secondBytes = LongUtils.toBDBytes(secondV);
+-      return secondBytes[posInLong];
++      int posInLong = pos - 8;
++      return (byte) (secondV >> (8 * (7 - posInLong)));
+     }
+   }
+ 
+@@ -254,4 +246,50 @@ public class Node16 extends Node {
+       offset++;
+     }
+   }
++
++  private int binarySearchOnLong(long val, int fromIndex, int toIndex, byte key) {
++    int low = fromIndex;
++    int high = toIndex - 1;
++    int unsignedKey = Byte.toUnsignedInt(key);
++
++    while (low <= high) {
++      int mid = (low + high) >>> 1;
++      byte midByte = (byte) (val >> (8 * (7 - mid)));
++      int midVal = Byte.toUnsignedInt(midByte);
++
++      if (midVal < unsignedKey) {
++        low = mid + 1;
++      } else if (midVal > unsignedKey) {
++        high = mid - 1;
++      } else {
++        return mid;
++      }
++    }
++    return ILLEGAL_IDX;
++  }
++
++  private SearchResult binarySearchWithResultOnLong(long val, int fromIndex, int toIndex,
++          byte key) {
++    int low = fromIndex;
++    int high = toIndex - 1;
++    int unsignedKey = Byte.toUnsignedInt(key);
++
++    while (low <= high) {
++      int mid = (low + high) >>> 1;
++      byte midByte = (byte) (val >> (8 * (7 - mid)));
++      int midVal = Byte.toUnsignedInt(midByte);
++
++      if (midVal < unsignedKey) {
++        low = mid + 1;
++      } else if (midVal > unsignedKey) {
++        high = mid - 1;
++      } else {
++        return SearchResult.found(mid);
++      }
++    }
++    // not found
++    int nextSmaller = high;
++    int nextLarger = low < toIndex ? low : ILLEGAL_IDX;
++    return SearchResult.notFound(nextSmaller, nextLarger);
++  }
+ }

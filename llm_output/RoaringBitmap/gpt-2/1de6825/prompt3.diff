@@ -1,0 +1,96 @@
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java b/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java
+index de6dddea..52e3bab0 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java
+@@ -84,15 +84,11 @@ public class Node16 extends Node {
+ 
+   @Override
+   public byte getChildKey(int pos) {
+-    int posInLong;
+     if (pos <= 7) {
+-      posInLong = pos;
+-      byte[] firstBytes = LongUtils.toBDBytes(firstV);
+-      return firstBytes[posInLong];
++      return (byte)(firstV >>> ((7 - pos) << 3));
+     } else {
+-      posInLong = pos - 8;
+-      byte[] secondBytes = LongUtils.toBDBytes(secondV);
+-      return secondBytes[posInLong];
++      int posInLong = pos - 8;
++      return (byte)(secondV >>> ((7 - posInLong) << 3));
+     }
+   }
+ 
+@@ -155,16 +151,31 @@ public class Node16 extends Node {
+       currentNode16.firstV = LongUtils.fromBDBytes(bytes);
+       return currentNode16;
+     } else if (currentNode16.count < 16) {
+-      //second
+-      ByteBuffer byteBuffer = ByteBuffer.allocate(16).order(ByteOrder.BIG_ENDIAN);
+-      byteBuffer.putLong(currentNode16.firstV);
+-      byteBuffer.putLong(currentNode16.secondV);
+-      byteBuffer.put(currentNode16.count, key);
++      // second: avoid ByteBuffer
++      byte[] bytes = new byte[16];
++      // unpack existing longs
++      for (int i = 0; i < 8; i++) {
++        bytes[i] = (byte)(currentNode16.firstV >>> ((7 - i) << 3));
++      }
++      for (int i = 8; i < 16; i++) {
++        bytes[i] = (byte)(currentNode16.secondV >>> ((15 - i) << 3));
++      }
++      // insert new key and child
++      bytes[currentNode16.count] = key;
+       currentNode16.children[currentNode16.count] = child;
+-      sortSmallByteArray(byteBuffer.array(), currentNode16.children, 0, currentNode16.count);
++      // sort and update count
++      sortSmallByteArray(bytes, currentNode16.children, 0, currentNode16.count);
+       currentNode16.count++;
+-      currentNode16.firstV = byteBuffer.getLong(0);
+-      currentNode16.secondV = byteBuffer.getLong(8);
++      // repack into longs
++      long newFirst = 0L, newSecond = 0L;
++      for (int i = 0; i < 8; i++) {
++        newFirst = (newFirst << 8) | (bytes[i] & 0xFFL);
++      }
++      for (int i = 8; i < 16; i++) {
++        newSecond = (newSecond << 8) | (bytes[i] & 0xFFL);
++      }
++      currentNode16.firstV = newFirst;
++      currentNode16.secondV = newSecond;
+       return currentNode16;
+     } else {
+       Node48 node48 = new Node48(currentNode16.prefixLength);
+@@ -194,12 +205,26 @@ public class Node16 extends Node {
+   @Override
+   public Node remove(int pos) {
+     children[pos] = null;
+-    ByteBuffer byteBuffer = ByteBuffer.allocate(16).order(ByteOrder.BIG_ENDIAN);
+-    byte[] bytes = byteBuffer.putLong(firstV).putLong(secondV).array();
+-    System.arraycopy(bytes, pos + 1, bytes, pos, (16 - pos - 1));
+-    System.arraycopy(children, pos + 1, children, pos, (16 - pos - 1));
+-    firstV = byteBuffer.getLong(0);
+-    secondV = byteBuffer.getLong(8);
++    // rebuild byte array directly
++    byte[] bytes = new byte[16];
++    for (int i = 0; i < 8; i++) {
++      bytes[i] = (byte)(firstV >>> ((7 - i) << 3));
++    }
++    for (int i = 8; i < 16; i++) {
++      bytes[i] = (byte)(secondV >>> ((15 - i) << 3));
++    }
++    // shift out the removed slot
++    System.arraycopy(bytes, pos + 1, bytes, pos, 16 - pos - 1);
++    System.arraycopy(children, pos + 1, children, pos, 16 - pos - 1);
++    // repack longs
++    firstV = 0L;
++    secondV = 0L;
++    for (int i = 0; i < 8; i++) {
++      firstV = (firstV << 8) | (bytes[i] & 0xFFL);
++    }
++    for (int i = 8; i < 16; i++) {
++      secondV = (secondV << 8) | (bytes[i] & 0xFFL);
++    }
+     count--;
+     if (count <= 3) {
+       //shrink to node4

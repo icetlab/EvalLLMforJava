@@ -1,0 +1,26 @@
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/IntegerUtil.java b/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/IntegerUtil.java
+index ed36adf0..1767c679 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/IntegerUtil.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/IntegerUtil.java
+@@ -50,9 +50,18 @@ public class IntegerUtil {
+    * @return a fresh integer value
+    */
+   public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {
+-    byte[] initialVal = toBDBytes(v);
+-    System.arraycopy(initialVal, pos + 1, initialVal, pos, count);
+-    return fromBDBytes(initialVal);
++    if (count <= 0) {
++      return v;
++    }
++    int res = v;
++    for (int i = 0; i < count; i++) {
++      int srcIndex = pos + i + 1;
++      int shiftSrc = (3 - srcIndex) << 3;
++      byte bv = (byte) (v >> shiftSrc);
++      int dstShift = (3 - (pos + i)) << 3;
++      res = (res & ~(0xFF << dstShift)) | ((bv & 0xFF) << dstShift);
++    }
++    return res;
+   }
+ 
+   /**
