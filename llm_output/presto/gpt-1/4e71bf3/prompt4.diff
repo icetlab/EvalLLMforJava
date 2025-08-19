@@ -1,0 +1,39 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+index da887a9ba3..2ecd9cc18e 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+@@ -160,6 +160,9 @@ public class ByteSelectiveStreamReader
+         if (dataStream == null && presentStream != null) {
+             streamPosition = readAllNulls(positions, positionCount);
+         }
++        else if (filter == null && presentStream == null) {
++            streamPosition = readNoFilterNoNulls(positions, positionCount);
++        }
+         else if (filter == null) {
+             streamPosition = readNoFilter(positions, positionCount);
+         }
+@@ -280,6 +283,24 @@ public class ByteSelectiveStreamReader
+         return streamPosition;
+     }
+ 
++    private int readNoFilterNoNulls(int[] positions, int positionCount)
++            throws IOException
++    {
++        // fast path for no filter and no nulls
++        int streamPosition = 0;
++        for (int i = 0; i < positionCount; i++) {
++            int position = positions[i];
++            if (position > streamPosition) {
++                skip(position - streamPosition);
++                streamPosition = position;
++            }
++            values[i] = dataStream.next();
++            streamPosition++;
++        }
++        outputPositionCount = positionCount;
++        return streamPosition;
++    }
++
+     private void skip(int items)
+             throws IOException
+     {

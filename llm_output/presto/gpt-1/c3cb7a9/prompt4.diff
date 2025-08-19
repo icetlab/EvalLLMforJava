@@ -1,0 +1,48 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
+index 6813ba04fa..76dc81417d 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
+@@ -899,7 +899,20 @@ public class WindowOperator
+         checkArgument(page.getPositionCount() > 0, "Must have at least one position");
+         checkPositionIndex(startPosition, page.getPositionCount(), "startPosition out of bounds");
+ 
+-        return findEndPosition(startPosition, page.getPositionCount(), (firstPosition, secondPosition) -> pagesHashStrategy.rowEqualsRow(firstPosition, page, secondPosition, page));
++        int left = startPosition;
++        int right = page.getPositionCount();
++
++        while (left + 1 < right) {
++            int middle = (left + right) >>> 1;
++            if (pagesHashStrategy.rowEqualsRow(startPosition, page, middle, page)) {
++                left = middle;
++            }
++            else {
++                right = middle;
++            }
++        }
++
++        return right;
+     }
+ 
+     // Assumes input grouped on relevant pagesHashStrategy columns
+@@ -908,7 +921,20 @@ public class WindowOperator
+         checkArgument(pagesIndex.getPositionCount() > 0, "Must have at least one position");
+         checkPositionIndex(startPosition, pagesIndex.getPositionCount(), "startPosition out of bounds");
+ 
+-        return findEndPosition(startPosition, pagesIndex.getPositionCount(), (firstPosition, secondPosition) -> pagesIndex.positionEqualsPosition(pagesHashStrategy, firstPosition, secondPosition));
++        int left = startPosition;
++        int right = pagesIndex.getPositionCount();
++
++        while (left + 1 < right) {
++            int middle = (left + right) >>> 1;
++            if (pagesIndex.positionEqualsPosition(pagesHashStrategy, startPosition, middle)) {
++                left = middle;
++            }
++            else {
++                right = middle;
++            }
++        }
++
++        return right;
+     }
+ 
+     /**

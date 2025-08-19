@@ -1,0 +1,34 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
+index aab2765889..eb99ef5c5a 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
+@@ -272,6 +272,29 @@ public class BooleanSelectiveStreamReader
+             throws IOException
+     {
+         // filter == null implies outputRequired == true
++        // fast path for no nulls and contiguous positions
++        if (presentStream == null) {
++            int base = positions[0];
++            boolean contiguous = true;
++            for (int i = 1; i < positionCount; i++) {
++                if (positions[i] != base + i) {
++                    contiguous = false;
++                    break;
++                }
++            }
++            if (contiguous) {
++                int streamPosition = 0;
++                if (base > streamPosition) {
++                    skip(base - streamPosition);
++                    streamPosition = base;
++                }
++                for (int i = 0; i < positionCount; i++) {
++                    values[i] = (byte) (dataStream.nextBit() ? 1 : 0);
++                }
++                outputPositionCount = positionCount;
++                return streamPosition + positionCount;
++            }
++        }
+         int streamPosition = 0;
+         for (int i = 0; i < positionCount; i++) {
+             int position = positions[i];

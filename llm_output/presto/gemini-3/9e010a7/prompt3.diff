@@ -1,0 +1,60 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java b/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java
+index c586b38f12..5a6bf40ba3 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java
+@@ -215,8 +215,11 @@ public final class MapToMapCast
+     {
+         checkState(toMapType.getTypeParameters().size() == 2, "Expect two type parameters for toMapType");
+         Type toKeyType = toMapType.getTypeParameters().get(0);
+-        TypedSet typedSet = new TypedSet(toKeyType, fromMap.getPositionCount() / 2, "map-to-map cast");
+-        BlockBuilder keyBlockBuilder = toKeyType.createBlockBuilder(null, fromMap.getPositionCount() / 2);
++        Type toValueType = toMapType.getTypeParameters().get(1);
++        int mapSize = fromMap.getPositionCount() / 2;
++
++        BlockBuilder keyBlockBuilder = toKeyType.createBlockBuilder(null, mapSize);
++        BlockBuilder valueBlockBuilder = toValueType.createBlockBuilder(null, mapSize);
+         for (int i = 0; i < fromMap.getPositionCount(); i += 2) {
+             try {
+                 keyProcessFunction.invokeExact(fromMap, i, properties, keyBlockBuilder);
+@@ -224,26 +227,30 @@ public final class MapToMapCast
+             catch (Throwable t) {
+                 throw internalError(t);
+             }
+-        }
+-        Block keyBlock = keyBlockBuilder.build();
+ 
+-        BlockBuilder mapBlockBuilder = toMapType.createBlockBuilder(null, 1);
+-        BlockBuilder blockBuilder = mapBlockBuilder.beginBlockEntry();
+-        for (int i = 0; i < fromMap.getPositionCount(); i += 2) {
+-            if (typedSet.add(keyBlock, i / 2)) {
+-                toKeyType.appendTo(keyBlock, i / 2, blockBuilder);
+             if (fromMap.isNull(i + 1)) {
+-                    blockBuilder.appendNull();
+-                    continue;
++                valueBlockBuilder.appendNull();
+             }
+-
++            else {
+                 try {
+-                    valueProcessFunction.invokeExact(fromMap, i + 1, properties, blockBuilder);
++                    valueProcessFunction.invokeExact(fromMap, i + 1, properties, valueBlockBuilder);
+                 }
+                 catch (Throwable t) {
+                     throw internalError(t);
+                 }
+             }
++        }
++
++        Block keyBlock = keyBlockBuilder.build();
++        Block valueBlock = valueBlockBuilder.build();
++        TypedSet typedSet = new TypedSet(toKeyType, mapSize, "map-to-map cast");
++        BlockBuilder mapBlockBuilder = toMapType.createBlockBuilder(null, 1);
++        BlockBuilder blockBuilder = mapBlockBuilder.beginBlockEntry();
++        for (int i = 0; i < mapSize; i++) {
++            if (typedSet.add(keyBlock, i)) {
++                toKeyType.appendTo(keyBlock, i, blockBuilder);
++                toValueType.appendTo(valueBlock, i, blockBuilder);
++            }
+             else {
+                 // if there are duplicated keys, fail it!
+                 throw new PrestoException(INVALID_CAST_ARGUMENT, "duplicate keys");

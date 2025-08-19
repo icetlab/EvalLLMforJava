@@ -1,0 +1,30 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java
+index 79b56c6971..c6a2d61cd4 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java
+@@ -632,7 +632,7 @@ public class SliceDirectSelectiveStreamReader
+         lengthIndex = 0;
+         outputPositionCount = 0;
+ 
+-        int totalLength = 0;
++        long totalLength = 0;
+         int maxLength = 0;
+         int dataLength = 0;
+ 
+@@ -686,13 +686,13 @@ public class SliceDirectSelectiveStreamReader
+             if (presentStream != null && nullsAllowed) {
+                 nulls = ensureCapacity(nulls, positionCount);
+             }
+-            dataLength = totalLength;
+-            data = ensureCapacity(data, totalLength);
++            dataLength = toIntExact(totalLength);
++            data = ensureCapacity(data, dataLength);
+             offsets = ensureCapacity(offsets, totalPositions + 1);
+         }
+         else {
+             if (useBatchMode(positionCount, totalPositions)) {
+-                dataLength = totalLength;
++                dataLength = toIntExact(totalLength);
+                 if (filter != null) {
+                     offsets = ensureCapacity(offsets, totalPositions + 1);
+                 }

@@ -1,0 +1,19 @@
+diff --git a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+index 0ee404f93c..52d0562fee 100644
+--- a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
++++ b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+@@ -345,11 +345,11 @@ public final class GeoFunctions
+             return input;
+         }
+ 
+-        OGCGeometry geometry = EsriGeometrySerde.deserialize(input);
+-        if (geometry.isEmpty()) {
++        Geometry geometry = deserialize(input);
++        if (geometry == null || geometry.isEmpty()) {
+             return null;
+         }
+-        return EsriGeometrySerde.serialize(geometry.buffer(distance));
++        return serialize(geometry.buffer(distance));
+     }
+ 
+     @Description("Returns the Point value that is the mathematical centroid of a Geometry")

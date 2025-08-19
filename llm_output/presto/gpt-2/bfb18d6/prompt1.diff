@@ -1,0 +1,43 @@
+diff --git a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+index cff4f39085..37dddefeb5 100644
+--- a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
++++ b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+@@ -145,6 +145,7 @@ public final class GeoFunctions
+             .put(OGCDisconnectedInterior, "Disconnected interior")
+             .build();
+     private static final int NUMBER_OF_DIMENSIONS = 3;
++private static final PackedCoordinateSequenceFactory COORD_SEQ_FACTORY = new PackedCoordinateSequenceFactory();
+     private static final Block EMPTY_ARRAY_OF_INTS = IntegerType.INTEGER.createFixedSizeBlockBuilder(0).build();
+ 
+     private static final float MIN_LATITUDE = -90;
+@@ -204,7 +205,7 @@ public final class GeoFunctions
+ 
+     private static CoordinateSequence readPointCoordinates(Block input, String functionName, boolean forbidDuplicates)
+     {
+-        PackedCoordinateSequenceFactory coordinateSequenceFactory = new PackedCoordinateSequenceFactory();
++        
+         double[] coordinates = new double[2 * input.getPositionCount()];
+         double lastX = Double.NaN;
+         double lastY = Double.NaN;
+@@ -236,7 +237,7 @@ public final class GeoFunctions
+             coordinates[2 * i + 1] = y;
+         }
+ 
+-        return coordinateSequenceFactory.create(coordinates, 2);
++        return COORD_SEQ_FACTORY.create(coordinates, 2);
+     }
+ 
+     @Description("Returns a Geometry type Polygon object from Well-Known Text representation (WKT)")
+@@ -685,8 +686,10 @@ public final class GeoFunctions
+         ListeningGeometryCursor[] cursorsByDimension = new ListeningGeometryCursor[NUMBER_OF_DIMENSIONS];
+         GeometryCursor[] operatorsByDimension = new GeometryCursor[NUMBER_OF_DIMENSIONS];
+ 
+-        setAll(cursorsByDimension, i -> new ListeningGeometryCursor());
+-        setAll(operatorsByDimension, i -> OperatorUnion.local().execute(cursorsByDimension[i], null, null));
++        for (int i = 0; i < NUMBER_OF_DIMENSIONS; i++) {
++            cursorsByDimension[i] = new ListeningGeometryCursor();
++            operatorsByDimension[i] = OperatorUnion.local().execute(cursorsByDimension[i], null, null);
++        }
+ 
+         Iterator<Slice> slicesIterator = slices.iterator();
+         if (!slicesIterator.hasNext()) {

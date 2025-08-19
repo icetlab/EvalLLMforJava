@@ -1,0 +1,26 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java b/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java
+index 74b77228f0..ea248d5763 100644
+--- a/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java
++++ b/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java
+@@ -46,6 +46,7 @@ public class PagesSerde
+     private final Optional<Compressor> compressor;
+     private final Optional<Decompressor> decompressor;
+     private final Optional<SpillCipher> spillCipher;
++    private ByteBuffer compressionBuffer;
+ 
+     public PagesSerde(BlockEncodingSerde blockEncodingSerde, Optional<Compressor> compressor, Optional<Decompressor> decompressor, Optional<SpillCipher> spillCipher)
+     {
+@@ -66,7 +67,12 @@ public class PagesSerde
+         byte markers = PageCodecMarker.none();
+ 
+         if (compressor.isPresent()) {
+-            ByteBuffer compressionBuffer = ByteBuffer.allocate(compressor.get().maxCompressedLength(uncompressedSize));
++            int maxCompressedLength = compressor.get().maxCompressedLength(uncompressedSize);
++            if (compressionBuffer == null || compressionBuffer.capacity() < maxCompressedLength) {
++                compressionBuffer = ByteBuffer.allocate(maxCompressedLength);
++            } else {
++                compressionBuffer.clear();
++            }
+             compressor.get().compress(slice.toByteBuffer(), compressionBuffer);
+             compressionBuffer.flip();
+             if ((((double) compressionBuffer.remaining()) / uncompressedSize) <= MINIMUM_COMPRESSION_RATIO) {

@@ -1,0 +1,52 @@
+diff --git a/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java b/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java
+index ea2cf982de..fe3e5d8380 100644
+--- a/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java
++++ b/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java
+@@ -54,9 +54,11 @@ public class SingleMapBlock
+     @Override
+     public long getSizeInBytes()
+     {
+-        return mapBlock.getRawKeyBlock().getRegionSizeInBytes(offset / 2, positionCount / 2) +
+-                mapBlock.getRawValueBlock().getRegionSizeInBytes(offset / 2, positionCount / 2) +
+-                sizeOfIntArray(positionCount / 2 * HASH_MULTIPLIER);
++        int entryCount = positionCount >> 1;
++        int regionOffset = offset >> 1;
++        return mapBlock.getRawKeyBlock().getRegionSizeInBytes(regionOffset, entryCount) +
++                mapBlock.getRawValueBlock().getRegionSizeInBytes(regionOffset, entryCount) +
++                sizeOfIntArray(entryCount * HASH_MULTIPLIER);
+     }
+ 
+     @Override
+@@ -92,12 +94,16 @@ public class SingleMapBlock
+     @Override
+     Block getRawKeyBlock()
+     {
++        int entryCount = positionCount >> 1;
++        int regionOffset = offset >> 1;
+         return mapBlock.getRawKeyBlock();
+     }
+ 
+     @Override
+     Block getRawValueBlock()
+     {
++        int entryCount = positionCount >> 1;
++        int regionOffset = offset >> 1;
+         return mapBlock.getRawValueBlock();
+     }
+ 
+@@ -134,11 +140,15 @@ public class SingleMapBlock
+     @Nullable
+     int[] getHashTable()
+     {
++        int entryCount = positionCount >> 1;
++        int regionOffset = offset >> 1;
+         return mapBlock.getHashTables().get();
+     }
+ 
+     Type getKeyType()
+     {
++        int entryCount = positionCount >> 1;
++        int regionOffset = offset >> 1;
+         return mapBlock.keyType;
+     }
+ 

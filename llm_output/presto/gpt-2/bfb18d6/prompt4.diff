@@ -1,0 +1,34 @@
+diff --git a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+index cff4f39085..382293dd12 100644
+--- a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
++++ b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+@@ -1064,6 +1064,29 @@ public final class GeoFunctions
+             return EsriGeometrySerde.serialize(intersection);
+         }
+ 
++        // Cheap envelope-geometry intersection
++        boolean leftEnv = deserializeType(left) == GeometrySerializationType.ENVELOPE;
++        boolean rightEnv = deserializeType(right) == GeometrySerializationType.ENVELOPE;
++        if (leftEnv ^ rightEnv) {
++            Slice envelopeSlice = leftEnv ? left : right;
++            Slice geometrySlice = leftEnv ? right : left;
++            Envelope envelope = deserializeEnvelope(envelopeSlice);
++            if (envelope.isEmpty()) {
++                return EMPTY_POLYGON;
++            }
++            Envelope geometryEnvelope = deserializeEnvelope(geometrySlice);
++            if (!envelope.intersect(geometryEnvelope)) {
++                return EMPTY_POLYGON;
++            }
++            // if envelope fully contains geometry, return it directly
++            if (envelope.getXMin() <= geometryEnvelope.getXMin() &&
++                envelope.getXMax() >= geometryEnvelope.getXMax() &&
++                envelope.getYMin() <= geometryEnvelope.getYMin() &&
++                envelope.getYMax() >= geometryEnvelope.getYMax()) {
++                return geometrySlice;
++            }
++        }
++
+         OGCGeometry leftGeometry = EsriGeometrySerde.deserialize(left);
+         OGCGeometry rightGeometry = EsriGeometrySerde.deserialize(right);
+         verifySameSpatialReference(leftGeometry, rightGeometry);

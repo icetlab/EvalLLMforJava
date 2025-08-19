@@ -1,0 +1,15 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java b/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
+index ce0ca747f2..d900544a22 100644
+--- a/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
++++ b/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
+@@ -138,8 +138,8 @@ public class TDigest
+         // compression is how many we actually keep
+         this.compression = 2 * publicCompression;
+ 
+-        // having a big buffer is good for speed
+-        int bufferSize = 5 * (int) ceil(this.publicCompression + sizeFudge);
++        // having a big buffer is good for speed, but we choose a smaller value to optimize for small distributions
++        int bufferSize = 2 * (int) ceil(this.publicCompression + sizeFudge);
+         int size = (int) ceil(this.compression + sizeFudge);
+ 
+         weight = new double[size];

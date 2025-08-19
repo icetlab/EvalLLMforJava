@@ -1,0 +1,76 @@
+diff --git a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+index 73db90dd6d..4018c8817c 100644
+--- a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
++++ b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+@@ -653,9 +653,13 @@ public final class GeoFunctions
+     // Points centroid is arithmetic mean of the input points
+     private static Point computePointsCentroid(MultiVertexGeometry multiVertex)
+     {
++        int pointCount = multiVertex.getPointCount();
++        if (pointCount == 0) {
++            return new Point();
++        }
+         double xSum = 0;
+         double ySum = 0;
+-        for (int i = 0; i < multiVertex.getPointCount(); i++) {
++        for (int i = 0; i < pointCount; i++) {
+             Point point = multiVertex.getPoint(i);
+             xSum += point.getX();
+             ySum += point.getY();
+@@ -666,18 +670,23 @@ public final class GeoFunctions
+     // Lines centroid is weighted mean of each line segment, weight in terms of line length
+     private static Point computeLineCentroid(Polyline polyline)
+     {
++        int pathCount = polyline.getPathCount();
+         double xSum = 0;
+         double ySum = 0;
+         double weightSum = 0;
+-        for (int i = 0; i < polyline.getPathCount(); i++) {
+-            Point startPoint = polyline.getPoint(polyline.getPathStart(i));
+-            Point endPoint = polyline.getPoint(polyline.getPathEnd(i) - 1);
++        for (int i = 0; i < pathCount; i++) {
++            int start = polyline.getPathStart(i);
++            int end = polyline.getPathEnd(i);
++            Point startPoint = polyline.getPoint(start);
++            Point endPoint = polyline.getPoint(end - 1);
+             double dx = endPoint.getX() - startPoint.getX();
+             double dy = endPoint.getY() - startPoint.getY();
+-            double length = Math.sqrt(dx * dx + dy * dy);
++            double length = Math.hypot(dx, dy);
+             weightSum += length;
+-            xSum += (startPoint.getX() + endPoint.getX()) * length / 2;
+-            ySum += (startPoint.getY() + endPoint.getY()) * length / 2;
++            double midX = (startPoint.getX() + endPoint.getX()) * 0.5;
++            double midY = (startPoint.getY() + endPoint.getY()) * 0.5;
++            xSum += midX * length;
++            ySum += midY * length;
+         }
+         return new Point(xSum / weightSum, ySum / weightSum);
+     }
+@@ -737,7 +746,7 @@ public final class GeoFunctions
+         double signedArea = 0;
+         for (int i = 0; i < pointCount; i++) {
+             Point current = polygon.getPoint(i);
+-            Point next = polygon.getPoint((i + 1) % polygon.getPointCount());
++            Point next = polygon.getPoint((i + 1) % pointCount);
+             double ladder = current.getX() * next.getY() - next.getX() * current.getY();
+             xSum += (current.getX() + next.getX()) * ladder;
+             ySum += (current.getY() + next.getY()) * ladder;
+@@ -749,12 +758,14 @@ public final class GeoFunctions
+     // MultiPolygon centroid is weighted mean of each polygon, weight in terms of polygon area
+     private static Point computeMultiPolygonCentroid(OGCMultiPolygon multiPolygon)
+     {
++        int geometryCount = multiPolygon.numGeometries();
+         double xSum = 0;
+         double ySum = 0;
+         double weightSum = 0;
+-        for (int i = 0; i < multiPolygon.numGeometries(); i++) {
+-            Point centroid = computePolygonCentroid((Polygon) multiPolygon.geometryN(i).getEsriGeometry());
+-            Polygon polygon = (Polygon) multiPolygon.geometryN(i).getEsriGeometry();
++        for (int i = 0; i < geometryCount; i++) {
++            OGCGeometry geom = multiPolygon.geometryN(i);
++            Polygon polygon = (Polygon) geom.getEsriGeometry();
++            Point centroid = computePolygonCentroid(polygon);
+             double weight = polygon.calculateArea2D();
+             weightSum += weight;
+             xSum += centroid.getX() * weight;

@@ -1,0 +1,24 @@
+diff --git a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+index cff4f39085..dac832794f 100644
+--- a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
++++ b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+@@ -132,7 +132,7 @@ import static org.locationtech.jts.simplify.TopologyPreservingSimplifier.simplif
+ public final class GeoFunctions
+ {
+     private static final Joiner OR_JOINER = Joiner.on(" or ");
+-    private static final Slice EMPTY_POLYGON = serialize(createJtsEmptyPolygon());
++    private static final Slice EMPTY_POLYGON = EsriGeometrySerde.serialize(createFromEsriGeometry(new Polygon(), null));
+     private static final double EARTH_RADIUS_KM = 6371.01;
+     private static final double EARTH_RADIUS_M = EARTH_RADIUS_KM * 1000.0;
+     private static final Map<Reason, String> NON_SIMPLE_REASONS = ImmutableMap.<Reason, String>builder()
+@@ -1064,6 +1064,10 @@ public final class GeoFunctions
+             return EsriGeometrySerde.serialize(intersection);
+         }
+ 
++        if (!envelopes(left, right, Envelope::intersect)) {
++            return EsriGeometrySerde.serialize(new OGCConcreteGeometryCollection(new ArrayList<>(), null));
++        }
++
+         OGCGeometry leftGeometry = EsriGeometrySerde.deserialize(left);
+         OGCGeometry rightGeometry = EsriGeometrySerde.deserialize(right);
+         verifySameSpatialReference(leftGeometry, rightGeometry);

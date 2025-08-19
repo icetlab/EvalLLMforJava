@@ -1,0 +1,37 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java b/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
+index ce0ca747f2..00f99e1315 100644
+--- a/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
++++ b/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
+@@ -215,15 +215,29 @@ public class TDigest
+         checkArgument(other != null, "Cannot merge with a null t-digest");
+         checkArgument(this.publicCompression == other.getCompressionFactor(), "TDigests must have the same compression, found (%s, %s)", this.publicCompression,
+                 other.getCompressionFactor());
+-        List<Centroid> tmp = new ArrayList<>();
+-        for (Centroid centroid : other.centroids()) {
+-            tmp.add(centroid);
++
++        // The original implementation would do other.centroids() which forces compression.
++        // This is inefficient if the other t-digest is small.
++        // This implementation merges unmerged and merged centroids from other t-digest without forcing compression.
++        List<Centroid> tmp = new ArrayList<>(other.activeCentroids + other.tempUsed);
++        for (int i = 0; i < other.activeCentroids; i++) {
++            tmp.add(new Centroid(other.mean[i], (int) other.weight[i]));
++        }
++        for (int i = 0; i < other.tempUsed; i++) {
++            tmp.add(new Centroid(other.tempMean[i], (int) other.tempWeight[i]));
+         }
+ 
+         shuffle(tmp, gen);
+         for (Centroid centroid : tmp) {
+             add(centroid.getMean(), centroid.getWeight());
+         }
++
++        if (other.min < min) {
++            min = other.min;
++        }
++        if (other.max > max) {
++            max = other.max;
++        }
+     }
+ 
+     private void mergeNewValues()

@@ -1,0 +1,52 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+index da887a9ba3..84e9e34512 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+@@ -257,6 +257,20 @@ public class ByteSelectiveStreamReader
+             throws IOException
+     {
+         // filter == null implies outputRequired == true
++
++        // fast path for contiguous rows with no nulls
++        if (presentStream == null && positionCount > 0 && positions[positionCount - 1] - positions[0] == positionCount - 1) {
++            int streamPosition = 0;
++            int toSkip = positions[0] - streamPosition;
++            if (toSkip > 0) {
++                skip(toSkip);
++            }
++            dataStream.next(values, 0, positionCount);
++            streamPosition = positions[positionCount - 1] + 1;
++            outputPositionCount = positionCount;
++            return streamPosition;
++        }
++
+         int streamPosition = 0;
+         for (int i = 0; i < positionCount; i++) {
+             int position = positions[i];
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java b/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java
+index 21edc123eb..e231a6fb86 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java
+@@ -119,6 +119,22 @@ public class ByteInputStream
+         return buffer[offset++];
+     }
+ 
++    public void next(byte[] data, int offset, int items)
++            throws IOException
++    {
++        int remaining = items;
++        while (remaining > 0) {
++            if (this.offset == this.length) {
++                readNextBlock();
++            }
++            int chunk = Math.min(remaining, this.length - this.offset);
++            System.arraycopy(buffer, this.offset, data, offset, chunk);
++            this.offset += chunk;
++            offset += chunk;
++            remaining -= chunk;
++        }
++    }
++
+     public void nextVector(Type type, long items, BlockBuilder builder)
+             throws IOException
+     {

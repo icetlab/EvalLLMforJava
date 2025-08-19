@@ -1,0 +1,44 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
+index 30e0088e35..24ba4f7b0d 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
+@@ -352,6 +352,7 @@ public class OptimizedPartitionedOutputOperator
+         private final PartitionFunction partitionFunction;
+         private final List<Integer> partitionChannels;
+         private final List<Optional<Block>> partitionConstants;
++        private final Block[] partitionFunctionArguments;
+         private final PagesSerde serde;
+         private final boolean replicatesAnyRow;
+         private final OptionalInt nullChannel; // when present, send the position to every partition if this channel is null.
+@@ -388,6 +389,8 @@ public class OptimizedPartitionedOutputOperator
+             this.partitionConstants = requireNonNull(partitionConstants, "partitionConstants is null").stream()
+                     .map(constant -> constant.map(ConstantExpression::getValueBlock))
+                     .collect(toImmutableList());
++            // reuse a single Block[] to avoid repeated allocations
++            this.partitionFunctionArguments = new Block[partitionChannels.size()];
+             this.replicatesAnyRow = replicatesAnyRow;
+             this.nullChannel = requireNonNull(nullChannel, "nullChannel is null");
+             this.outputBuffer = requireNonNull(outputBuffer, "outputBuffer is null");
+@@ -504,17 +507,17 @@ public class OptimizedPartitionedOutputOperator
+ 
+         private Page getPartitionFunctionArguments(Page page)
+         {
+-            Block[] blocks = new Block[partitionChannels.size()];
+-            for (int i = 0; i < blocks.length; i++) {
++            // fill the reusable Block[] instead of allocating a new one
++            for (int i = 0; i < partitionFunctionArguments.length; i++) {
+                 Optional<Block> partitionConstant = partitionConstants.get(i);
+                 if (partitionConstant.isPresent()) {
+-                    blocks[i] = new RunLengthEncodedBlock(partitionConstant.get(), page.getPositionCount());
++                    partitionFunctionArguments[i] = new RunLengthEncodedBlock(partitionConstant.get(), page.getPositionCount());
+                 }
+                 else {
+-                    blocks[i] = page.getBlock(partitionChannels.get(i));
++                    partitionFunctionArguments[i] = page.getBlock(partitionChannels.get(i));
+                 }
+             }
+-            return new Page(page.getPositionCount(), blocks);
++            return new Page(page.getPositionCount(), partitionFunctionArguments);
+         }
+ 
+         private static int getFixedWidthTypeSize(Type type)

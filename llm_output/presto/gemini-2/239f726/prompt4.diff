@@ -1,0 +1,61 @@
+diff --git a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+index 73db90dd6d..69b4a44d28 100644
+--- a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
++++ b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+@@ -516,14 +516,24 @@ public final class GeoFunctions
+     @SqlType(StandardTypes.BOOLEAN)
+     public static Boolean stContains(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
+-        Envelope leftEnvelope = deserializeEnvelope(left);
+-        Envelope rightEnvelope = deserializeEnvelope(right);
+-        if (leftEnvelope == null || rightEnvelope == null || !leftEnvelope.contains(rightEnvelope)) {
++        OGCGeometry leftGeometry = deserialize(left);
++        if (leftGeometry.isEmpty()) {
+             return false;
+         }
+-
+-        OGCGeometry leftGeometry = deserialize(left);
+         OGCGeometry rightGeometry = deserialize(right);
++        if (rightGeometry.isEmpty()) {
++            return false;
++        }
++
++        Envelope leftEnvelope = new Envelope();
++        leftGeometry.getEsriGeometry().queryEnvelope(leftEnvelope);
++        Envelope rightEnvelope = new Envelope();
++        rightGeometry.getEsriGeometry().queryEnvelope(rightEnvelope);
++
++        if (!leftEnvelope.contains(rightEnvelope)) {
++            return false;
++        }
++
+         verifySameSpatialReference(leftGeometry, rightGeometry);
+         return leftGeometry.contains(rightGeometry);
+     }
+@@ -571,7 +581,26 @@ public final class GeoFunctions
+     public static Boolean stIntersects(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
+         OGCGeometry leftGeometry = deserialize(left);
++        if (leftGeometry.isEmpty()) {
++            return false;
++        }
+         OGCGeometry rightGeometry = deserialize(right);
++        if (rightGeometry.isEmpty()) {
++            return false;
++        }
++
++        Envelope leftEnvelope = new Envelope();
++        leftGeometry.getEsriGeometry().queryEnvelope(leftEnvelope);
++        Envelope rightEnvelope = new Envelope();
++        rightGeometry.getEsriGeometry().queryEnvelope(rightEnvelope);
++
++        if (leftEnvelope.getXMax() < rightEnvelope.getXMin() ||
++                leftEnvelope.getXMin() > rightEnvelope.getXMax() ||
++                leftEnvelope.getYMax() < rightEnvelope.getYMin() ||
++                leftEnvelope.getYMin() > rightEnvelope.getYMax()) {
++            return false;
++        }
++
+         verifySameSpatialReference(leftGeometry, rightGeometry);
+         return leftGeometry.intersects(rightGeometry);
+     }

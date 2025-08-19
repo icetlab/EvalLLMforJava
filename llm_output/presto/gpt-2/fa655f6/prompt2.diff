@@ -1,0 +1,49 @@
+diff --git a/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java b/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java
+index ea2cf982de..36ff03a26d 100644
+--- a/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java
++++ b/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java
+@@ -220,7 +220,7 @@ public class SingleMapBlock
+             Boolean match;
+             try {
+                 // assuming maps with indeterminate keys are not supported
+-                match = (Boolean) mapBlock.keyBlockNativeEquals.invokeExact(mapBlock.getRawKeyBlock(), offset / 2 + keyPosition, nativeValue);
++                match = (Boolean) mapBlock.keyBlockNativeEquals.invoke(mapBlock.getRawKeyBlock(), offset / 2 + keyPosition, nativeValue);
+             }
+             catch (Throwable throwable) {
+                 throw handleThrowable(throwable);
+@@ -264,7 +264,7 @@ public class SingleMapBlock
+             Boolean match;
+             try {
+                 // assuming maps with indeterminate keys are not supported
+-                match = (Boolean) mapBlock.keyBlockNativeEquals.invokeExact(mapBlock.getRawKeyBlock(), offset / 2 + keyPosition, nativeValue);
++                match = (Boolean) mapBlock.keyBlockNativeEquals.invoke(mapBlock.getRawKeyBlock(), offset / 2 + keyPosition, nativeValue);
+             }
+             catch (Throwable throwable) {
+                 throw handleThrowable(throwable);
+@@ -308,7 +308,7 @@ public class SingleMapBlock
+             Boolean match;
+             try {
+                 // assuming maps with indeterminate keys are not supported
+-                match = (Boolean) mapBlock.keyBlockNativeEquals.invokeExact(mapBlock.getRawKeyBlock(), offset / 2 + keyPosition, nativeValue);
++                match = (Boolean) mapBlock.keyBlockNativeEquals.invoke(mapBlock.getRawKeyBlock(), offset / 2 + keyPosition, nativeValue);
+             }
+             catch (Throwable throwable) {
+                 throw handleThrowable(throwable);
+@@ -352,7 +352,7 @@ public class SingleMapBlock
+             Boolean match;
+             try {
+                 // assuming maps with indeterminate keys are not supported
+-                match = (Boolean) mapBlock.keyBlockNativeEquals.invokeExact(mapBlock.getRawKeyBlock(), offset / 2 + keyPosition, nativeValue);
++                match = (Boolean) mapBlock.keyBlockNativeEquals.invoke(mapBlock.getRawKeyBlock(), offset / 2 + keyPosition, nativeValue);
+             }
+             catch (Throwable throwable) {
+                 throw handleThrowable(throwable);
+@@ -396,7 +396,7 @@ public class SingleMapBlock
+             Boolean match;
+             try {
+                 // assuming maps with indeterminate keys are not supported
+-                match = (Boolean) mapBlock.keyBlockNativeEquals.invokeExact(mapBlock.getRawKeyBlock(), offset / 2 + keyPosition, nativeValue);
++                match = (Boolean) mapBlock.keyBlockNativeEquals.invoke(mapBlock.getRawKeyBlock(), offset / 2 + keyPosition, nativeValue);
+             }
+             catch (Throwable throwable) {
+                 throw handleThrowable(throwable);

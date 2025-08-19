@@ -1,0 +1,79 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java b/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
+index ce0ca747f2..c0f2683076 100644
+--- a/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
++++ b/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
+@@ -210,19 +210,53 @@ public class TDigest
+         }
+     }
+ 
++    private void shuffle(int[] array)
++    {
++        for (int i = array.length - 1; i > 0; i--) {
++            int j = gen.nextInt(i + 1);
++            // swap
++            int temp = array[i];
++            array[i] = array[j];
++            array[j] = temp;
++        }
++    }
++
+     public void merge(TDigest other)
+     {
+         checkArgument(other != null, "Cannot merge with a null t-digest");
+         checkArgument(this.publicCompression == other.getCompressionFactor(), "TDigests must have the same compression, found (%s, %s)", this.publicCompression,
+                 other.getCompressionFactor());
+-        List<Centroid> tmp = new ArrayList<>();
+-        for (Centroid centroid : other.centroids()) {
+-            tmp.add(centroid);
++
++        other.compress();
++        if (other.activeCentroids == 0) {
++            return;
++        }
++
++        // if we don't have enough space to add all of other's centroids, merge our own first.
++        if (tempUsed + other.activeCentroids >= tempWeight.length - activeCentroids - 1) {
++            mergeNewValues();
++        }
++
++        int[] indices = new int[other.activeCentroids];
++        for (int i = 0; i < other.activeCentroids; i++) {
++            indices[i] = i;
+         }
++        shuffle(indices);
+ 
+-        shuffle(tmp, gen);
+-        for (Centroid centroid : tmp) {
+-            add(centroid.getMean(), centroid.getWeight());
++        for (int i : indices) {
++            double x = other.mean[i];
++            double w = other.weight[i];
++            // inline add, without the buffer check, which we already did.
++            int where = tempUsed++;
++            tempWeight[where] = w;
++            tempMean[where] = x;
++            unmergedWeight += w;
++            if (x < min) {
++                min = x;
++            }
++            if (x > max) {
++                max = x;
++            }
+         }
+     }
+ 
+@@ -237,14 +271,12 @@ public class TDigest
+             return;
+         }
+ 
+-        if (force || unmergedWeight > 0) {
+         // note that we run the merge in reverse every other merge to avoid left-to-right bias in merging
+         merge(tempMean, tempWeight, tempUsed, order, unmergedWeight, mergeCount % 2 == 1, compression);
+         mergeCount++;
+         tempUsed = 0;
+         unmergedWeight = 0;
+     }
+-    }
+ 
+     private void merge(double[] incomingMean,
+             double[] incomingWeight,

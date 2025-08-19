@@ -1,0 +1,126 @@
+diff --git a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+index 73db90dd6d..339a9b880c 100644
+--- a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
++++ b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+@@ -534,6 +534,16 @@ public final class GeoFunctions
+     @SqlType(StandardTypes.BOOLEAN)
+     public static Boolean stCrosses(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
++        Envelope leftEnvelope = deserializeEnvelope(left);
++        Envelope rightEnvelope = deserializeEnvelope(right);
++        if (leftEnvelope == null || rightEnvelope == null ||
++                leftEnvelope.getXMax() < rightEnvelope.getXMin() ||
++                leftEnvelope.getXMin() > rightEnvelope.getXMax() ||
++                leftEnvelope.getYMax() < rightEnvelope.getYMin() ||
++                leftEnvelope.getYMin() > rightEnvelope.getYMax()) {
++            return false;
++        }
++
+         OGCGeometry leftGeometry = deserialize(left);
+         OGCGeometry rightGeometry = deserialize(right);
+         verifySameSpatialReference(leftGeometry, rightGeometry);
+@@ -546,6 +556,19 @@ public final class GeoFunctions
+     @SqlType(StandardTypes.BOOLEAN)
+     public static Boolean stDisjoint(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
++        Envelope leftEnvelope = deserializeEnvelope(left);
++        Envelope rightEnvelope = deserializeEnvelope(right);
++        if (leftEnvelope == null || rightEnvelope == null) {
++            return true;
++        }
++
++        if (leftEnvelope.getXMax() < rightEnvelope.getXMin() ||
++                leftEnvelope.getXMin() > rightEnvelope.getXMax() ||
++                leftEnvelope.getYMax() < rightEnvelope.getYMin() ||
++                leftEnvelope.getYMin() > rightEnvelope.getYMax()) {
++            return true;
++        }
++
+         OGCGeometry leftGeometry = deserialize(left);
+         OGCGeometry rightGeometry = deserialize(right);
+         verifySameSpatialReference(leftGeometry, rightGeometry);
+@@ -558,6 +581,16 @@ public final class GeoFunctions
+     @SqlType(StandardTypes.BOOLEAN)
+     public static Boolean stEquals(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
++        Envelope leftEnvelope = deserializeEnvelope(left);
++        Envelope rightEnvelope = deserializeEnvelope(right);
++        if (leftEnvelope == null || rightEnvelope == null) {
++            return leftEnvelope == rightEnvelope;
++        }
++
++        if (!leftEnvelope.equals(rightEnvelope)) {
++            return false;
++        }
++
+         OGCGeometry leftGeometry = deserialize(left);
+         OGCGeometry rightGeometry = deserialize(right);
+         verifySameSpatialReference(leftGeometry, rightGeometry);
+@@ -570,6 +603,16 @@ public final class GeoFunctions
+     @SqlType(StandardTypes.BOOLEAN)
+     public static Boolean stIntersects(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
++        Envelope leftEnvelope = deserializeEnvelope(left);
++        Envelope rightEnvelope = deserializeEnvelope(right);
++        if (leftEnvelope == null || rightEnvelope == null ||
++                leftEnvelope.getXMax() < rightEnvelope.getXMin() ||
++                leftEnvelope.getXMin() > rightEnvelope.getXMax() ||
++                leftEnvelope.getYMax() < rightEnvelope.getYMin() ||
++                leftEnvelope.getYMin() > rightEnvelope.getYMax()) {
++            return false;
++        }
++
+         OGCGeometry leftGeometry = deserialize(left);
+         OGCGeometry rightGeometry = deserialize(right);
+         verifySameSpatialReference(leftGeometry, rightGeometry);
+@@ -582,6 +625,16 @@ public final class GeoFunctions
+     @SqlType(StandardTypes.BOOLEAN)
+     public static Boolean stOverlaps(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
++        Envelope leftEnvelope = deserializeEnvelope(left);
++        Envelope rightEnvelope = deserializeEnvelope(right);
++        if (leftEnvelope == null || rightEnvelope == null ||
++                leftEnvelope.getXMax() < rightEnvelope.getXMin() ||
++                leftEnvelope.getXMin() > rightEnvelope.getXMax() ||
++                leftEnvelope.getYMax() < rightEnvelope.getYMin() ||
++                leftEnvelope.getYMin() > rightEnvelope.getYMax()) {
++            return false;
++        }
++
+         OGCGeometry leftGeometry = deserialize(left);
+         OGCGeometry rightGeometry = deserialize(right);
+         verifySameSpatialReference(leftGeometry, rightGeometry);
+@@ -606,6 +659,16 @@ public final class GeoFunctions
+     @SqlType(StandardTypes.BOOLEAN)
+     public static Boolean stTouches(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
++        Envelope leftEnvelope = deserializeEnvelope(left);
++        Envelope rightEnvelope = deserializeEnvelope(right);
++        if (leftEnvelope == null || rightEnvelope == null ||
++                leftEnvelope.getXMax() < rightEnvelope.getXMin() ||
++                leftEnvelope.getXMin() > rightEnvelope.getXMax() ||
++                leftEnvelope.getYMax() < rightEnvelope.getYMin() ||
++                leftEnvelope.getYMin() > rightEnvelope.getYMax()) {
++            return false;
++        }
++
+         OGCGeometry leftGeometry = deserialize(left);
+         OGCGeometry rightGeometry = deserialize(right);
+         verifySameSpatialReference(leftGeometry, rightGeometry);
+@@ -618,6 +681,16 @@ public final class GeoFunctions
+     @SqlType(StandardTypes.BOOLEAN)
+     public static Boolean stWithin(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
++        Envelope leftEnvelope = deserializeEnvelope(left);
++        if (leftEnvelope == null) {
++            return true;
++        }
++
++        Envelope rightEnvelope = deserializeEnvelope(right);
++        if (rightEnvelope == null || !rightEnvelope.contains(leftEnvelope)) {
++            return false;
++        }
++
+         OGCGeometry leftGeometry = deserialize(left);
+         OGCGeometry rightGeometry = deserialize(right);
+         verifySameSpatialReference(leftGeometry, rightGeometry);

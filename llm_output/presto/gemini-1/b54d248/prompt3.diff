@@ -1,0 +1,20 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java b/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java
+index f9e7ee73b4..c978d24eee 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java
+@@ -28,7 +28,14 @@ public interface HashGenerator
+         // clear the sign bit
+         rawHash &= 0x7fff_ffff_ffff_ffffL;
+ 
+-        int partition = (int) (rawHash % partitionCount);
++        int partition;
++        if (partitionCount > 0 && (partitionCount & (partitionCount - 1)) == 0) {
++            // partitionCount is a power of two
++            partition = (int) (rawHash & (partitionCount - 1));
++        }
++        else {
++            partition = (int) (rawHash % partitionCount);
++        }
+ 
+         checkState(partition >= 0 && partition < partitionCount);
+         return partition;

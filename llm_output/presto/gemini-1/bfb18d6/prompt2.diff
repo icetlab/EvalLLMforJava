@@ -1,0 +1,22 @@
+diff --git a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+index cff4f39085..eb8fc21ee8 100644
+--- a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
++++ b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+@@ -1040,10 +1040,16 @@ public final class GeoFunctions
+     @SqlType(GEOMETRY_TYPE_NAME)
+     public static Slice stIntersection(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
+-        if (deserializeType(left) == GeometrySerializationType.ENVELOPE && deserializeType(right) == GeometrySerializationType.ENVELOPE) {
+         Envelope leftEnvelope = deserializeEnvelope(left);
++        if (leftEnvelope.isEmpty()) {
++            return left;
++        }
+         Envelope rightEnvelope = deserializeEnvelope(right);
++        if (rightEnvelope.isEmpty()) {
++            return right;
++        }
+ 
++        if (deserializeType(left) == GeometrySerializationType.ENVELOPE && deserializeType(right) == GeometrySerializationType.ENVELOPE) {
+             // Envelope#intersect updates leftEnvelope to the intersection of the two envelopes
+             if (!leftEnvelope.intersect(rightEnvelope)) {
+                 return EMPTY_POLYGON;

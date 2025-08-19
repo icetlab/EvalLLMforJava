@@ -1,0 +1,47 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java b/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
+index ce0ca747f2..7ca6045800 100644
+--- a/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
++++ b/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
+@@ -210,19 +210,36 @@ public class TDigest
+         }
+     }
+ 
++        private static void shuffle(int[] array, Random random)
++    {
++        for (int i = array.length - 1; i > 0; i--) {
++            int index = random.nextInt(i + 1);
++            // Simple swap
++            int a = array[index];
++            array[index] = array[i];
++            array[i] = a;
++        }
++    }
++
+     public void merge(TDigest other)
+     {
+         checkArgument(other != null, "Cannot merge with a null t-digest");
+         checkArgument(this.publicCompression == other.getCompressionFactor(), "TDigests must have the same compression, found (%s, %s)", this.publicCompression,
+                 other.getCompressionFactor());
+-        List<Centroid> tmp = new ArrayList<>();
+-        for (Centroid centroid : other.centroids()) {
+-            tmp.add(centroid);
++
++        other.compress();
++        if (other.activeCentroids == 0) {
++            return;
++        }
++
++        int[] indices = new int[other.activeCentroids];
++        for (int i = 0; i < other.activeCentroids; i++) {
++            indices[i] = i;
+         }
++        shuffle(indices, gen);
+ 
+-        shuffle(tmp, gen);
+-        for (Centroid centroid : tmp) {
+-            add(centroid.getMean(), centroid.getWeight());
++        for (int index : indices) {
++            add(other.mean[index], (long) other.weight[index]);
+         }
+     }
+ 

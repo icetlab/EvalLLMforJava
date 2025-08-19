@@ -1,0 +1,58 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
+index 30e0088e35..0eef1712b5 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
+@@ -433,17 +433,37 @@ public class OptimizedPartitionedOutputOperator
+         {
+             // Populate positions to copy for each destination partition.
+             int positionCount = page.getPositionCount();
++            Block nullBlock = nullChannel.isPresent() ? page.getBlock(nullChannel.getAsInt()) : null;
++            Page partitionFunctionArgs = getPartitionFunctionArguments(page);
++
++            // 1. Count the number of rows for each partition
++            int[] partitionRowCount = new int[partitionBuffers.length];
++            boolean hasReplicated = hasAnyRowBeenReplicated;
++            for (int position = 0; position < positionCount; position++) {
++                boolean shouldReplicate = (replicatesAnyRow && !hasReplicated) ||
++                        (nullBlock != null && nullBlock.isNull(position));
+ 
++                if (shouldReplicate) {
+                     for (int i = 0; i < partitionBuffers.length; i++) {
+-                partitionBuffers[i].resetPositions(positionCount);
++                        partitionRowCount[i]++;
++                    }
++                    hasReplicated = true;
++                }
++                else {
++                    int partition = partitionFunction.getPartition(partitionFunctionArgs, position);
++                    partitionRowCount[partition]++;
++                }
+             }
+ 
+-            Block nullBlock = nullChannel.isPresent() ? page.getBlock(nullChannel.getAsInt()) : null;
+-            Page partitionFunctionArgs = getPartitionFunctionArguments(page);
++            // 2. Allocate positions array for each partition
++            for (int i = 0; i < partitionBuffers.length; i++) {
++                partitionBuffers[i].resetPositions(partitionRowCount[i]);
++            }
+ 
++            // 3. Populate positions array for each partition
+             for (int position = 0; position < positionCount; position++) {
+                 boolean shouldReplicate = (replicatesAnyRow && !hasAnyRowBeenReplicated) ||
+-                        nullBlock != null && nullBlock.isNull(position);
++                        (nullBlock != null && nullBlock.isNull(position));
+ 
+                 if (shouldReplicate) {
+                     for (int i = 0; i < partitionBuffers.length; i++) {
+@@ -559,9 +579,9 @@ public class OptimizedPartitionedOutputOperator
+             this.lifespan = requireNonNull(lifespan, "lifespan is null");
+         }
+ 
+-        private void resetPositions(int positionCount)
++        private void resetPositions(int maxPositionCount)
+         {
+-            positions = ensureCapacity(positions, positionCount);
++            positions = ensureCapacity(positions, maxPositionCount);
+             this.positionCount = 0;
+         }
+ 

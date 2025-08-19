@@ -1,0 +1,76 @@
+diff --git a/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java b/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java
+index ea2cf982de..6c82bdbc91 100644
+--- a/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java
++++ b/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java
+@@ -162,8 +162,9 @@ public class SingleMapBlock
+             throw handleThrowable(throwable);
+         }
+ 
+-        int hashTableOffset = offset / 2 * HASH_MULTIPLIER;
+-        int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;
++        // HASH_MULTIPLIER is 2 and offset and positionCount are always even.
++        int hashTableOffset = offset;
++        int hashTableSize = positionCount;
+         int position = computePosition(hashCode, hashTableSize);
+         while (true) {
+             int keyPosition = hashTable[hashTableOffset + position];
+@@ -209,8 +210,9 @@ public class SingleMapBlock
+             throw handleThrowable(throwable);
+         }
+ 
+-        int hashTableOffset = offset / 2 * HASH_MULTIPLIER;
+-        int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;
++        // HASH_MULTIPLIER is 2 and offset and positionCount are always even.
++        int hashTableOffset = offset;
++        int hashTableSize = positionCount;
+         int position = computePosition(hashCode, hashTableSize);
+         while (true) {
+             int keyPosition = hashTable[hashTableOffset + position];
+@@ -253,8 +255,9 @@ public class SingleMapBlock
+             throw handleThrowable(throwable);
+         }
+ 
+-        int hashTableOffset = offset / 2 * HASH_MULTIPLIER;
+-        int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;
++        // HASH_MULTIPLIER is 2 and offset and positionCount are always even.
++        int hashTableOffset = offset;
++        int hashTableSize = positionCount;
+         int position = computePosition(hashCode, hashTableSize);
+         while (true) {
+             int keyPosition = hashTable[hashTableOffset + position];
+@@ -297,8 +300,9 @@ public class SingleMapBlock
+             throw handleThrowable(throwable);
+         }
+ 
+-        int hashTableOffset = offset / 2 * HASH_MULTIPLIER;
+-        int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;
++        // HASH_MULTIPLIER is 2 and offset and positionCount are always even.
++        int hashTableOffset = offset;
++        int hashTableSize = positionCount;
+         int position = computePosition(hashCode, hashTableSize);
+         while (true) {
+             int keyPosition = hashTable[hashTableOffset + position];
+@@ -341,8 +345,9 @@ public class SingleMapBlock
+             throw handleThrowable(throwable);
+         }
+ 
+-        int hashTableOffset = offset / 2 * HASH_MULTIPLIER;
+-        int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;
++        // HASH_MULTIPLIER is 2 and offset and positionCount are always even.
++        int hashTableOffset = offset;
++        int hashTableSize = positionCount;
+         int position = computePosition(hashCode, hashTableSize);
+         while (true) {
+             int keyPosition = hashTable[hashTableOffset + position];
+@@ -385,8 +390,9 @@ public class SingleMapBlock
+             throw handleThrowable(throwable);
+         }
+ 
+-        int hashTableOffset = offset / 2 * HASH_MULTIPLIER;
+-        int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;
++        // HASH_MULTIPLIER is 2 and offset and positionCount are always even.
++        int hashTableOffset = offset;
++        int hashTableSize = positionCount;
+         int position = computePosition(hashCode, hashTableSize);
+         while (true) {
+             int keyPosition = hashTable[hashTableOffset + position];

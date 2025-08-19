@@ -1,0 +1,44 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
+index 30e0088e35..e70eada1a5 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
+@@ -441,9 +441,15 @@ public class OptimizedPartitionedOutputOperator
+             Block nullBlock = nullChannel.isPresent() ? page.getBlock(nullChannel.getAsInt()) : null;
+             Page partitionFunctionArgs = getPartitionFunctionArguments(page);
+ 
++            // get partitions for all rows
++            int[] partitions = new int[positionCount];
++            for (int i = 0; i < positionCount; i++) {
++                partitions[i] = partitionFunction.getPartition(partitionFunctionArgs, i);
++            }
++
+             for (int position = 0; position < positionCount; position++) {
+                 boolean shouldReplicate = (replicatesAnyRow && !hasAnyRowBeenReplicated) ||
+-                        nullBlock != null && nullBlock.isNull(position);
++                        (nullBlock != null && nullBlock.isNull(position));
+ 
+                 if (shouldReplicate) {
+                     for (int i = 0; i < partitionBuffers.length; i++) {
+@@ -452,8 +458,7 @@ public class OptimizedPartitionedOutputOperator
+                     hasAnyRowBeenReplicated = true;
+                 }
+                 else {
+-                    int partition = partitionFunction.getPartition(partitionFunctionArgs, position);
+-                    partitionBuffers[partition].addPosition(position);
++                    partitionBuffers[partitions[position]].addPosition(position);
+                 }
+             }
+ 
+@@ -641,10 +646,12 @@ public class OptimizedPartitionedOutputOperator
+                 blockEncodingBuffers[i].accumulateSerializedRowSizes(serializedRowSizes);
+             }
+ 
++            if (fixedWidthRowSize > 0) {
+                 for (int i = 0; i < positionCount; i++) {
+                     serializedRowSizes[i] += fixedWidthRowSize;
+                 }
+             }
++        }
+ 
+         private int calculateNextBatchSize(int fixedWidthRowSize, List<Integer> variableWidthChannels, int startPosition)
+         {

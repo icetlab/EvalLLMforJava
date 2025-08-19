@@ -1,0 +1,42 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
+index 6813ba04fa..8d43fb42a4 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
+@@ -483,7 +483,7 @@ public class WindowOperator
+         @Override
+         public int hashCode()
+         {
+-            return Objects.hash(functionIndex, type);
++            return 31 * functionIndex + type.hashCode();
+         }
+     }
+ 
+@@ -923,21 +923,20 @@ public class WindowOperator
+         checkArgument(startPosition >= 0, "startPosition must be greater or equal than zero: %s", startPosition);
+         checkArgument(startPosition < endPosition, "startPosition (%s) must be less than endPosition (%s)", startPosition, endPosition);
+ 
+-        int left = startPosition;
+-        int right = endPosition;
+-
+-        while (left + 1 < right) {
+-            int middle = (left + right) >>> 1;
++        int low = startPosition;
++        int high = endPosition;
+ 
++        while (low < high) {
++            int middle = (low + high) >>> 1;
+             if (comparator.test(startPosition, middle)) {
+-                left = middle;
++                low = middle + 1;
+             }
+             else {
+-                right = middle;
++                high = middle;
+             }
+         }
+ 
+-        return right;
++        return low;
+     }
+ 
+     @Override

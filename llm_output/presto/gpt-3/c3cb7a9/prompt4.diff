@@ -1,0 +1,55 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
+index 6813ba04fa..9295ee4d06 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
+@@ -923,21 +923,42 @@ public class WindowOperator
+         checkArgument(startPosition >= 0, "startPosition must be greater or equal than zero: %s", startPosition);
+         checkArgument(startPosition < endPosition, "startPosition (%s) must be less than endPosition (%s)", startPosition, endPosition);
+ 
+-        int left = startPosition;
+-        int right = endPosition;
++        // Fast path: only one element or next element is different
++        int nextPos = startPosition + 1;
++        if (nextPos >= endPosition || !comparator.test(startPosition, nextPos)) {
++            return nextPos;
++        }
+ 
+-        while (left + 1 < right) {
+-            int middle = (left + right) >>> 1;
++        // Exponential search to find an upper bound where elements differ
++        int low = nextPos;
++        int step = 2;
++        int high;
++        while (true) {
++            int idx = startPosition + step;
++            if (idx >= endPosition) {
++                high = endPosition;
++                break;
++            }
++            if (!comparator.test(startPosition, idx)) {
++                high = idx;
++                break;
++            }
++            low = idx;
++            step <<= 1;
++        }
+ 
+-            if (comparator.test(startPosition, middle)) {
+-                left = middle;
++        // Binary search between last equal (low) and first different (high)
++        while (low + 1 < high) {
++            int mid = (low + high) >>> 1;
++            if (comparator.test(startPosition, mid)) {
++                low = mid;
+             }
+             else {
+-                right = middle;
++                high = mid;
+             }
+         }
+ 
+-        return right;
++        return high;
+     }
+ 
+     @Override

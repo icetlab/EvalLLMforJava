@@ -1,0 +1,14 @@
+diff --git a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+index 350f609b45..dfee18c731 100644
+--- a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
++++ b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+@@ -246,7 +246,8 @@ public class GeometrySerde
+         double yMax = input.readDouble();
+ 
+         int skipLength = length - (4 * Double.BYTES) - Integer.BYTES;
+-        verify(input.skip(skipLength) == skipLength);
++        // fast‐forward the input position rather than byte-by-byte skip
++        input.setPosition(input.position() + skipLength);
+ 
+         if (isEsriNaN(xMin) || isEsriNaN(yMin) || isEsriNaN(xMax) || isEsriNaN(yMax)) {
+             // TODO: isn't it better to return empty envelope instead?

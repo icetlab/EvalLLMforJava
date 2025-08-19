@@ -1,0 +1,72 @@
+diff --git a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+index cff4f39085..29b31b62dc 100644
+--- a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
++++ b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+@@ -1040,14 +1040,19 @@ public final class GeoFunctions
+     @SqlType(GEOMETRY_TYPE_NAME)
+     public static Slice stIntersection(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
++        if (!envelopes(left, right, Envelope::isIntersecting)) {
++            if (deserializeType(left) == GeometrySerializationType.ENVELOPE && deserializeType(right) == GeometrySerializationType.ENVELOPE) {
++                return EMPTY_POLYGON;
++            }
++            return EsriGeometrySerde.serialize(OGCGeometry.fromText("MULTIPOLYGON EMPTY"));
++        }
++
+         if (deserializeType(left) == GeometrySerializationType.ENVELOPE && deserializeType(right) == GeometrySerializationType.ENVELOPE) {
+             Envelope leftEnvelope = deserializeEnvelope(left);
+             Envelope rightEnvelope = deserializeEnvelope(right);
+ 
+             // Envelope#intersect updates leftEnvelope to the intersection of the two envelopes
+-            if (!leftEnvelope.intersect(rightEnvelope)) {
+-                return EMPTY_POLYGON;
+-            }
++            leftEnvelope.intersect(rightEnvelope);
+ 
+             Envelope intersection = leftEnvelope;
+             if (intersection.getXMin() == intersection.getXMax()) {
+@@ -1102,7 +1107,7 @@ public final class GeoFunctions
+     @SqlType(BOOLEAN)
+     public static Boolean stCrosses(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
+-        if (!envelopes(left, right, Envelope::intersect)) {
++        if (!envelopes(left, right, Envelope::isIntersecting)) {
+             return false;
+         }
+         OGCGeometry leftGeometry = EsriGeometrySerde.deserialize(left);
+@@ -1117,7 +1122,7 @@ public final class GeoFunctions
+     @SqlType(BOOLEAN)
+     public static Boolean stDisjoint(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
+-        if (!envelopes(left, right, Envelope::intersect)) {
++        if (!envelopes(left, right, Envelope::isIntersecting)) {
+             return true;
+         }
+         OGCGeometry leftGeometry = EsriGeometrySerde.deserialize(left);
+@@ -1144,7 +1149,7 @@ public final class GeoFunctions
+     @SqlType(BOOLEAN)
+     public static Boolean stIntersects(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
+-        if (!envelopes(left, right, Envelope::intersect)) {
++        if (!envelopes(left, right, Envelope::isIntersecting)) {
+             return false;
+         }
+         OGCGeometry leftGeometry = EsriGeometrySerde.deserialize(left);
+@@ -1159,7 +1164,7 @@ public final class GeoFunctions
+     @SqlType(BOOLEAN)
+     public static Boolean stOverlaps(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
+-        if (!envelopes(left, right, Envelope::intersect)) {
++        if (!envelopes(left, right, Envelope::isIntersecting)) {
+             return false;
+         }
+         OGCGeometry leftGeometry = EsriGeometrySerde.deserialize(left);
+@@ -1186,7 +1191,7 @@ public final class GeoFunctions
+     @SqlType(BOOLEAN)
+     public static Boolean stTouches(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
+-        if (!envelopes(left, right, Envelope::intersect)) {
++        if (!envelopes(left, right, Envelope::isIntersecting)) {
+             return false;
+         }
+         OGCGeometry leftGeometry = EsriGeometrySerde.deserialize(left);

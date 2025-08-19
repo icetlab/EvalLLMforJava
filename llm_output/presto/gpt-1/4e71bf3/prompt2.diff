@@ -1,0 +1,19 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+index da887a9ba3..37691a9659 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+@@ -258,6 +258,14 @@ public class ByteSelectiveStreamReader
+     {
+         // filter == null implies outputRequired == true
+         int streamPosition = 0;
++        // fast path: contiguous positions [0..positionCount-1], no nulls (no presentStream), no filter
++        if (presentStream == null && positionCount > 0 && positions[0] == 0 && positions[positionCount - 1] == positionCount - 1) {
++            for (int i = 0; i < positionCount; i++) {
++                values[i] = dataStream.next();
++            }
++            outputPositionCount = positionCount;
++            return positionCount;
++        }
+         for (int i = 0; i < positionCount; i++) {
+             int position = positions[i];
+             if (position > streamPosition) {

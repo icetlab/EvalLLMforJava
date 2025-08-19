@@ -1,0 +1,37 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java b/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java
+index a25a5916e6..46043e5a29 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java
+@@ -72,7 +72,31 @@ public final class ArrayDistinctFunction
+ 
+     public static Block distinct(Type type, Block array)
+     {
+-        if (array.getPositionCount() == 0) {
++        if (array.getPositionCount() <= 1) {
++            return array;
++        }
++
++        // A fast path for small arrays to avoid the overhead of TypedSet
++        if (array.getPositionCount() == 2) {
++            boolean isPosition0Null = array.isNull(0);
++            boolean isPosition1Null = array.isNull(1);
++            if (isPosition0Null && isPosition1Null) {
++                // [NULL, NULL] -> [NULL]
++                BlockBuilder blockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), 1);
++                blockBuilder.appendNull();
++                return blockBuilder.build();
++            }
++            if (isPosition0Null || isPosition1Null) {
++                // [X, NULL] or [NULL, X] are already distinct
++                return array;
++            }
++
++            if (type.equalTo(array, 0, array, 1)) {
++                // [X, X] -> [X]
++                BlockBuilder blockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), 1);
++                type.appendTo(array, 0, blockBuilder);
++                return blockBuilder.build();
++            }
+             return array;
+         }
+ 

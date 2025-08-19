@@ -1,0 +1,49 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+index 93aeb97e76..c4cf7a9cf6 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+@@ -264,6 +264,44 @@ public class ByteSelectiveStreamReader
+             return positionCount;
+         }
+ 
++        if (presentStream != null && positionCount > 0 && (positions[positionCount - 1] - positions[0] == positionCount - 1)) {
++            int streamPosition = 0;
++            int startPosition = positions[0];
++            if (startPosition > streamPosition) {
++                skip(startPosition - streamPosition);
++                streamPosition = startPosition;
++            }
++
++            boolean[] isPresent = this.nulls;
++            presentStream.get(isPresent, 0, positionCount);
++
++            int nonNullCount = 0;
++            for (int i = 0; i < positionCount; i++) {
++                if (isPresent[i]) {
++                    nonNullCount++;
++                }
++            }
++
++            if (nonNullCount > 0) {
++                byte[] nonNullValues = new byte[nonNullCount];
++                dataStream.next(nonNullValues, nonNullCount);
++
++                int currentNonNull = 0;
++                for (int i = 0; i < positionCount; i++) {
++                    if (isPresent[i]) {
++                        values[i] = nonNullValues[currentNonNull++];
++                    }
++                }
++            }
++
++            for (int i = 0; i < positionCount; i++) {
++                nulls[i] = !isPresent[i];
++            }
++
++            outputPositionCount = positionCount;
++            return streamPosition + positionCount;
++        }
++
+         int streamPosition = 0;
+         for (int i = 0; i < positionCount; i++) {
+             int position = positions[i];

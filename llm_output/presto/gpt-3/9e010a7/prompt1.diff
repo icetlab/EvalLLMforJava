@@ -1,0 +1,31 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java b/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java
+index c586b38f12..630da30ab6 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java
+@@ -215,9 +215,14 @@ public final class MapToMapCast
+     {
+         checkState(toMapType.getTypeParameters().size() == 2, "Expect two type parameters for toMapType");
+         Type toKeyType = toMapType.getTypeParameters().get(0);
+-        TypedSet typedSet = new TypedSet(toKeyType, fromMap.getPositionCount() / 2, "map-to-map cast");
+-        BlockBuilder keyBlockBuilder = toKeyType.createBlockBuilder(null, fromMap.getPositionCount() / 2);
+-        for (int i = 0; i < fromMap.getPositionCount(); i += 2) {
++        int positionCount = fromMap.getPositionCount();
++        int entryCount = positionCount / 2;
++        TypedSet typedSet = new TypedSet(toKeyType, entryCount, "map-to-map cast");
++        BlockBuilder keyBlockBuilder = toKeyType.createBlockBuilder(null, entryCount);
++        for (int i = 0; i < positionCount; i += 2) {
++            if (fromMap.isNull(i)) {
++                throw new PrestoException(INVALID_CAST_ARGUMENT, "map key is null");
++            }
+             try {
+                 keyProcessFunction.invokeExact(fromMap, i, properties, keyBlockBuilder);
+             }
+@@ -229,7 +234,7 @@ public final class MapToMapCast
+ 
+         BlockBuilder mapBlockBuilder = toMapType.createBlockBuilder(null, 1);
+         BlockBuilder blockBuilder = mapBlockBuilder.beginBlockEntry();
+-        for (int i = 0; i < fromMap.getPositionCount(); i += 2) {
++        for (int i = 0; i < positionCount; i += 2) {
+             if (typedSet.add(keyBlock, i / 2)) {
+                 toKeyType.appendTo(keyBlock, i / 2, blockBuilder);
+                 if (fromMap.isNull(i + 1)) {
