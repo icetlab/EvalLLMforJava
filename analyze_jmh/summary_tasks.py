@@ -218,13 +218,13 @@ def analyze_performance_tiers(project_names, output_dir="summary_tables", data=N
         elif 0.90 <= score < 0.95:
             return 'Minor Regression (0.9x-0.95x)'
         elif 0.95 <= score <= 1.05:
-            return 'No Significant Change (0.95x-1.05x)'
-        elif 1.05 < score <= 1.15:
-            return 'Minor Improvement (1.05x-1.15x)'
-        elif 1.15 < score <= 1.50:
-            return 'Major Improvement (1.15x-1.5x)'
+            return 'No Substantial Change (0.95x-1.05x)'
+        elif 1.05 < score <= 1.1:
+            return 'Minor Improvement (1.05x-1.1x)'
+        elif 1.1 < score <= 1.50:
+            return 'Major Improvement (1.1x-1.5x)'
         else: # score > 1.50
-            return 'Significant Improvement (>1.5x)'
+            return 'Massive Improvement (>1.5x)'
 
     # Use the 'GMean' column from the new calculate_final_scores function
     final_scores['Tier'] = final_scores['GMean'].apply(categorize_performance)
@@ -238,10 +238,10 @@ def analyze_performance_tiers(project_names, output_dir="summary_tables", data=N
     all_tiers = [
         'Major Regression (<0.9x)', 
         'Minor Regression (0.9x-0.95x)', 
-        'No Significant Change (0.95x-1.05x)', 
-        'Minor Improvement (1.05x-1.15x)', 
-        'Major Improvement (1.15x-1.5x)', 
-        'Significant Improvement (>1.5x)'
+        'No Substantial Change (0.95x-1.05x)', 
+        'Minor Improvement (1.05x-1.1x)', 
+        'Major Improvement (1.1x-1.5x)', 
+        'Massive Improvement (>1.5x)'
     ]
     for tier in all_tiers:
         if tier not in tier_counts.columns:
@@ -269,6 +269,19 @@ def analyze_performance_tiers(project_names, output_dir="summary_tables", data=N
         summary_df[f'{tier} (Count)'] = tier_counts[tier]
         summary_df[f'{tier} (%)'] = tier_percentages[tier].round(2)
         
+    # --- NEW: Add a 'Total' row ---
+    total_counts = tier_counts.sum()
+    total_percentages = total_counts / total_counts.sum() * 100
+    
+    total_row = pd.DataFrame(
+        {f'{tier} (Count)': [total_counts[tier]] for tier in all_tiers} | 
+        {f'{tier} (%)': [total_percentages[tier].round(2)] for tier in all_tiers},
+        index=['Total']
+    )
+    
+    summary_df = pd.concat([summary_df, total_row])
+
+    # --- 5. Save and output ---
     summary_text = summary_df.to_string()
     print("\n--- Tiered Performance Analysis (All Solutions by Final Score) ---")
     print(summary_text)

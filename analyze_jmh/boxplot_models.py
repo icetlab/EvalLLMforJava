@@ -66,10 +66,10 @@ def plot_benchmark_performance(project_names, output_dir="plots", data=None):
 
     fig, axes = plt.subplots(1, len(project_names), figsize=(22, 8), sharey=False)
 
-    prompt_mapping = {"prompt1": "Zero-Hint", "prompt2": "Semantic-Hint", "prompt3": "Structural-Hint", "prompt4": "Hybrid-Hint"}
+    prompt_mapping = {"prompt1": "Zero-Hint", "prompt2": "Problem-Hint", "prompt3": "Benchmark-Hint", "prompt4": "Hybrid-Hint"}
     plot_df['prompt'] = plot_df['prompt'].map(prompt_mapping)
     
-    prompt_order = ["Zero-Hint", "Semantic-Hint", "Structural-Hint", "Hybrid-Hint"]
+    prompt_order = ["Zero-Hint", "Problem-Hint", "Benchmark-Hint", "Hybrid-Hint"]
     model_order = ['developer', 'gpt', 'gemini']
 
     for i, project_name in enumerate(project_names):
@@ -128,12 +128,12 @@ def plot_benchmark_performance(project_names, output_dir="plots", data=None):
 
 def plot_prompt_performance(project_names, output_dir="plots", data=None):
     plot_df = data[data['model'] != 'original']
-    prompt_mapping = {"prompt1": "Zero-Hint", "prompt2": "Semantic-Hint", "prompt3": "Structural-Hint", "prompt4": "Hybrid-Hint"}
+    prompt_mapping = {"prompt1": "Zero-Hint", "prompt2": "Problem-Hint", "prompt3": "Benchmark-Hint", "prompt4": "Hybrid-Hint"}
     plot_df['prompt'] = plot_df['prompt'].map(prompt_mapping).fillna('Developer')
 
     fig, axes = plt.subplots(1, len(project_names), figsize=(22, 8), sharey=False)
     
-    x_axis_order = ["Developer", "Zero-Hint", "Semantic-Hint", "Structural-Hint", "Hybrid-Hint"]
+    x_axis_order = ["Developer", "Zero-Hint", "Problem-Hint", "Benchmark-Hint", "Hybrid-Hint"]
     model_palette = {"gpt": "#008fd5", "gemini": "#fc4f30"}
 
     for i, project_name in enumerate(project_names):
@@ -193,7 +193,7 @@ def plot_prompt_performance(project_names, output_dir="plots", data=None):
 
 def calculate_outperformance_by_config(project_names, output_dir="plots", data=None):
     plot_df = data.copy()
-    prompt_mapping = {"prompt1": "Zero-Hint", "prompt2": "Semantic-Hint", "prompt3": "Structural-Hint", "prompt4": "Hybrid-Hint"}
+    prompt_mapping = {"prompt1": "Zero-Hint", "prompt2": "Problem-Hint", "prompt3": "Benchmark-Hint", "prompt4": "Hybrid-Hint"}
     plot_df['prompt'] = plot_df['prompt'].map(prompt_mapping)
 
     summary_lines = ["Outperformance Analysis by Configuration: Comparing each LLM run against the developer run with the same params."]
@@ -303,7 +303,7 @@ def plot_faceted_by_dev_performance_prompt_view(project_names, output_dir="plots
     plot_df = add_dev_improvement_level(data)
     plot_df = plot_df[~plot_df['model'].isin(['original', 'developer'])]
     
-    prompt_mapping = {"prompt1": "Zero-Hint", "prompt2": "Semantic-Hint", "prompt3": "Structural-Hint", "prompt4": "Hybrid-Hint"}
+    prompt_mapping = {"prompt1": "No Hint", "prompt2": "Problem", "prompt3": "Benchmark", "prompt4": "Both"}
     plot_df['prompt'] = plot_df['prompt'].map(prompt_mapping)
 
     level_order = ['Dev Minor Improvement (1x-2x)', 'Dev Moderate Improvement (2x-10x)', 'Dev Major Improvement (10x+)']
@@ -311,7 +311,7 @@ def plot_faceted_by_dev_performance_prompt_view(project_names, output_dir="plots
     
     g = sns.FacetGrid(plot_df, col="dev_improvement_level", col_wrap=3, height=7, aspect=1, col_order=level_order, sharey=False)
 
-    x_axis_order = ["Zero-Hint", "Semantic-Hint", "Structural-Hint", "Hybrid-Hint"]
+    x_axis_order = ["No Hint", "Problem", "Benchmark", "Both"]
     
     g.map_dataframe(sns.boxplot, x='prompt', y='normalized_performance', hue='model', order=x_axis_order, hue_order=['gpt', 'gemini'], showfliers=False)
 
@@ -351,7 +351,7 @@ def plot_faceted_by_dev_performance_prompt_view(project_names, output_dir="plots
 
 def calculate_strict_outperformance(project_names, output_dir="plots", data=None):
     plot_df = data.copy()
-    prompt_mapping = {"prompt1": "Zero-Hint", "prompt2": "Semantic-Hint", "prompt3": "Structural-Hint", "prompt4": "Hybrid-Hint"}
+    prompt_mapping = {"prompt1": "No Hint", "prompt2": "Problem", "prompt3": "Benchmark", "prompt4": "Both"}
     plot_df['prompt'] = plot_df['prompt'].map(prompt_mapping)
 
     summary_lines = ["Strict Outperformance Analysis: LLM wins only if it's better across ALL params for a given benchmark."]
