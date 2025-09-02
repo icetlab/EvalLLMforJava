@@ -80,12 +80,7 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
                 fi
 
                 echo "Running JMH benchmark: $jmh_case"
-                # Use different JMH parameters for specific ids
-                if [ "$id" = "b36e3c2" ] || [ "$id" = "eb24ed8" ]; then
-                    JMH_OPTS="-wi 3 -i 10 -f 1 -r 1s -w 1s -p compressionType=ZSTD"
-                else
-                    JMH_OPTS="-wi 10 -i 50 -f 1 -r 1s -w 1s"
-                fi
+                JMH_OPTS="-wi 10 -i 50 -f 1 -r 1s -w 1s"
                 # JMH_OPTS="-bm avgt -wi 10 -i 50 -f 1 -r 1s -w 1s"
                 ./jmh-benchmarks/jmh.sh $JMH_OPTS "$jmh_case" -rf json -rff "$JSON_FILE" < /dev/null
             else

@@ -100,13 +100,7 @@ EOF
                         echo "Build succeeded for patch: $patch_rel_path"
 
                         echo "Running JMH benchmark: $jmh_case"
-                        if [ "$id" = "297b089" ]; then
-                            JMH_OPTS='-p withNulls=NONE -p typeSignature=integer -wi 5 -i 20 -f 1 -r 1s -w 1s'
-                        elif [ "$id" = "000fa29" ]; then
-                            JMH_OPTS='-p type=ROW(BIGINT,BIGINT) -wi 10 -i 50 -f 1 -r 1s -w 1s'
-                        else
-                            JMH_OPTS='-wi 10 -i 50 -f 1 -r 1s -w 1s'
-                        fi
+                        JMH_OPTS='-wi 10 -i 50 -f 1 -r 1s -w 1s'
 
                         java -cp "target/jmh-benchmarks.jar:target/classes:target/test-classes:$(../mvnw dependency:build-classpath -Dmdep.scope=test -q -DincludeScope=test -Dsilent=true -Dmdep.outputFile=/dev/stdout | tail -n1)" \
                             org.openjdk.jmh.Main ".*$jmh_case.*" $JMH_OPTS -rff "$JSON_FILE" -rf json
@@ -130,14 +124,14 @@ EOF
         # Workaround
         sed -i '/^sphinx\([<=>!~]*[0-9.]*\)*$/s/.*/sphinx>=5.0/' presto-docs/requirements.txt
 
-        # # Run unit test before benchmarking
-        # # For each test file, extract the submodule and test class, and run them individually
-        # for test_path in $unittest; do
-        #     test_submodule=$(echo "$test_path" | awk -F'/' '{print $1}')
-        #     test_file=$(basename "$test_path")
-        #     test_name="${test_file%.*}"  # Remove .java or .scala
-        #     ./mvnw -pl "$test_submodule" test -Dtest="$test_name" -DfailIfNoTests=false
-        # done
+        # Run unit test before benchmarking
+        # For each test file, extract the submodule and test class, and run them individually
+        for test_path in $unittest; do
+            test_submodule=$(echo "$test_path" | awk -F'/' '{print $1}')
+            test_file=$(basename "$test_path")
+            test_name="${test_file%.*}"  # Remove .java or .scala
+            ./mvnw -pl "$test_submodule" test -Dtest="$test_name" -DfailIfNoTests=false
+        done
 
         # Define JSON output file
         if [ "$MODE" = "-dev" ]; then
@@ -163,13 +157,8 @@ EOF
 
         # Run JMH benchmark and save results
         echo "Running JMH benchmark: $jmh_case"
-        if [ "$id" = "297b089" ]; then
-            JMH_OPTS='-p withNulls=NONE -p typeSignature=integer -wi 5 -i 20 -f 1 -r 1s -w 1s'
-        elif [ "$id" = "000fa29" ]; then
-            JMH_OPTS='-p type=ROW(BIGINT,BIGINT) -wi 10 -i 50 -f 1 -r 1s -w 1s'
-        else
-            JMH_OPTS='-wi 10 -i 50 -f 1 -r 1s -w 1s'
-        fi
+        JMH_OPTS='-wi 10 -i 50 -f 1 -r 1s -w 1s'
+
         java -cp "target/jmh-benchmarks.jar:target/classes:target/test-classes:$(../mvnw dependency:build-classpath -Dmdep.scope=test -q -DincludeScope=test -Dsilent=true -Dmdep.outputFile=/dev/stdout | tail -n1)" \
             org.openjdk.jmh.Main ".*$jmh_case.*" $JMH_OPTS -rff "$JSON_FILE" -rf json
 

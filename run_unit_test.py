@@ -5,7 +5,7 @@ import json
 def run_unit_test(repo_name, commit_id):
     # Read unit test info
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
-    prompts_file = f"prompts_source/{repo_name}/{commit_id}.json"
+    prompts_file = f"Prompts/prompts_source/{repo_name}/{commit_id}.json"
     with open(prompts_file, "r") as f:
         data = json.load(f)
         unit_test_paths = data.get("unittest", "")
@@ -27,8 +27,8 @@ def run_unit_test(repo_name, commit_id):
         return result.returncode, result.stdout
 
     # Define paths to the shell scripts
-    build_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"scripts/{repo_name}_build.sh")
-    test_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"scripts/{repo_name}_test.sh")
+    build_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"Scripts/{repo_name}_build.sh")
+    test_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"Scripts/{repo_name}_test.sh")
 
     # Determine the arguments to pass to the build and test scripts,
     # always starting with repo_path

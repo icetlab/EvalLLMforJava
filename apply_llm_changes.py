@@ -2,21 +2,11 @@ import os
 import re
 import subprocess
 
-# Counting is hard for LLMs. Instead of having it generate diffs directly, tell it to output the old code block before the edit, then write a program that converts that to a diff by finding the original block in the code file.
-# The trick is really to forget about the ai knowing why lines it’s adding and removing, and focus on the chunks of code it wants to change.
-# https://github.com/Aider-AI/aider/blob/main/aider/coders/udiff_prompts.py
-# https://github.com/carlrobertoh/ProxyAI/tree/master/src/main/resources/prompts
-
-
 def extract_diff_json(llm_log: str):
     """
     Extracts JSON-formatted diff blocks from the LLM log.
     Expected format is a JSON array of objects with filepath, search, and replace fields.
     """
-    # print("LLM Log:")
-    # print(llm_log)
-    # print("\nExtracting JSON diff blocks...")
-
     # Try to find JSON block between ```json and ```
     json_pattern = re.compile(r'```json\s*(.*?)\s*```', re.DOTALL)
     if not isinstance(llm_log, (str, bytes)):
@@ -41,15 +31,6 @@ def extract_diff_json(llm_log: str):
                 print(f"Skipping invalid block: {block}")
                 return f"[Format Error] Following block is invalid: \n {block}"
 
-        # print("Extracted blocks:")
-        # for block in valid_blocks:
-        #     print(f"\nFile: {block['filepath']}")
-        #     print("Search:")
-        #     print(block['search'])
-        #     print("\nReplace:")
-        #     print(block['replace'])
-        #     print("-" * 80)
-
         return valid_blocks
 
     except json.JSONDecodeError as e:
@@ -69,7 +50,7 @@ def apply_diff(repo_name, commit_id, llm_log):
     """
     Applies JSON-formatted diff blocks from the LLM log to the source files.
     """
-    repo_path = os.path.join("../", repo_name)
+    repo_path = os.path.join("./", repo_name)
     os.system(f"cd {repo_path} && git reset --hard {commit_id} && git reset --hard HEAD~1")
 
     blocks = extract_diff_json(llm_log)
@@ -163,6 +144,6 @@ def batch_generate_diff(base_dir: str, repo_name: str, model_name: str):
 
 if __name__ == "__main__":
     repo_name = "netty"
-    base_dir = "llm_output"
+    base_dir = "Dataset/llm_output_raw"
     for model_name in os.listdir(os.path.join(base_dir, repo_name)):
         batch_generate_diff(base_dir, repo_name, model_name)

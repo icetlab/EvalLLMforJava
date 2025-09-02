@@ -82,26 +82,26 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
                     # Build
                     submodule=$(echo "$source_code" | cut -d'/' -f1)
                     ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true
-                    # if ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true; then
-                    #     echo "Build succeeded for patch: $patch_rel_path"
+                    if ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true; then
+                        echo "Build succeeded for patch: $patch_rel_path"
 
-                    #     TEST_RESULT="success"
-                    #     # Run unit tests only if build succeeded
-                    #     for test_path in $unittest; do
-                    #         test_submodule=$(echo "$test_path" | cut -d'/' -f1)
-                    #         test_file=$(basename "$test_path")
-                    #         test_name="${test_file%.*}"  # Remove .java or .scala
-                    #         if ! ./mvnw -pl "$test_submodule" test -Dtest="$test_name" -DfailIfNoTests=false -Dcheckstyle.skip=true; then
-                    #             echo "Unit test failed: $test_name"
-                    #             TEST_RESULT="failed"
-                    #         fi
-                    #     done
+                        TEST_RESULT="success"
+                        # Run unit tests only if build succeeded
+                        for test_path in $unittest; do
+                            test_submodule=$(echo "$test_path" | cut -d'/' -f1)
+                            test_file=$(basename "$test_path")
+                            test_name="${test_file%.*}"  # Remove .java or .scala
+                            if ! ./mvnw -pl "$test_submodule" test -Dtest="$test_name" -DfailIfNoTests=false -Dcheckstyle.skip=true; then
+                                echo "Unit test failed: $test_name"
+                                TEST_RESULT="failed"
+                            fi
+                        done
 
-                    #     echo "${patch_rel_path},success,${TEST_RESULT}" >> "$RESULT_CSV"
-                    # else
-                    #     echo "Build failed for patch: $patch_rel_path"
-                    #     echo "${patch_rel_path},failed," >> "$RESULT_CSV"
-                    # fi
+                        echo "${patch_rel_path},success,${TEST_RESULT}" >> "$RESULT_CSV"
+                    else
+                        echo "Build failed for patch: $patch_rel_path"
+                        echo "${patch_rel_path},failed," >> "$RESULT_CSV"
+                    fi
 
                     # benchmark
                     # Define JSON output file
@@ -114,7 +114,7 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
                     fi
                     echo "Running JMH benchmark: $jmh_case"
                     cd microbench || { echo "microbench directory not found"; exit 1; }
-                    ../mvnw -DskipTests=false -Dtest="$jmh_case" -DwarmupIterations=5 -DmeasureIterations=15 -Dforks=1 -DperfReportDir=$PATCH_DIR test
+                    ../mvnw -DskipTests=false -Dtest="$jmh_case" -DwarmupIterations=10 -DmeasureIterations=50 -Dforks=1 -DperfReportDir=$JSON_DIR test
 
                     wait
 
@@ -160,12 +160,12 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
         submodule=$(echo "$source_code" | cut -d'/' -f1)
         ./mvnw -pl ${submodule} -am clean install -DskipTests -Dcheckstyle.skip=true
 
-        # for test_path in $unittest; do
-        #     test_submodule=$(echo "$test_path" | cut -d'/' -f1)
-        #     test_file=$(basename "$test_path")
-        #     test_name="${test_file%.*}"  # Remove .java or .scala
-        #     ./mvnw -pl "$test_submodule" test -Dtest="$test_name" -DfailIfNoTests=false
-        # done
+        for test_path in $unittest; do
+            test_submodule=$(echo "$test_path" | cut -d'/' -f1)
+            test_file=$(basename "$test_path")
+            test_name="${test_file%.*}"  # Remove .java or .scala
+            ./mvnw -pl "$test_submodule" test -Dtest="$test_name" -DfailIfNoTests=false
+        done
 
         # benchmark
         # Define JSON output file
@@ -187,7 +187,7 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
         echo "Running JMH benchmark: $jmh_case"
         cd microbench || { echo "microbench directory not found"; exit 1; }
         # -wi 10 -i 50 -f 1 -r 1s -w 1s
-        ../mvnw -DskipTests=false -Dtest="$jmh_case" -DwarmupIterations=5 -DmeasureIterations=15 -Dforks=1 -DperfReportDir=$JSON_DIR test
+        ../mvnw -DskipTests=false -Dtest="$jmh_case" -DwarmupIterations=10 -DmeasureIterations=50 -Dforks=1 -DperfReportDir=$JSON_DIR test
         wait
 
         # Rename the JMH result file

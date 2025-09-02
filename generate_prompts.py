@@ -49,13 +49,13 @@ def extract_source_code_funtion(source_code_path):
     return source_code
 
 def generate_prompts(json_data, repo_name):
-    repo_dir = os.path.join("../", repo_name)
+    repo_dir = os.path.join("./", repo_name)
     if not os.path.exists(repo_dir):
         print(f"Error: Directory {repo_dir} does not exist.")
         return
     # reset the git repository to the specified commit
-    commit_hash = json_data["commit_hash"]
-    os.system(f"cd {repo_dir} && git reset --hard {commit_hash}")
+    commit_id = json_data["id"]
+    os.system(f"cd {repo_dir} && git reset --hard {commit_id}")
 
     # Read the unit test
     unittest_paths = [os.path.join(repo_dir, path.strip()) for path in json_data["unittest"].split()]
@@ -85,7 +85,7 @@ def generate_prompts(json_data, repo_name):
 
 def main():
     repo_name = input("Enter the repository name (e.g., kafka, netty, presto, RoaringBitmap): ")
-    current_prompts_dir_for_repo = os.path.join("prompts_source", repo_name)
+    current_prompts_dir_for_repo = os.path.join("Prompts/prompts_source", repo_name)
     if not os.path.isdir(current_prompts_dir_for_repo):
         print(f"Error: Prompts directory for repository '{repo_name}' not found at '{current_prompts_dir_for_repo}'.")
         return
