@@ -47,7 +47,7 @@ def main():
     repo_name = input("Enter the repository name (kafka, netty, presto, RoaringBitmap): ")
     model_name = input("Enter the model name (gpt, deepseek, llama, gemini, claude): ")
 
-    prompts_input_dir = os.path.join(project_root, "prompts_combinations", repo_name)
+    prompts_input_dir = os.path.join(project_root, "Prompts", repo_name)
     if not os.path.exists(prompts_input_dir):
         print(f"Error: Directory {prompts_input_dir} does not exist.")
         return
@@ -62,7 +62,7 @@ def main():
             continue
 
         # Output directory for this commit_id
-        output_commit_dir = os.path.join(project_root, "llm_output", repo_name, model_name, commit_id)
+        output_commit_dir = os.path.join(project_root, "Dataset/llm_output", repo_name, model_name, commit_id)
         os.makedirs(output_commit_dir, exist_ok=True)
 
         # # Test before calling LLM
@@ -80,7 +80,6 @@ def main():
 
                 current_prompt_file_path = os.path.join(commit_dir, prompt_filename)
 
-                # Output: llm_output/repo/model/commit_id/prompt1.diff
                 output_filename = f"prompt{prompt_num_str}.diff"
                 output_path = os.path.join(output_commit_dir, output_filename)
 

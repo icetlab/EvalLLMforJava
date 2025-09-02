@@ -9,17 +9,16 @@ This replicate package contains the complete dataset, codebase, and analysis scr
 .
 ├── Analysis/         # All scripts for data analysis and visualization
 │   ├── preprocessing/  # Scripts for cleaning and normalizing raw benchmark data
-│   ├── RQ1/            # Scripts related to Research Question 1 (Magnitude of Change)
-│   ├── RQ2/            # Scripts related to Research Question 2 (Comparison to Humans)
-│   └── RQ3/            # Scripts related to Research Question 3 (Qualitative Analysis)
+│   ├── RQ1/            # Scripts related to Research Question 1
+│   ├── RQ2/            # Scripts related to Research Question 2
+│   └── RQ3/            # Scripts related to Research Question 3
 ├── Dataset/          # Raw data for benchmarks and LLM outputs
 │   ├── baseline_raw/   # Raw JMH benchmark results for original and developer versions
 │   └── llm_output_raw/ # LLM-generated patches and raw JMH benchmark results
-├── Prompts/          # All prompt-related files
-│   ├── prompts_source/ # Source files used to generate prompts
-│   └── prompts_combinations/ # The final prompts sent to the LLMs
+│   └── PerfOpt/        # The dataset of performance optimization tasks, including PerfOpt.csv
+├── Prompts/          # All generated prompt files, organized by project and task ID
 ├── Scripts/          # Build, test, and benchmark execution scripts
-│   └── run_jmh/        # Scripts to run JMH benchmarks for each project
+│   └── run_jmh/         # Scripts to run JMH benchmarks for each project
 ├── apply_llm_changes.py # Applies LLM-generated diffs to the codebase
 ├── call_llms.py         # Calls LLM APIs to generate solutions
 ├── generate_prompts.py  # Generates prompts from source files

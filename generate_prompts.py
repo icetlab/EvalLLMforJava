@@ -85,14 +85,14 @@ def generate_prompts(json_data, repo_name):
 
 def main():
     repo_name = input("Enter the repository name (e.g., kafka, netty, presto, RoaringBitmap): ")
-    current_prompts_dir_for_repo = os.path.join("Prompts/prompts_source", repo_name)
+    current_prompts_dir_for_repo = os.path.join("Dataset/PerfOpt", repo_name)
     if not os.path.isdir(current_prompts_dir_for_repo):
         print(f"Error: Prompts directory for repository '{repo_name}' not found at '{current_prompts_dir_for_repo}'.")
         return
 
     print(f"Processing repository: {repo_name}")
     
-    output_repo_dir = os.path.join("prompts_combinations", repo_name)
+    output_repo_dir = os.path.join("Prompts", repo_name)
     os.makedirs(output_repo_dir, exist_ok=True)
     
     json_filenames = os.listdir(current_prompts_dir_for_repo)
