@@ -105,18 +105,18 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
             gradle
         fi
 
-        # # Compile and run unit test before benchmarking
-        # submodule=$(echo "$source_code" | cut -d'/' -f1)
-        # ./gradlew ${submodule}:build -x test < /dev/null
+        # Compile and run unit test before benchmarking
+        submodule=$(echo "$source_code" | cut -d'/' -f1)
+        ./gradlew ${submodule}:build -x test < /dev/null
 
-        # # Run unit test(s) before benchmarking
-        # # For each test file, extract the submodule and test class, and run them individually
-        # for test_path in $unittest; do
-        #     test_submodule=$(echo "$test_path" | awk -F'/' '{print $1}')
-        #     test_file=$(basename "$test_path")
-        #     test_name="${test_file%.*}"  # Remove .java or .scala
-        #     ./gradlew ${test_submodule}:test --tests "$test_name" < /dev/null
-        # done
+        # Run unit test(s) before benchmarking
+        # For each test file, extract the submodule and test class, and run them individually
+        for test_path in $unittest; do
+            test_submodule=$(echo "$test_path" | awk -F'/' '{print $1}')
+            test_file=$(basename "$test_path")
+            test_name="${test_file%.*}"  # Remove .java or .scala
+            ./gradlew ${test_submodule}:test --tests "$test_name" < /dev/null
+        done
 
         # Define JSON output file
         if [ "$MODE" = "-dev" ]; then
@@ -135,11 +135,7 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
 
         echo "Running JMH benchmark: $jmh_case"
         # Use different JMH parameters for specific ids
-        if [ "$id" = "b36e3c2" ] || [ "$id" = "eb24ed8" ]; then
-            JMH_OPTS="-wi 3 -i 10 -f 1 -r 1s -w 1s -p compressionType=ZSTD"
-        else
-            JMH_OPTS="-wi 10 -i 50 -f 1 -r 1s -w 1s"
-        fi
+        JMH_OPTS="-wi 10 -i 50 -f 1 -r 1s -w 1s"
         # JMH_OPTS="-bm avgt -wi 10 -i 50 -f 1 -r 1s -w 1s"
 
         ./jmh-benchmarks/jmh.sh ".*${jmh_case}.*" $JMH_OPTS -rf json -rff "$JSON_FILE" < /dev/null

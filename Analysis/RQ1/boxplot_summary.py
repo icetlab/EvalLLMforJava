@@ -6,15 +6,6 @@ import re
 import os
 
 def create_plots_from_csv_file(input_path, output_dir="comparison_plots"):
-    """
-    Reads the median_performance_scores.csv file, processes it, and creates two box plots:
-    1. A prompt-centric view comparing model performance for each prompt type.
-    2. A model-centric view comparing prompt performance for each model.
-
-    Args:
-        input_path (str): The path to the median_performance_scores.csv file.
-        output_dir (str): The directory to save the output plot.
-    """
     # --- 1. Load and Process Data ---
     try:
         df_long = pd.read_csv(input_path)
@@ -64,7 +55,7 @@ def create_plots_from_csv_file(input_path, output_dir="comparison_plots"):
     prompt_order = ["NoHint", "Problem", "Benchmark", "Both"]
     
     sns.boxplot(data=df_long, x='Prompt', y='final_score', hue='Model', order=prompt_order, 
-                showfliers=False, ax=ax1, palette=palette_plot1, width=0.5, linewidth=2)
+                showfliers=True, ax=ax1, palette=palette_plot1, width=0.5, linewidth=2)
     
     ax1.axhline(y=1.0, color='r', linestyle='--', linewidth=2, label='Baseline')
     # Add developer median line
@@ -84,7 +75,7 @@ def create_plots_from_csv_file(input_path, output_dir="comparison_plots"):
     model_order = ['OpenAI o4 mini', 'Gemini 2.5 Pro']
     
     sns.boxplot(data=df_long, x='Model', y='final_score', hue='Prompt', order=model_order, 
-                hue_order=prompt_order, showfliers=False, ax=ax2, palette=palette_plot2, width=0.5, linewidth=2)
+                hue_order=prompt_order, showfliers=True, ax=ax2, palette=palette_plot2, width=0.5, linewidth=2)
 
     ax2.axhline(y=1.0, color='r', linestyle='--', linewidth=2, label='Baseline')
     # Add developer median line
@@ -117,8 +108,8 @@ def create_plots_from_csv_file(input_path, output_dir="comparison_plots"):
 
 if __name__ == "__main__":
     # Define the path to your input CSV file
-    input_csv_file = 'median_performance_scores.csv'
-    
+    input_csv_file = '../preprocessing/representative_benchmark_scores.csv'
+
     # Define the directory where the output plot will be saved
     output_plot_directory = "."
 

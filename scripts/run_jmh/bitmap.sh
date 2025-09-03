@@ -72,27 +72,27 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
             if git apply --ignore-whitespace "$patch_file"; then
                 echo "Patch applied successfully: $patch_rel_path"
 
-                # # Build and Test
-                # submodule=$(echo "$source_code" | cut -d'/' -f1)
-                # if ./gradlew ${submodule}:build -x test < /dev/null; then
-                #     echo "Build succeeded for patch: $patch_rel_path"
+                # Build and Test
+                submodule=$(echo "$source_code" | cut -d'/' -f1)
+                if ./gradlew ${submodule}:build -x test < /dev/null; then
+                    echo "Build succeeded for patch: $patch_rel_path"
 
-                #     TEST_RESULT="success"
-                #     # Run unit tests only if build succeeded
-                #     for test_path in $unittest; do
-                #         test_submodule=$(echo "$test_path" | cut -d'/' -f1)
-                #         test_file=$(basename "$test_path")
-                #         test_name="${test_file%.*}"  # Remove .java or .scala
-                #         if ! ./gradlew ${test_submodule}:test --tests "$test_name" < /dev/null; then
-                #             echo "Unit test failed: $test_name"
-                #             TEST_RESULT="failed"
-                #         fi
-                #     done
-                #     echo "${patch_rel_path},success,${TEST_RESULT}" >> "$RESULT_CSV"
-                # else
-                #     echo "Build failed for patch: $patch_rel_path"
-                #     echo "${patch_rel_path},failed," >> "$RESULT_CSV"
-                # fi
+                    TEST_RESULT="success"
+                    # Run unit tests only if build succeeded
+                    for test_path in $unittest; do
+                        test_submodule=$(echo "$test_path" | cut -d'/' -f1)
+                        test_file=$(basename "$test_path")
+                        test_name="${test_file%.*}"  # Remove .java or .scala
+                        if ! ./gradlew ${test_submodule}:test --tests "$test_name" < /dev/null; then
+                            echo "Unit test failed: $test_name"
+                            TEST_RESULT="failed"
+                        fi
+                    done
+                    echo "${patch_rel_path},success,${TEST_RESULT}" >> "$RESULT_CSV"
+                else
+                    echo "Build failed for patch: $patch_rel_path"
+                    echo "${patch_rel_path},failed," >> "$RESULT_CSV"
+                fi
 
                 # Run JMH
                 # Define JSON output file
@@ -121,17 +121,17 @@ tail -n +2 "$SCRIPT_DIR/$CSV_FILE" | while IFS=',' read -r repository id commit_
             git reset HEAD~1 && git restore --staged $source_code && git restore $source_code
         fi
 
-        # Compile and run unit test before benchmarking
-        # submodule=$(echo "$source_code" | cut -d'/' -f1)
-        # ./gradlew ${submodule}:build -x test < /dev/null
+        Compile and run unit test before benchmarking
+        submodule=$(echo "$source_code" | cut -d'/' -f1)
+        ./gradlew ${submodule}:build -x test < /dev/null
 
-        # # Run unit test(s) before benchmarking
-        # for test_path in $unittest; do
-        #     test_submodule=$(echo "$test_path" | awk -F'/' '{print $1}')
-        #     test_file=$(basename "$test_path")
-        #     test_name="${test_file%.*}"  # Remove .java or .scala
-        #     ./gradlew ${test_submodule}:test --tests "$test_name" < /dev/null
-        # done
+        # Run unit test(s) before benchmarking
+        for test_path in $unittest; do
+            test_submodule=$(echo "$test_path" | awk -F'/' '{print $1}')
+            test_file=$(basename "$test_path")
+            test_name="${test_file%.*}"  # Remove .java or .scala
+            ./gradlew ${test_submodule}:test --tests "$test_name" < /dev/null
+        done
 
         # Run JMH
         # Define JSON output file

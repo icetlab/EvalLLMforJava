@@ -1,5 +1,5 @@
 # Do AI Models Dream of Faster Code?
-This replicatation package contains the complete dataset, codebase, and analysis scripts for an experiment evaluating the capabilities of Large Language Models (LLMs) to automatically fix performance issues in large-scale Java projects. The study compares LLM-generated patches against original code baselines and human-developer-written performance patches across four major open-source projects: Kafka, Netty, Presto, and RoaringBitmap.
+This replication package contains the complete dataset, codebase, and analysis scripts for an experiment evaluating the capabilities of Large Language Models (LLMs) to automatically fix performance issues in large-scale Java projects. The study compares LLM-generated patches against original code baselines and human-developer-written performance patches across four major open-source projects: Kafka, Netty, Presto, and RoaringBitmap.
 
 ![Figure 1: The overall experimental workflow.](workflow.png)
 
