@@ -50,7 +50,7 @@ def apply_diff(repo_name, commit_id, llm_log):
     """
     Applies JSON-formatted diff blocks from the LLM log to the source files.
     """
-    repo_path = os.path.join("./", repo_name)
+    repo_path = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../", repo_name))
     os.system(f"cd {repo_path} && git reset --hard {commit_id} && git reset --hard HEAD~1")
 
     blocks = extract_diff_json(llm_log)

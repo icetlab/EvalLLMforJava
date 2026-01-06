@@ -5,7 +5,7 @@ import json
 def run_unit_test(repo_name, commit_id):
     # Read unit test info
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
-    prompts_file = f"Prompts/prompts_source/{repo_name}/{commit_id}.json"
+    prompts_file = f"Dataset/PerfOpt/{repo_name}/{commit_id}.json"
     with open(prompts_file, "r") as f:
         data = json.load(f)
         unit_test_paths = data.get("unittest", "")
