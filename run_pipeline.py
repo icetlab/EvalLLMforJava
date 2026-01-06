@@ -2,6 +2,7 @@ import os
 from call_llms import call_llm
 from apply_llm_changes import apply_diff
 from run_unit_test import run_unit_test
+from datetime import datetime
 
 project_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "EvalLLMforJava")
 
@@ -14,6 +15,8 @@ def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name):
     while iteration < max_iterations:
         # Call the LLM with the prompt
         llm_log = call_llm(model_name, prompt_feedback)
+        attempt = iteration + 1
+        print(f">>>> LLM output [{model_name}] {repo_name}/{commit_id} attempt-{attempt}:\n{llm_log}")
 
         # Apply the changes to the source code
         diff_patch = apply_diff(repo_name, commit_id, llm_log)
@@ -39,13 +42,15 @@ def improve_code_with_llm(repo_name, commit_id, prompt_content, model_name):
             iteration += 1
 
     if iteration == max_iterations and "[Format Error]" in diff_patch:
-        return "Failed", " ", " "
+        return "Failed", llm_log, diff_patch
     
     return "Success", llm_log, diff_patch
 
 def main():
-    repo_name = input("Enter the repository name (kafka, netty, presto, RoaringBitmap): ")
-    model_name = input("Enter the model name (gpt, deepseek, llama, gemini, claude): ")
+    # repo_name = input("Enter the repository name (kafka, netty, presto, RoaringBitmap): ")
+    # model_name = input("Enter the model name (gpt, deepseek, llama, gemini, claude): ")
+    repo_name = "RoaringBitmap"
+    model_name = "deepseek"
 
     prompts_input_dir = os.path.join(project_root, "Prompts", repo_name)
     if not os.path.exists(prompts_input_dir):
@@ -54,6 +59,36 @@ def main():
 
     total_try = 0
     good_try = 0
+    build_fail_count = 0
+    test_fail_count = 0
+    format_fail_count = 0
+    pass_count = 0
+
+    stats_dir = os.path.join(project_root, "Dataset", "stats", repo_name, model_name)
+    os.makedirs(stats_dir, exist_ok=True)
+    stats_file = os.path.join(stats_dir, "progress.csv")
+    if not os.path.exists(stats_file):
+        with open(stats_file, 'w') as sf:
+            sf.write("timestamp,repo,model,commit,prompt,status,failure_type,total_try,pass_count,build_fail_count,test_fail_count,format_fail_count,pass_rate\n")
+
+    def write_stats(commit_id, prompt_num_str, status, failure_type):
+        pr = (pass_count / total_try) if total_try else 0.0
+        with open(stats_file, 'a') as sf:
+            sf.write(f"{datetime.utcnow().isoformat()},{repo_name},{model_name},{commit_id},prompt{prompt_num_str},{status},{failure_type},{total_try},{pass_count},{build_fail_count},{test_fail_count},{format_fail_count},{pr}\n")
+
+    def save_failed_patch(commit_id, prompt_num_str, iteration, diff_patch, llm_log, build_test_log, failure_type):
+        base_dir = os.path.join(project_root, "Dataset", "llm_output_failed", repo_name, model_name, commit_id)
+        os.makedirs(base_dir, exist_ok=True)
+        prefix = os.path.join(base_dir, f"prompt{prompt_num_str}.iter{iteration}.{failure_type}")
+        if diff_patch:
+            with open(prefix + ".diff", 'w') as f_out:
+                f_out.write(diff_patch)
+        if llm_log:
+            with open(prefix + ".llm.log", 'w') as f_out:
+                f_out.write(llm_log)
+        if build_test_log:
+            with open(prefix + ".build.log", 'w') as f_out:
+                f_out.write(build_test_log)
 
     # Traverse each commit_id subdirectory
     for commit_id in os.listdir(prompts_input_dir):
@@ -86,6 +121,8 @@ def main():
                 if os.path.exists(output_path):
                     print(f"Output file {output_path} already exists. Skipping LLM call.")
                     good_try += 1
+                    pass_count += 1
+                    write_stats(commit_id, prompt_num_str, "pass_existing", "")
                     continue
 
                 with open(current_prompt_file_path, 'r') as f_prompt:
@@ -98,12 +135,16 @@ def main():
                 max_iterations = 3
                 diff_patch = ""
                 llm_log = ""
+                last_failure_type = ""
                 while iteration < max_iterations:
                     iteration += 1
                     status, llm_log, diff_patch = improve_code_with_llm(repo_name, commit_id, prompt_feedback, model_name)
                     if status == "Failed":
                         build_test_log = f"[APPLIED FAILED] Not all generated code changes successfully applied!"
                         print(f"Not all generated code changes successfully applied!")
+                        format_fail_count += 1
+                        last_failure_type = "format_failed"
+                        save_failed_patch(commit_id, prompt_num_str, iteration, diff_patch, llm_log, build_test_log, last_failure_type)
                         continue
 
                     build_test_log = run_unit_test(repo_name, commit_id)
@@ -115,8 +156,14 @@ def main():
                     # Self-repair if build/test fails
                     if "[BUILD FAILED]" in build_test_log:
                         failed_prompt = "Build failed"
+                        build_fail_count += 1
+                        last_failure_type = "build_failed"
+                        save_failed_patch(commit_id, prompt_num_str, iteration, diff_patch, llm_log, build_test_log, last_failure_type)
                     elif "[TEST FAILED]" in build_test_log:
                         failed_prompt = "The unit test failed"
+                        test_fail_count += 1
+                        last_failure_type = "test_failed"
+                        save_failed_patch(commit_id, prompt_num_str, iteration, diff_patch, llm_log, build_test_log, last_failure_type)
 
                     print(f"{failed_prompt} after iteration-{iteration}. Self-repairing...")
 
@@ -133,9 +180,11 @@ def main():
 
                 if "[TEST PASSED]" not in build_test_log:
                     print(f"Build/test failed after {max_iterations} iterations. Skipping...")
+                    write_stats(commit_id, prompt_num_str, "fail", last_failure_type)
                     continue
 
                 good_try += 1
+                pass_count += 1
                 print(f"Build/test pass rate is {good_try}/{total_try}")
                 # Save good code changes
                 with open(output_path, 'w') as f_out:
@@ -144,6 +193,7 @@ def main():
                 log_path = output_path + ".log"
                 with open(log_path, 'w') as f_out:
                     f_out.write(llm_log)
+                write_stats(commit_id, prompt_num_str, "pass", "")
 
 if __name__ == "__main__":
     main()
