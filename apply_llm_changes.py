@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import subprocess
 
 def extract_diff_json(llm_log: str):
@@ -51,7 +52,21 @@ def apply_diff(repo_name, commit_id, llm_log):
     Applies JSON-formatted diff blocks from the LLM log to the source files.
     """
     repo_path = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../", repo_name))
-    os.system(f"cd {repo_path} && git reset --hard {commit_id} && git reset --hard HEAD~1")
+    os.system(f"cd {repo_path} && git reset --hard {commit_id} && git reset HEAD~1")
+
+    prompts_file = os.path.join("Dataset", "PerfOpt", repo_name, f"{commit_id}.json")
+    try:
+        with open(prompts_file, "r") as pf:
+            data = json.load(pf)
+            source_code_paths = data.get("source_code", "").strip().split()
+    except Exception:
+        source_code_paths = []
+
+    try:
+        for p in source_code_paths:
+            subprocess.run(["git", "restore", "--staged", "--worktree", p], cwd=repo_path, check=False)
+    except Exception as e:
+        print(f"Error restoring source files: {e}")
 
     blocks = extract_diff_json(llm_log)
     if "[Format Error]" in blocks:
