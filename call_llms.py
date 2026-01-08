@@ -26,11 +26,26 @@ def improve_code_with_gpt(prompt):
     )
     return response.output_text
 
-def improve_code_with_deepseek(prompt):
+def improve_code_with_deepseek_v3(prompt):
     # DeepSeek-V3
     client = OpenAI(api_key="", base_url="https://api.deepseek.com")
     response = client.chat.completions.create(
         model="deepseek-chat",
+        messages=[
+            {"role": "system", "content": persona},
+            {"role": "user", "content": prompt},
+        ],
+        stream=False,
+        temperature=0.3,
+        top_p=0.95,
+    )
+    return response.choices[0].message.content
+
+def improve_code_with_deepseek_r1(prompt):
+    # DeepSeek-R1
+    client = OpenAI(api_key="", base_url="https://api.deepseek.com")
+    response = client.chat.completions.create(
+        model="deepseek-reasoner",
         messages=[
             {"role": "system", "content": persona},
             {"role": "user", "content": prompt},
@@ -63,8 +78,10 @@ def call_llm(model_name, prompt):
         return improve_code_with_gemini(prompt)
     # elif model_name == "llama":
     #     return improve_code_with_llama(prompt)
-    elif model_name == "deepseek":
-        return improve_code_with_deepseek(prompt)
+    elif model_name == "deepseek-v3":
+        return improve_code_with_deepseek_v3(prompt)
+    elif model_name == "deepseek-r1":
+        return improve_code_with_deepseek_r1(prompt)
     # elif model_name == "claude":
     #     return improve_code_with_claude(prompt)
     else:
