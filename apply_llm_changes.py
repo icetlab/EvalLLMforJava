@@ -2,6 +2,7 @@ import os
 import re
 import json
 import subprocess
+import shlex
 
 def extract_diff_json(llm_log: str):
     """
@@ -52,7 +53,7 @@ def apply_diff(repo_name, commit_id, llm_log):
     Applies JSON-formatted diff blocks from the LLM log to the source files.
     """
     repo_path = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../", repo_name))
-    os.system(f"cd {repo_path} && git reset --hard {commit_id} && git reset HEAD~1")
+    os.system(f"cd {repo_path} && git reset --hard {commit_id} && git clean -fdx && git reset HEAD~1")
 
     prompts_file = os.path.join("Dataset", "PerfOpt", repo_name, f"{commit_id}.json")
     try:
@@ -63,8 +64,9 @@ def apply_diff(repo_name, commit_id, llm_log):
         source_code_paths = []
 
     try:
-        for p in source_code_paths:
-            subprocess.run(["git", "restore", "--staged", "--worktree", p], cwd=repo_path, check=False)
+        if source_code_paths:
+            cmd = "git -C " + shlex.quote(repo_path) + " restore --staged --worktree " + " ".join(shlex.quote(p) for p in source_code_paths)
+            os.system(cmd)
     except Exception as e:
         print(f"Error restoring source files: {e}")
 
@@ -104,7 +106,7 @@ def apply_diff(repo_name, commit_id, llm_log):
     try:
         # Get the diff patch using git diff
         diff_patch = subprocess.check_output(
-            ["git", "diff", "-w"],
+            ["git", "diff"] + source_code_paths,
             cwd=repo_path,
             universal_newlines=True
         )
