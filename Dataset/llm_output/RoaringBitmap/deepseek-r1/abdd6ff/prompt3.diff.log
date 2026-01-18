@@ -1,0 +1,36 @@
+Looking at the provided code, I can identify several performance optimization opportunities:
+
+1. **In `topK` method**: The code for removing excess elements using an `IntIterator` and creating a separate bitmap is inefficient. This can be optimized by using the existing `limit` method or batch operations.
+
+2. **In `getValue` method**: The loop that reconstructs the value bit-by-bit can be optimized by using bit operations more efficiently.
+
+3. **In `sum` method**: Using `IntStream` and lambda expressions creates overhead; this can be optimized with a traditional loop.
+
+4. **In `parallelExec` method**: The batch processing logic has redundant array copying operations that can be eliminated.
+
+Here are the specific improvements:
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "  public Pair<Integer, Boolean> getValue(int columnId) {\n    boolean exists = this.ebM.contains(columnId);\n    if (!exists) {\n      return Pair.newPair(0, false);\n    }\n    int value = 0;\n    for (int i = 0; i < this.bitCount(); i++) {\n      if (this.bA[i].contains(columnId)) {\n        value |= (1 << i);\n      }\n    }\n    return Pair.newPair(value, true);\n  }",
+    "replace": "  public Pair<Integer, Boolean> getValue(int columnId) {\n    if (!this.ebM.contains(columnId)) {\n      return Pair.newPair(0, false);\n    }\n    int value = 0;\n    int bitCount = this.bitCount();\n    for (int i = 0; i < bitCount; i++) {\n      if (this.bA[i].contains(columnId)) {\n        value |= (1 << i);\n      }\n    }\n    return Pair.newPair(value, true);\n  }"
+  },
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "  public Pair<Long, Long> sum(ImmutableRoaringBitmap foundSet) {\n    if (null == foundSet || foundSet.isEmpty()) {\n      return Pair.newPair(0L, 0L);\n    }\n    long count = foundSet.getLongCardinality();\n\n    Long sum = IntStream.range(0, this.bitCount())\n        .mapToLong(x -> (long) (1 << x) * ImmutableRoaringBitmap.andCardinality(this.bA[x], foundSet))\n        .sum();\n\n    return Pair.newPair(sum, count);\n  }",
+    "replace": "  public Pair<Long, Long> sum(ImmutableRoaringBitmap foundSet) {\n    if (null == foundSet || foundSet.isEmpty()) {\n      return Pair.newPair(0L, 0L);\n    }\n    long count = foundSet.getLongCardinality();\n    long sum = 0L;\n    int bitCount = this.bitCount();\n    for (int i = 0; i < bitCount; i++) {\n      sum += (1L << i) * ImmutableRoaringBitmap.andCardinality(this.bA[i], foundSet);\n    }\n    return Pair.newPair(sum, count);\n  }"
+  },
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "    MutableRoaringBitmap F = ImmutableRoaringBitmap.or(G, E);\n    long n = F.getLongCardinality() - k;\n    if (n > 0) {\n      // TODO: make faster\n      IntIterator i = F.getIntIterator();\n      MutableRoaringBitmap turnoff = new MutableRoaringBitmap();\n      while (i.hasNext() && n > 0) {\n        turnoff.add(i.next());\n        --n;\n      }\n      F.andNot(turnoff);\n    }",
+    "replace": "    MutableRoaringBitmap F = ImmutableRoaringBitmap.or(G, E);\n    long excess = F.getLongCardinality() - k;\n    if (excess > 0) {\n      // Use limit to efficiently get first 'excess' elements\n      MutableRoaringBitmap turnoff = F.limit((int)excess);\n      F.andNot(turnoff);\n    }"
+  },
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "    while (batchIterator.hasNext()) {\n      int[] buffer = new int[batchSize];\n      int cardinality = batchIterator.nextBatch(buffer);\n      if (cardinality > 0) {\n        if (cardinality == batchSize) {\n          batches.add(buffer);\n        } else {\n          int[] buff = new int[cardinality];\n          System.arraycopy(buffer, 0, buff, 0, cardinality);\n          batches.add(buff);\n        }\n      }\n    }",
+    "replace": "    while (batchIterator.hasNext()) {\n      int[] buffer = new int[batchSize];\n      int cardinality = batchIterator.nextBatch(buffer);\n      if (cardinality > 0) {\n        if (cardinality == batchSize) {\n          batches.add(buffer);\n        } else {\n          // Create correctly sized array without extra copy\n          int[] sizedBuffer = new int[cardinality];\n          System.arraycopy(buffer, 0, sizedBuffer, 0, cardinality);\n          batches.add(sizedBuffer);\n        }\n      }\n    }"
+  }
+]
+```
