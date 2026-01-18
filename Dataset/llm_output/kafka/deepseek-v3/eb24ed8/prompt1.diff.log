@@ -1,0 +1,20 @@
+Looking at the build error, the issue is that the code is using `java.util.Map.of()` which was introduced in Java 9, but the Kafka project appears to be using an older Java version that doesn't support this method. I need to replace this with a compatible approach that works with the project's Java version.
+
+The error shows: `cannot find symbol: method of(String,CompressionType,...)`. This indicates that `Map.of()` is not available. I'll use `java.util.HashMap` instead, which is available in older Java versions.
+
+Here's the fix:
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "    public static CompressionType forId(int id) {\n        switch (id) {\n            case 0:\n                return NONE;\n            case 1:\n                return GZIP;\n            case 2:\n                return SNAPPY;\n            case 3:\n                return LZ4;\n            case 4:\n                return ZSTD;\n            default:\n                throw new IllegalArgumentException(\"Unknown compression type id: \" + id);\n        }\n    }",
+    "replace": "    private static final CompressionType[] ID_TO_TYPE = new CompressionType[] {\n        NONE, GZIP, SNAPPY, LZ4, ZSTD\n    };\n\n    public static CompressionType forId(int id) {\n        if (id >= 0 && id < ID_TO_TYPE.length) {\n            return ID_TO_TYPE[id];\n        }\n        throw new IllegalArgumentException(\"Unknown compression type id: \" + id);\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "    public static CompressionType forName(String name) {\n        if (NONE.name.equals(name))\n            return NONE;\n        else if (GZIP.name.equals(name))\n            return GZIP;\n        else if (SNAPPY.name.equals(name))\n            return SNAPPY;\n        else if (LZ4.name.equals(name))\n            return LZ4;\n        else if (ZSTD.name.equals(name))\n            return ZSTD;\n        else\n            throw new IllegalArgumentException(\"Unknown compression name: \" + name);\n    }",
+    "replace": "    private static final java.util.Map<String, CompressionType> NAME_TO_TYPE;\n    static {\n        java.util.Map<String, CompressionType> map = new java.util.HashMap<>();\n        map.put(NONE.name, NONE);\n        map.put(GZIP.name, GZIP);\n        map.put(SNAPPY.name, SNAPPY);\n        map.put(LZ4.name, LZ4);\n        map.put(ZSTD.name, ZSTD);\n        NAME_TO_TYPE = java.util.Collections.unmodifiableMap(map);\n    }\n\n    public static CompressionType forName(String name) {\n        CompressionType type = NAME_TO_TYPE.get(name);\n        if (type == null) {\n            throw new IllegalArgumentException(\"Unknown compression name: \" + name);\n        }\n        return type;\n    }"
+  }
+]
+```

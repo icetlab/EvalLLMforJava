@@ -1,0 +1,39 @@
+## Explanation
+
+The performance issue is in the `matchingAcls` method where we're using Scala's `Set ++` operation to combine multiple ACL sets: `prefixed ++ wildcard ++ literal`. When the right-hand side set has many entries (over 100), the `++` operation becomes slow due to iterating every entry and computing hash codes.
+
+The solution is to avoid creating intermediate sets by using mutable accumulation or view-based operations. Since `matchingAcls` is called in the hot path of every authorization request, we need an efficient solution.
+
+Looking at the code, we can improve performance by:
+1. Using a mutable `SetBuilder` to accumulate results efficiently
+2. Avoiding the creation of intermediate immutable sets when combining multiple collections
+
+Here's the optimized approach using a mutable builder:
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  private def matchingAcls(resourceType: ResourceType, resourceName: String): Set[AclEntry] = {\n    inReadLock(lock) {\n      val wildcard = aclCache.get(new ResourcePattern(resourceType, ResourcePattern.WILDCARD_RESOURCE, PatternType.LITERAL))\n        .map(_.acls)\n        .getOrElse(Set.empty)\n\n      val literal = aclCache.get(new ResourcePattern(resourceType, resourceName, PatternType.LITERAL))\n        .map(_.acls)\n        .getOrElse(Set.empty)\n\n      val prefixed = aclCache\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .filterKeys(resource => resourceName.startsWith(resource.name))\n        .values\n        .flatMap { _.acls }\n        .toSet\n\n      prefixed ++ wildcard ++ literal\n    }\n  }",
+    "replace": "  private def matchingAcls(resourceType: ResourceType, resourceName: String): Set[AclEntry] = {\n    inReadLock(lock) {\n      // Use mutable builder for efficient set accumulation\n      val builder = Set.newBuilder[AclEntry]\n      \n      // Add wildcard ACLs\n      aclCache.get(new ResourcePattern(resourceType, ResourcePattern.WILDCARD_RESOURCE, PatternType.LITERAL))\n        .foreach { versionedAcls => builder ++= versionedAcls.acls }\n      \n      // Add literal ACLs\n      aclCache.get(new ResourcePattern(resourceType, resourceName, PatternType.LITERAL))\n        .foreach { versionedAcls => builder ++= versionedAcls.acls }\n      \n      // Add prefixed ACLs directly without creating intermediate Set\n      aclCache\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .filterKeys(resource => resourceName.startsWith(resource.name))\n        .values\n        .foreach { versionedAcls => builder ++= versionedAcls.acls }\n      \n      builder.result()\n    }\n  }"
+  }
+]
+```
+
+## Alternative Approach Using Views (if mutable approach is not preferred)
+
+If we want to avoid mutable builders completely, we can use view-based operations to avoid intermediate collections:
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  private def matchingAcls(resourceType: ResourceType, resourceName: String): Set[AclEntry] = {\n    inReadLock(lock) {\n      val wildcard = aclCache.get(new ResourcePattern(resourceType, ResourcePattern.WILDCARD_RESOURCE, PatternType.LITERAL))\n        .map(_.acls)\n        .getOrElse(Set.empty)\n\n      val literal = aclCache.get(new ResourcePattern(resourceType, resourceName, PatternType.LITERAL))\n        .map(_.acls)\n        .getOrElse(Set.empty)\n\n      val prefixed = aclCache\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .filterKeys(resource => resourceName.startsWith(resource.name))\n        .values\n        .flatMap { _.acls }\n        .toSet\n\n      prefixed ++ wildcard ++ literal\n    }\n  }",
+    "replace": "  private def matchingAcls(resourceType: ResourceType, resourceName: String): Set[AclEntry] = {\n    inReadLock(lock) {\n      // Collect all ACLs in one go without intermediate ++ operations\n      val allAcls = scala.collection.mutable.Set.empty[AclEntry]\n      \n      // Process wildcard ACLs\n      aclCache.get(new ResourcePattern(resourceType, ResourcePattern.WILDCARD_RESOURCE, PatternType.LITERAL))\n        .foreach(_.acls.foreach(allAcls += _))\n      \n      // Process literal ACLs\n      aclCache.get(new ResourcePattern(resourceType, resourceName, PatternType.LITERAL))\n        .foreach(_.acls.foreach(allAcls += _))\n      \n      // Process prefixed ACLs\n      aclCache\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .filterKeys(resource => resourceName.startsWith(resource.name))\n        .values\n        .flatMap(_.acls)\n        .foreach(allAcls += _)\n      \n      allAcls.toSet\n    }\n  }"
+  }
+]
+```
+
+**Note:** The second approach (using mutable Set) is provided as an alternative. Both approaches eliminate the expensive `++` operations by accumulating results directly into a single mutable collection, then converting to immutable Set at the end. This avoids the O(n) iteration and hash code computation for each `++` operation when combining large sets.
+
+The first approach using `Set.newBuilder` is more idiomatic Scala and slightly more efficient as builders are optimized for building collections.

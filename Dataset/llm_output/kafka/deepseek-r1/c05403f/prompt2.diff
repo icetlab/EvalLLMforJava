@@ -1,0 +1,50 @@
+diff --git a/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java b/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java
+index 15868721da..f4643040a6 100644
+--- a/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java
++++ b/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java
+@@ -392,12 +392,18 @@ public final class ByteUtils {
+      * @param value The signed value
+      */
+     public static int sizeOfUnsignedVarint(int value) {
+-        int bytes = 1;
+-        while ((value & 0xffffff80) != 0L) {
+-            bytes += 1;
+-            value >>>= 7;
++        // Count the number of leading zero bits, add 1 to get the bit position (1-indexed)
++        // 31 - numberOfLeadingZeros gives the highest set bit position (0-indexed)
++        int leadingZeros = Integer.numberOfLeadingZeros(value);
++        // For value 0, we need 1 byte
++        if (value == 0) {
++            return 1;
+         }
+-        return bytes;
++        // Calculate bits needed: 32 - leadingZeros
++        int bits = 32 - leadingZeros;
++        // Each varint byte stores 7 bits, so compute ceil(bits / 7)
++        // Using (bits + 6) / 7 avoids floating point and division
++        return (bits + 6) / 7;
+     }
+ 
+     /**
+@@ -416,12 +422,16 @@ public final class ByteUtils {
+      */
+     public static int sizeOfVarlong(long value) {
+         long v = (value << 1) ^ (value >> 63);
+-        int bytes = 1;
+-        while ((v & 0xffffffffffffff80L) != 0L) {
+-            bytes += 1;
+-            v >>>= 7;
++        // Count the number of leading zero bits
++        int leadingZeros = Long.numberOfLeadingZeros(v);
++        // For value 0 (which becomes v=0), we need 1 byte
++        if (v == 0) {
++            return 1;
+         }
+-        return bytes;
++        // Calculate bits needed: 64 - leadingZeros
++        int bits = 64 - leadingZeros;
++        // Each varint byte stores 7 bits, so compute ceil(bits / 7)
++        return (bits + 6) / 7;
+     }
+ 
+     private static IllegalArgumentException illegalVarintException(int value) {

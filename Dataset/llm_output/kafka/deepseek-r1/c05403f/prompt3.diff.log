@@ -1,0 +1,16 @@
+The goal is to improve the performance of `ByteUtils.sizeOfUnsignedVarint` and `ByteUtils.sizeOfVarlong` by replacing loop-based bit shifting with branchless computations using `Integer.numberOfLeadingZeros` and `Long.numberOfLeadingZeros`. These are intrinsic methods that compile to fast CPU instructions, eliminating loop overhead and branching.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "    public static int sizeOfUnsignedVarint(int value) {\n        int bytes = 1;\n        while ((value & 0xffffff80) != 0L) {\n            bytes += 1;\n            value >>>= 7;\n        }\n        return bytes;\n    }",
+    "replace": "    public static int sizeOfUnsignedVarint(int value) {\n        int leadingZeros = Integer.numberOfLeadingZeros(value);\n        return (31 - leadingZeros) / 7 + 1;\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "    public static int sizeOfVarlong(long value) {\n        long v = (value << 1) ^ (value >> 63);\n        int bytes = 1;\n        while ((v & 0xffffffffffffff80L) != 0L) {\n            bytes += 1;\n            v >>>= 7;\n        }\n        return bytes;\n    }",
+    "replace": "    public static int sizeOfVarlong(long value) {\n        long v = (value << 1) ^ (value >> 63);\n        int leadingZeros = Long.numberOfLeadingZeros(v);\n        return (63 - leadingZeros) / 7 + 1;\n    }"
+  }
+]
+```

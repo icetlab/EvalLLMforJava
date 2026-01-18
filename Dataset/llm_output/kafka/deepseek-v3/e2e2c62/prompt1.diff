@@ -1,0 +1,150 @@
+diff --git a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+index 5f2be90535..2abdf1edd0 100644
+--- a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
++++ b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+@@ -64,8 +64,29 @@ object AclAuthorizer {
+   }
+ 
+   class AclSeqs(classes: Seq[AclEntry]*) {
+-    def find(p: AclEntry => Boolean): Option[AclEntry] = classes.flatMap(_.find(p)).headOption
+-    def isEmpty: Boolean = !classes.exists(_.nonEmpty)
++    def find(p: AclEntry => Boolean): Option[AclEntry] = {
++      var i = 0
++      while (i < classes.length) {
++        val seq = classes(i)
++        var j = 0
++        while (j < seq.length) {
++          val acl = seq(j)
++          if (p(acl)) return Some(acl)
++          j += 1
++        }
++        i += 1
++      }
++      None
++    }
++    
++    def isEmpty: Boolean = {
++      var i = 0
++      while (i < classes.length) {
++        if (classes(i).nonEmpty) return false
++        i += 1
++      }
++      true
++    }
+   }
+ 
+   val NoAcls = VersionedAcls(Set.empty, ZkVersion.UnknownVersion)
+@@ -288,51 +309,46 @@ class AclAuthorizer extends Authorizer with Logging {
+       throw new IllegalArgumentException("Only literal resources are supported. Got: " + resource.patternType)
+     }
+ 
+-    // ensure we compare identical classes
++    // Check superuser first (fast path)
+     val sessionPrincipal = requestContext.principal
+     val principal = if (classOf[KafkaPrincipal] != sessionPrincipal.getClass)
+       new KafkaPrincipal(sessionPrincipal.getPrincipalType, sessionPrincipal.getName)
+     else
+       sessionPrincipal
++    
++    if (isSuperUser(principal)) {
++      logAuditMessage(requestContext, action, true)
++      return AuthorizationResult.ALLOWED
++    }
+ 
+     val host = requestContext.clientAddress.getHostAddress
+     val operation = action.operation
+ 
+-    def isEmptyAclAndAuthorized(acls: AclSeqs): Boolean = {
+-      if (acls.isEmpty) {
+-        // No ACLs found for this resource, permission is determined by value of config allow.everyone.if.no.acl.found
+-        authorizerLogger.debug(s"No acl found for resource $resource, authorized = $shouldAllowEveryoneIfNoAclIsFound")
+-        shouldAllowEveryoneIfNoAclIsFound
+-      } else false
+-    }
+-
+-    def denyAclExists(acls: AclSeqs): Boolean = {
+-      // Check if there are any Deny ACLs which would forbid this operation.
+-      matchingAclExists(operation, resource, principal, host, DENY, acls)
++    // Get ACLs once and reuse
++    val acls = matchingAcls(resource.resourceType, resource.name)
++    
++    // Check if empty ACLs allow access
++    if (acls.isEmpty) {
++      val authorized = shouldAllowEveryoneIfNoAclIsFound
++      authorizerLogger.debug(s"No acl found for resource $resource, authorized = $authorized")
++      logAuditMessage(requestContext, action, authorized)
++      return if (authorized) AuthorizationResult.ALLOWED else AuthorizationResult.DENIED
+     }
+ 
+-    def allowAclExists(acls: AclSeqs): Boolean = {
+-      // Check if there are any Allow ACLs which would allow this operation.
+-      // Allowing read, write, delete, or alter implies allowing describe.
+-      // See #{org.apache.kafka.common.acl.AclOperation} for more details about ACL inheritance.
+-      val allowOps = operation match {
+-        case DESCRIBE => Set[AclOperation](DESCRIBE, READ, WRITE, DELETE, ALTER)
+-        case DESCRIBE_CONFIGS => Set[AclOperation](DESCRIBE_CONFIGS, ALTER_CONFIGS)
+-        case _ => Set[AclOperation](operation)
+-      }
+-      allowOps.exists(operation => matchingAclExists(operation, resource, principal, host, ALLOW, acls))
++    // Check for deny ACLs
++    if (matchingAclExists(operation, resource, principal, host, DENY, acls)) {
++      logAuditMessage(requestContext, action, false)
++      return AuthorizationResult.DENIED
+     }
+ 
+-    def aclsAllowAccess = {
+-      //we allow an operation if no acls are found and user has configured to allow all users
+-      //when no acls are found or if no deny acls are found and at least one allow acls matches.
+-      val acls = matchingAcls(resource.resourceType, resource.name)
+-      isEmptyAclAndAuthorized(acls) || (!denyAclExists(acls) && allowAclExists(acls))
++    // Check for allow ACLs with operation inheritance
++    val allowOps = operation match {
++      case DESCRIBE => Set[AclOperation](DESCRIBE, READ, WRITE, DELETE, ALTER)
++      case DESCRIBE_CONFIGS => Set[AclOperation](DESCRIBE_CONFIGS, ALTER_CONFIGS)
++      case _ => Set[AclOperation](operation)
+     }
+-
+-    // Evaluate if operation is allowed
+-    val authorized = isSuperUser(principal) || aclsAllowAccess
+-
++    
++    val authorized = allowOps.exists(op => matchingAclExists(op, resource, principal, host, ALLOW, acls))
+     logAuditMessage(requestContext, action, authorized)
+     if (authorized) AuthorizationResult.ALLOWED else AuthorizationResult.DENIED
+   }
+@@ -349,18 +365,20 @@ class AclAuthorizer extends Authorizer with Logging {
+     // save aclCache reference to a local val to get a consistent view of the cache during acl updates.
+     val aclCacheSnapshot = aclCache
+     val wildcard = aclCacheSnapshot.get(new ResourcePattern(resourceType, ResourcePattern.WILDCARD_RESOURCE, PatternType.LITERAL))
+-      .map(_.acls.toBuffer)
+-      .getOrElse(mutable.Buffer.empty)
++      .map(_.acls)
++      .getOrElse(Set.empty)
++      .toSeq
+ 
+     val literal = aclCacheSnapshot.get(new ResourcePattern(resourceType, resourceName, PatternType.LITERAL))
+-      .map(_.acls.toBuffer)
+-      .getOrElse(mutable.Buffer.empty)
++      .map(_.acls)
++      .getOrElse(Set.empty)
++      .toSeq
+ 
+     val prefixed = aclCacheSnapshot
+       .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))
+       .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))
+       .flatMap { case (resource, acls) => if (resourceName.startsWith(resource.name)) acls.acls else Seq.empty }
+-      .toBuffer
++      .toSeq
+ 
+     new AclSeqs(prefixed, wildcard, literal)
+   }
+@@ -371,6 +389,9 @@ class AclAuthorizer extends Authorizer with Logging {
+                                 host: String,
+                                 permissionType: AclPermissionType,
+                                 acls: AclSeqs): Boolean = {
++    // Early exit if no ACLs
++    if (acls.isEmpty) return false
++    
+     acls.find { acl =>
+       acl.permissionType == permissionType &&
+         (acl.kafkaPrincipal == principal || acl.kafkaPrincipal == AclEntry.WildcardPrincipal) &&

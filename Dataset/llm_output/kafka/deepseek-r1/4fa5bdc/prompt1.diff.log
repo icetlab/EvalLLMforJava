@@ -1,0 +1,62 @@
+I need to correct my approach. The error shows the search block I used doesn't match the actual code in the file. Let me carefully examine the original code and provide more precise search patterns.
+
+Looking at the error, I see that my search block for `matchingAcls` doesn't match because it includes `private[authorizer] def` but the actual method is `private def`. Also, I need to ensure the search blocks exactly match the original code, including whitespace.
+
+Let me provide corrected search blocks that exactly match what's in the provided source file:
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  private def matchingAcls(resourceType: ResourceType, resourceName: String): AclSets = {\n    // save aclCache reference to a local val to get a consistent view of the cache during acl updates.\n    val aclCacheSnapshot = aclCache\n    val wildcard = aclCacheSnapshot.get(new ResourcePattern(resourceType, ResourcePattern.WILDCARD_RESOURCE, PatternType.LITERAL))\n      .map(_.acls)\n      .getOrElse(Set.empty)\n\n    val literal = aclCacheSnapshot.get(new ResourcePattern(resourceType, resourceName, PatternType.LITERAL))\n      .map(_.acls)\n      .getOrElse(Set.empty)\n\n    val prefixed = aclCacheSnapshot\n      .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n      .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n      .filterKeys(resource => resourceName.startsWith(resource.name))\n      .values\n      .flatMap { _.acls }\n      .toSet\n\n    new AclSets(prefixed, wildcard, literal)\n  }",
+    "replace": "  private def matchingAcls(resourceType: ResourceType, resourceName: String): AclSets = {\n    // save aclCache reference to a local val to get a consistent view of the cache during acl updates.\n    val aclCacheSnapshot = aclCache\n    val wildcard = aclCacheSnapshot.get(new ResourcePattern(resourceType, ResourcePattern.WILDCARD_RESOURCE, PatternType.LITERAL))\n      .map(_.acls)\n      .getOrElse(Set.empty)\n\n    val literal = aclCacheSnapshot.get(new ResourcePattern(resourceType, resourceName, PatternType.LITERAL))\n      .map(_.acls)\n      .getOrElse(Set.empty)\n\n    // Optimize: Only scan prefixed resources if the resource name is non-empty\n    val prefixed = if (resourceName.nonEmpty) {\n      // Create the keys once to avoid repeated object creation\n      val fromKey = new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED)\n      val toKey = new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED)\n      \n      aclCacheSnapshot\n        .from(fromKey)\n        .to(toKey)\n        .filterKeys(resource => resourceName.startsWith(resource.name))\n        .values\n        .flatMap { _.acls }\n        .toSet\n    } else {\n      Set.empty[AclEntry]\n    }\n\n    new AclSets(prefixed, wildcard, literal)\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  override def authorize(requestContext: AuthorizableRequestContext, actions: util.List[Action]): util.List[AuthorizationResult] = {\n    actions.asScala.map { action => authorizeAction(requestContext, action) }.asJava\n  }",
+    "replace": "  override def authorize(requestContext: AuthorizableRequestContext, actions: util.List[Action]): util.List[AuthorizationResult] = {\n    // Optimize: Avoid creating intermediate Scala collections\n    val size = actions.size\n    val results = new java.util.ArrayList[AuthorizationResult](size)\n    var i = 0\n    while (i < size) {\n      results.add(authorizeAction(requestContext, actions.get(i)))\n      i += 1\n    }\n    results\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n      val aclBindings = new util.ArrayList[AclBinding]()\n      aclCache.foreach { case (resource, versionedAcls) =>\n        versionedAcls.acls.foreach { acl =>\n          val binding = new AclBinding(resource, acl.ace)\n          if (filter.matches(binding))\n            aclBindings.add(binding)\n        }\n      }\n      aclBindings\n  }",
+    "replace": "  override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n      // Optimize: Pre-size the ArrayList for better performance\n      val aclBindings = new util.ArrayList[AclBinding](aclCache.size * 2) // Estimate 2 ACLs per resource\n      val iter = aclCache.iterator\n      while (iter.hasNext) {\n        val (resource, versionedAcls) = iter.next()\n        val aclsIter = versionedAcls.acls.iterator\n        while (aclsIter.hasNext) {\n          val acl = aclsIter.next()\n          val binding = new AclBinding(resource, acl.ace)\n          if (filter.matches(binding))\n            aclBindings.add(binding)\n        }\n      }\n      aclBindings\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  private def matchingAclExists(operation: AclOperation,\n                                resource: ResourcePattern,\n                                principal: KafkaPrincipal,\n                                host: String,\n                                permissionType: AclPermissionType,\n                                acls: AclSets): Boolean = {\n    acls.find { acl =>\n      acl.permissionType == permissionType &&\n        (acl.kafkaPrincipal == principal || acl.kafkaPrincipal == AclEntry.WildcardPrincipal) &&\n        (operation == acl.operation || acl.operation == AclOperation.ALL) &&\n        (acl.host == host || acl.host == AclEntry.WildcardHost)\n    }.exists { acl =>\n      authorizerLogger.debug(s\"operation = $operation on resource = $resource from host = $host is $permissionType based on acl = $acl\")\n      true\n    }\n  }",
+    "replace": "  private def matchingAclExists(operation: AclOperation,\n                                resource: ResourcePattern,\n                                principal: KafkaPrincipal,\n                                host: String,\n                                permissionType: AclPermissionType,\n                                acls: AclSets): Boolean = {\n    // Optimize: Use early returns in the predicate\n    acls.find { acl =>\n      if (acl.permissionType != permissionType) false\n      else if (acl.kafkaPrincipal != principal && acl.kafkaPrincipal != AclEntry.WildcardPrincipal) false\n      else if (operation != acl.operation && acl.operation != AclOperation.ALL) false\n      else acl.host == host || acl.host == AclEntry.WildcardHost\n    }.exists { acl =>\n      // Optimize: Check log level before formatting debug string\n      if (authorizerLogger.underlying.isDebugEnabled) {\n        authorizerLogger.debug(s\"operation = $operation on resource = $resource from host = $host is $permissionType based on acl = $acl\")\n      }\n      true\n    }\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "    def isEmptyAclAndAuthorized(acls: AclSets): Boolean = {\n      if (acls.isEmpty) {\n        // No ACLs found for this resource, permission is determined by value of config allow.everyone.if.no.acl.found\n        authorizerLogger.debug(s\"No acl found for resource $resource, authorized = $shouldAllowEveryoneIfNoAclIsFound\")\n        shouldAllowEveryoneIfNoAclIsFound\n      } else false\n    }",
+    "replace": "    def isEmptyAclAndAuthorized(acls: AclSets): Boolean = {\n      if (acls.isEmpty) {\n        // No ACLs found for this resource, permission is determined by value of config allow.everyone.if.no.acl.found\n        // Optimize: Cache the configuration value since it's immutable after startup\n        val allowEveryone = shouldAllowEveryoneIfNoAclIsFound\n        // Optimize: Check log level before formatting debug string\n        if (authorizerLogger.underlying.isDebugEnabled) {\n          authorizerLogger.debug(s\"No acl found for resource $resource, authorized = $allowEveryone\")\n        }\n        allowEveryone\n      } else false\n    }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  def isSuperUser(principal: KafkaPrincipal): Boolean = {\n    if (superUsers.contains(principal)) {\n      authorizerLogger.debug(s\"principal = $principal is a super user, allowing operation without checking acls.\")\n      true\n    } else false\n  }",
+    "replace": "  def isSuperUser(principal: KafkaPrincipal): Boolean = {\n    if (superUsers.contains(principal)) {\n      // Optimize: Check log level before formatting debug string\n      if (authorizerLogger.underlying.isDebugEnabled) {\n        authorizerLogger.debug(s\"principal = $principal is a super user, allowing operation without checking acls.\")\n      }\n      true\n    } else false\n  }"
+  }
+]
+```
+
+**Explanation of improvements:**
+
+1. **Optimized `matchingAcls` method**: Added early check for empty resource names (using `resourceName.nonEmpty`) and reduced object allocations by creating keys once. This avoids scanning prefixed resources when the resource name is empty.
+
+2. **Optimized `authorize` method**: Replaced Scala collection conversions with direct Java iteration using while loops to avoid unnecessary conversions and iterator overhead.
+
+3. **Optimized `acls` method**: Pre-sized the ArrayList (estimated 2 ACLs per resource) and used while loops instead of foreach to reduce iterator overhead.
+
+4. **Optimized `matchingAclExists` method**: Used early returns in the predicate function and added log level check to avoid string formatting when debug logging is disabled.
+
+5. **Optimized `isEmptyAclAndAuthorized` closure**: Added log level check and cached the configuration value locally since it's accessed frequently.
+
+6. **Optimized `isSuperUser` method**: Added log level check to avoid string formatting when debug logging is disabled.
+
+These changes focus on:
+- Reducing object allocations
+- Avoiding unnecessary collection conversions
+- Optimizing hot paths with early returns
+- Reducing string formatting overhead when debug logging is disabled
+- Using more efficient iteration patterns (while loops vs foreach)
+- Caching immutable configuration values
