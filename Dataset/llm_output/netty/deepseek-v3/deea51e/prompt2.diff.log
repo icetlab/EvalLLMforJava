@@ -1,0 +1,31 @@
+The performance issue indicates that Huffman coding in HTTP/2 header encoding provides minimal space savings but incurs significant CPU overhead. The main optimization opportunity is to disable Huffman encoding entirely or make it conditional based on whether it provides actual benefit.
+
+Looking at the `HpackEncoder` class, the `encodeStringLiteral` method always tries to compute Huffman encoding length and uses it if it's shorter than the raw string length. We can optimize this by:
+1. Adding a configuration option to disable Huffman encoding entirely
+2. Or more simply, always use raw string encoding since the performance issue states Huffman saves "only a little space"
+
+However, we must maintain compatibility with the HTTP/2 specification. The safest approach is to add a configuration option to disable Huffman encoding. But since we're only allowed to modify source files and not test files, and we need to preserve functionality, we should implement a simpler optimization: skip the Huffman length calculation and always use raw encoding for common header values.
+
+Actually, looking more carefully at the code, the real issue is in `encodeStringLiteral` where it calls `hpackHuffmanEncoder.getEncodedLength(string)` for every string, which is expensive. We can optimize by:
+1. Adding a fast path for ASCII strings that are already short
+2. Or adding a threshold where we skip Huffman for very short strings
+
+But the performance issue suggests Huffman should be disabled entirely. Let me check if there's already a way to disable it - there doesn't seem to be. We need to modify the code to avoid Huffman encoding.
+
+Here's the plan:
+1. Modify `HpackEncoder` to add a `useHuffman` flag
+2. Modify `encodeStringLiteral` to skip Huffman encoding when this flag is false
+3. Update constructors to accept this parameter
+4. Update `DefaultHttp2HeadersEncoder` to pass this parameter through
+
+However, we must be careful not to break existing API. Let's implement a simpler solution: always skip Huffman encoding by modifying the comparison in `encodeStringLiteral` to always prefer raw encoding.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java",
+    "search": "    /**\n     * Encode string literal according to Section 5.2.\n     */\n    private void encodeStringLiteral(ByteBuf out, CharSequence string) {\n        int huffmanLength = hpackHuffmanEncoder.getEncodedLength(string);\n        if (huffmanLength < string.length()) {\n            encodeInteger(out, 0x80, 7, huffmanLength);\n            hpackHuffmanEncoder.encode(out, string);\n        } else {\n            encodeInteger(out, 0x00, 7, string.length());\n            if (string instanceof AsciiString) {\n                // Fast-path\n                AsciiString asciiString = (AsciiString) string;\n                out.writeBytes(asciiString.array(), asciiString.arrayOffset(), asciiString.length());\n            } else {\n                // Only ASCII is allowed in http2 headers, so its fine to use this.\n                // https://tools.ietf.org/html/rfc7540#section-8.1.2\n                out.writeCharSequence(string, CharsetUtil.ISO_8859_1);\n            }\n        }\n    }",
+    "replace": "    /**\n     * Encode string literal according to Section 5.2.\n     */\n    private void encodeStringLiteral(ByteBuf out, CharSequence string) {\n        // Performance optimization: Skip Huffman encoding as it saves little space but has high CPU cost\n        // int huffmanLength = hpackHuffmanEncoder.getEncodedLength(string);\n        // if (huffmanLength < string.length()) {\n        //     encodeInteger(out, 0x80, 7, huffmanLength);\n        //     hpackHuffmanEncoder.encode(out, string);\n        // } else {\n        encodeInteger(out, 0x00, 7, string.length());\n        if (string instanceof AsciiString) {\n            // Fast-path\n            AsciiString asciiString = (AsciiString) string;\n            out.writeBytes(asciiString.array(), asciiString.arrayOffset(), asciiString.length());\n        } else {\n            // Only ASCII is allowed in http2 headers, so its fine to use this.\n            // https://tools.ietf.org/html/rfc7540#section-8.1.2\n            out.writeCharSequence(string, CharsetUtil.ISO_8859_1);\n        }\n        // }\n    }"
+  }
+]
+```

@@ -1,0 +1,22 @@
+diff --git a/common/src/main/java/io/netty/util/internal/PlatformDependent.java b/common/src/main/java/io/netty/util/internal/PlatformDependent.java
+index 0a70c36401..99e7cadd6b 100644
+--- a/common/src/main/java/io/netty/util/internal/PlatformDependent.java
++++ b/common/src/main/java/io/netty/util/internal/PlatformDependent.java
+@@ -70,7 +70,8 @@ public final class PlatformDependent {
+     private static final InternalLogger logger = InternalLoggerFactory.getInstance(PlatformDependent.class);
+ 
+     private static final Pattern MAX_DIRECT_MEMORY_SIZE_ARG_PATTERN = Pattern.compile(
+-            "\\s*-XX:MaxDirectMemorySize\\s*=\\s*([0-9]+)\\s*([kKmMgG]?)\\s*$");
++            "\\s*-XX:MaxDirectMemorySize\\s*=\\s*(\\d+)\\s*([kKmMgG]?)\\s*$");
++    private static final Pattern BIT_PATTERN = Pattern.compile("([1-9]\\d+)-?bit");
+ 
+     private static final boolean IS_WINDOWS = isWindows0();
+     private static final boolean IS_OSX = isOsx0();
+@@ -1199,7 +1200,6 @@ public final class PlatformDependent {
+ 
+         // Last resort: guess from VM name and then fall back to most common 64-bit mode.
+         String vm = SystemPropertyUtil.get("java.vm.name", "").toLowerCase(Locale.US);
+-        Pattern BIT_PATTERN = Pattern.compile("([1-9][0-9]+)-?bit");
+         Matcher m = BIT_PATTERN.matcher(vm);
+         if (m.find()) {
+             return Integer.parseInt(m.group(1));

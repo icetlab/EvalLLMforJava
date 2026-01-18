@@ -1,0 +1,32 @@
+diff --git a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java
+index 301a2c51cf..9befe7ebca 100644
+--- a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java
++++ b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java
+@@ -250,8 +250,26 @@ final class HpackEncoder {
+      * Encode string literal according to Section 5.2.
+      */
+     private void encodeStringLiteral(ByteBuf out, CharSequence string) {
++        // Skip Huffman encoding for very short strings where overhead isn't justified
++        // Most common HTTP/2 headers are short and benefit little from Huffman encoding
++        if (string.length() <= 4) {
++            encodeInteger(out, 0x00, 7, string.length());
++            if (string instanceof AsciiString) {
++                // Fast-path
++                AsciiString asciiString = (AsciiString) string;
++                out.writeBytes(asciiString.array(), asciiString.arrayOffset(), asciiString.length());
++            } else {
++                // Only ASCII is allowed in http2 headers, so its fine to use this.
++                // https://tools.ietf.org/html/rfc7540#section-8.1.2
++                out.writeCharSequence(string, CharsetUtil.ISO_8859_1);
++            }
++            return;
++        }
++        
+         int huffmanLength = hpackHuffmanEncoder.getEncodedLength(string);
+-        if (huffmanLength < string.length()) {
++        // Only use Huffman if it provides significant compression (>10% reduction)
++        // This avoids CPU overhead for minimal space savings
++        if (huffmanLength < string.length() * 9 / 10) {
+             encodeInteger(out, 0x80, 7, huffmanLength);
+             hpackHuffmanEncoder.encode(out, string);
+         } else {

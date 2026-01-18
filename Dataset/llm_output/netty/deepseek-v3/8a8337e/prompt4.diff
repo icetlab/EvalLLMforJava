@@ -1,0 +1,80 @@
+diff --git a/common/src/main/java/io/netty/util/Recycler.java b/common/src/main/java/io/netty/util/Recycler.java
+index dd7b2d73be..2d384b1ce8 100644
+--- a/common/src/main/java/io/netty/util/Recycler.java
++++ b/common/src/main/java/io/netty/util/Recycler.java
+@@ -104,7 +104,10 @@ public abstract class Recycler<T> {
+             super.onRemoval(value);
+             MessagePassingQueue<DefaultHandle<T>> handles = value.pooledHandles;
+             value.pooledHandles = null;
+-            handles.clear();
++            if (handles != null) {
++                handles.clear();
++            }
++            value.threadLocalStack.clear();
+         }
+     };
+ 
+@@ -197,7 +200,15 @@ public abstract class Recycler<T> {
+ 
+     final int threadLocalSize() {
+         LocalPool<T> localPool = threadLocal.getIfExists();
+-        return localPool == null ? 0 : localPool.pooledHandles.size();
++        if (localPool == null) {
++            return 0;
++        }
++        int size = localPool.threadLocalStack.size();
++        MessagePassingQueue<DefaultHandle<T>> handles = localPool.pooledHandles;
++        if (handles != null) {
++            size += handles.size();
++        }
++        return size;
+     }
+ 
+     /**
+@@ -258,11 +269,15 @@ public abstract class Recycler<T> {
+     private static final class LocalPool<T> {
+         private final int ratioInterval;
+         private volatile MessagePassingQueue<DefaultHandle<T>> pooledHandles;
++        private final Thread ownerThread;
++        private final ArrayDeque<DefaultHandle<T>> threadLocalStack;
+         private int ratioCounter;
+ 
+         @SuppressWarnings("unchecked")
+         LocalPool(int maxCapacity, int ratioInterval, int chunkSize) {
+             this.ratioInterval = ratioInterval;
++            this.ownerThread = Thread.currentThread();
++            this.threadLocalStack = new ArrayDeque<DefaultHandle<T>>(maxCapacity);
+             if (BLOCKING_POOL) {
+                 pooledHandles = new BlockingMessageQueue<DefaultHandle<T>>(maxCapacity);
+             } else {
+@@ -272,6 +287,15 @@ public abstract class Recycler<T> {
+         }
+ 
+         DefaultHandle<T> claim() {
++            // First try the thread-local stack if we're in the owning thread
++            if (Thread.currentThread() == ownerThread) {
++                DefaultHandle<T> handle = threadLocalStack.pollLast();
++                if (handle != null) {
++                    handle.toClaimed();
++                    return handle;
++                }
++            }
++            
+             MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;
+             if (handles == null) {
+                 return null;
+@@ -285,6 +309,14 @@ public abstract class Recycler<T> {
+ 
+         void release(DefaultHandle<T> handle) {
+             handle.toAvailable();
++            
++            // If we're in the owning thread, use the thread-local stack
++            if (Thread.currentThread() == ownerThread) {
++                threadLocalStack.offerLast(handle);
++                return;
++            }
++            
++            // Otherwise, use the thread-safe queue for cross-thread releases
+             MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;
+             if (handles != null) {
+                 handles.relaxedOffer(handle);

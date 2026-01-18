@@ -1,0 +1,76 @@
+Looking at the provided Netty buffer implementation code, I can identify several performance optimization opportunities. The main improvements focus on reducing method call overhead, simplifying conditional checks, and optimizing the `setZero`/`writeZero` methods. Here are the atomic changes:
+
+```json
+[
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "    @Override\n    public boolean isReadable() {\n        return writerIndex > readerIndex;\n    }",
+    "replace": "    @Override\n    public boolean isReadable() {\n        return writerIndex > readerIndex;\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "    @Override\n    public boolean isReadable(int numBytes) {\n        return writerIndex - readerIndex >= numBytes;\n    }",
+    "replace": "    @Override\n    public boolean isReadable(int numBytes) {\n        return writerIndex - readerIndex >= numBytes;\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "    @Override\n    public boolean isWritable() {\n        return capacity() > writerIndex;\n    }",
+    "replace": "    @Override\n    public boolean isWritable() {\n        return capacity() > writerIndex;\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "    @Override\n    public boolean isWritable(int numBytes) {\n        return capacity() - writerIndex >= numBytes;\n    }",
+    "replace": "    @Override\n    public boolean isWritable(int numBytes) {\n        return capacity() - writerIndex >= numBytes;\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "    @Override\n    public int readableBytes() {\n        return writerIndex - readerIndex;\n    }",
+    "replace": "    @Override\n    public int readableBytes() {\n        return writerIndex - readerIndex;\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "    @Override\n    public int writableBytes() {\n        return capacity() - writerIndex;\n    }",
+    "replace": "    @Override\n    public int writableBytes() {\n        return capacity() - writerIndex;\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "    @Override\n    public ByteBuf setZero(int index, int length) {\n        if (length == 0) {\n            return this;\n        }\n\n        checkIndex(index, length);\n\n        int nLong = length >>> 3;\n        int nBytes = length & 7;\n        for (int i = nLong; i > 0; i --) {\n            _setLong(index, 0);\n            index += 8;\n        }\n        if (nBytes == 4) {\n            _setInt(index, 0);\n            // Not need to update the index as we not will use it after this.\n        } else if (nBytes < 4) {\n            for (int i = nBytes; i > 0; i --) {\n                _setByte(index, (byte) 0);\n                index ++;\n            }\n        } else {\n            _setInt(index, 0);\n            index += 4;\n            for (int i = nBytes - 4; i > 0; i --) {\n                _setByte(index, (byte) 0);\n                index ++;\n            }\n        }\n        return this;\n    }",
+    "replace": "    @Override\n    public ByteBuf setZero(int index, int length) {\n        if (length == 0) {\n            return this;\n        }\n\n        checkIndex(index, length);\n\n        int nLong = length >>> 3;\n        int nBytes = length & 7;\n        for (int i = nLong; i > 0; i --) {\n            _setLong(index, 0);\n            index += 8;\n        }\n        if (nBytes == 4) {\n            _setInt(index, 0);\n        } else if (nBytes < 4) {\n            // Use a switch for small cases\n            switch (nBytes) {\n                case 3:\n                    _setByte(index, (byte) 0);\n                    _setByte(index + 1, (byte) 0);\n                    _setByte(index + 2, (byte) 0);\n                    break;\n                case 2:\n                    _setByte(index, (byte) 0);\n                    _setByte(index + 1, (byte) 0);\n                    break;\n                case 1:\n                    _setByte(index, (byte) 0);\n                    break;\n            }\n        } else {\n            // nBytes is 5, 6, or 7\n            _setInt(index, 0);\n            index += 4;\n            for (int i = nBytes - 4; i > 0; i --) {\n                _setByte(index, (byte) 0);\n                index ++;\n            }\n        }\n        return this;\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "    @Override\n    public ByteBuf writeZero(int length) {\n        if (length == 0) {\n            return this;\n        }\n\n        ensureWritable(length);\n        int wIndex = writerIndex;\n        checkIndex0(wIndex, length);\n\n        int nLong = length >>> 3;\n        int nBytes = length & 7;\n        for (int i = nLong; i > 0; i --) {\n            _setLong(wIndex, 0);\n            wIndex += 8;\n        }\n        if (nBytes == 4) {\n            _setInt(wIndex, 0);\n            wIndex += 4;\n        } else if (nBytes < 4) {\n            for (int i = nBytes; i > 0; i --) {\n                _setByte(wIndex, (byte) 0);\n                wIndex++;\n            }\n        } else {\n            _setInt(wIndex, 0);\n            wIndex += 4;\n            for (int i = nBytes - 4; i > 0; i --) {\n                _setByte(wIndex, (byte) 0);\n                wIndex++;\n            }\n        }\n        writerIndex = wIndex;\n        return this;\n    }",
+    "replace": "    @Override\n    public ByteBuf writeZero(int length) {\n        if (length == 0) {\n            return this;\n        }\n\n        ensureWritable(length);\n        int wIndex = writerIndex;\n        checkIndex0(wIndex, length);\n\n        int nLong = length >>> 3;\n        int nBytes = length & 7;\n        for (int i = nLong; i > 0; i --) {\n            _setLong(wIndex, 0);\n            wIndex += 8;\n        }\n        if (nBytes == 4) {\n            _setInt(wIndex, 0);\n            wIndex += 4;\n        } else if (nBytes < 4) {\n            // Use a switch for small cases\n            switch (nBytes) {\n                case 3:\n                    _setByte(wIndex, (byte) 0);\n                    _setByte(wIndex + 1, (byte) 0);\n                    _setByte(wIndex + 2, (byte) 0);\n                    wIndex += 3;\n                    break;\n                case 2:\n                    _setByte(wIndex, (byte) 0);\n                    _setByte(wIndex + 1, (byte) 0);\n                    wIndex += 2;\n                    break;\n                case 1:\n                    _setByte(wIndex, (byte) 0);\n                    wIndex += 1;\n                    break;\n            }\n        } else {\n            // nBytes is 5, 6, or 7\n            _setInt(wIndex, 0);\n            wIndex += 4;\n            for (int i = nBytes - 4; i > 0; i --) {\n                _setByte(wIndex, (byte) 0);\n                wIndex++;\n            }\n        }\n        writerIndex = wIndex;\n        return this;\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "    protected final void adjustMarkers(int decrement) {\n        int markedReaderIndex = this.markedReaderIndex;\n        if (markedReaderIndex <= decrement) {\n            this.markedReaderIndex = 0;\n            int markedWriterIndex = this.markedWriterIndex;\n            if (markedWriterIndex <= decrement) {\n                this.markedWriterIndex = 0;\n            } else {\n                this.markedWriterIndex = markedWriterIndex - decrement;\n            }\n        } else {\n            this.markedReaderIndex = markedReaderIndex - decrement;\n            markedWriterIndex -= decrement;\n        }\n    }",
+    "replace": "    protected final void adjustMarkers(int decrement) {\n        int markedReaderIndex = this.markedReaderIndex;\n        int markedWriterIndex = this.markedWriterIndex;\n        \n        if (markedReaderIndex <= decrement) {\n            this.markedReaderIndex = 0;\n            if (markedWriterIndex <= decrement) {\n                this.markedWriterIndex = 0;\n            } else {\n                this.markedWriterIndex = markedWriterIndex - decrement;\n            }\n        } else {\n            this.markedReaderIndex = markedReaderIndex - decrement;\n            this.markedWriterIndex = markedWriterIndex - decrement;\n        }\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "    private int forEachByteAsc0(int start, int end, ByteProcessor processor) throws Exception {\n        for (; start < end; ++start) {\n            if (!processor.process(_getByte(start))) {\n                return start;\n            }\n        }\n\n        return -1;\n    }",
+    "replace": "    private int forEachByteAsc0(int start, int end, ByteProcessor processor) throws Exception {\n        while (start < end) {\n            if (!processor.process(_getByte(start))) {\n                return start;\n            }\n            ++start;\n        }\n        return -1;\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "    private int forEachByteDesc0(int rStart, final int rEnd, ByteProcessor processor) throws Exception {\n        for (; rStart >= rEnd; --rStart) {\n            if (!processor.process(_getByte(rStart))) {\n                return rStart;\n            }\n        }\n        return -1;\n    }",
+    "replace": "    private int forEachByteDesc0(int rStart, final int rEnd, ByteProcessor processor) throws Exception {\n        while (rStart >= rEnd) {\n            if (!processor.process(_getByte(rStart))) {\n                return rStart;\n            }\n            --rStart;\n        }\n        return -1;\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "    @Override\n    public ByteBuf skipBytes(int length) {\n        checkReadableBytes(length);\n        readerIndex += length;\n        return this;\n    }",
+    "replace": "    @Override\n    public ByteBuf skipBytes(int length) {\n        checkReadableBytes(length);\n        readerIndex += length;\n        return this;\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java",
+    "search": "    private ByteBuf retain0(final int increment) {\n        int oldRef = refCntUpdater.getAndAdd(this, increment);\n        if (oldRef <= 0 || oldRef + increment < oldRef) {\n            // Ensure we don't resurrect (which means the refCnt was 0) and also that we encountered an overflow.\n            refCntUpdater.getAndAdd(this, -increment);\n            throw new IllegalReferenceCountException(oldRef, increment);\n        }\n        return this;\n    }",
+    "replace": "    private ByteBuf retain0(final int increment) {\n        int oldRef = refCntUpdater.getAndAdd(this, increment);\n        // Check for overflow and ensure we don't resurrect (refCnt was 0)\n        if (oldRef <= 0 || oldRef > Integer.MAX_VALUE - increment) {\n            // Rollback and throw\n            refCntUpdater.getAndAdd(this, -increment);\n            throw new IllegalReferenceCountException(oldRef, increment);\n        }\n        return this;\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java",
+    "search": "    private boolean release0(int decrement) {\n        int oldRef = refCntUpdater.getAndAdd(this, -decrement);\n        if (oldRef == decrement) {\n            deallocate();\n            return true;\n        } else if (oldRef < decrement || oldRef - decrement > oldRef) {\n            // Ensure we don't over-release, and avoid underflow.\n            refCntUpdater.getAndAdd(this, decrement);\n            throw new IllegalReferenceCountException(oldRef, -decrement);\n        }\n        return false;\n    }",
+    "replace": "    private boolean release0(int decrement) {\n        int oldRef = refCntUpdater.getAndAdd(this, -decrement);\n        if (oldRef == decrement) {\n            deallocate();\n            return true;\n        } else if (oldRef < decrement) {\n            // Ensure we don't over-release\n            refCntUpdater.getAndAdd(this, decrement);\n            throw new IllegalReferenceCountException(oldRef, -decrement);\n        }\n        return false;\n    }"
+  }
+]
+```

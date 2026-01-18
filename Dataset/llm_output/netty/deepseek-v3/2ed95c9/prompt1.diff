@@ -1,0 +1,68 @@
+diff --git a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
+index 389d8ef150..f9d8c62705 100644
+--- a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
++++ b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
+@@ -119,13 +119,13 @@ final class HpackStaticTable {
+ 
+     private static final CharSequenceMap<Integer> STATIC_INDEX_BY_NAME = createMap();
+ 
+-    private static final int MAX_SAME_NAME_FIELD_INDEX = maxSameNameFieldIndex();
+-
+     /**
+      * The number of header fields in the static table.
+      */
+     static final int length = STATIC_TABLE.size();
+ 
++    private static final int MAX_SAME_NAME_FIELD_INDEX = maxSameNameFieldIndex();
++
+     /**
+      * Return the header field at the given index value.
+      */
+@@ -156,15 +156,15 @@ final class HpackStaticTable {
+         }
+ 
+         // Compare values for the first name match
+-        HpackHeaderField entry = getEntry(index);
++        HpackHeaderField entry = STATIC_TABLE.get(index - 1);
+         if (equalsVariableTime(value, entry.value)) {
+             return index;
+         }
+ 
+         // Note this assumes all entries for a given header field are sequential.
+-        index++;
+-        while (index <= MAX_SAME_NAME_FIELD_INDEX) {
+-            entry = getEntry(index);
++        int maxIndex = MAX_SAME_NAME_FIELD_INDEX;
++        while (++index <= maxIndex) {
++            entry = STATIC_TABLE.get(index - 1);
+             if (!equalsVariableTime(name, entry.name)) {
+                 // As far as fields with the same name are placed in the table sequentially
+                 // and INDEX_BY_NAME returns index of the fist position, - it's safe to
+@@ -174,7 +174,6 @@ final class HpackStaticTable {
+             if (equalsVariableTime(value, entry.value)) {
+                 return index;
+             }
+-            index++;
+         }
+ 
+         return NOT_FOUND;
+@@ -204,14 +203,13 @@ final class HpackStaticTable {
+      */
+     private static int maxSameNameFieldIndex() {
+         final int length = STATIC_TABLE.size();
+-        HpackHeaderField cursor = getEntry(length);
+-        for (int index = length - 1; index > 0; index--) {
+-            HpackHeaderField entry = getEntry(index);
++        HpackHeaderField cursor = STATIC_TABLE.get(length - 1);
++        for (int index = length - 2; index >= 0; index--) {
++            HpackHeaderField entry = STATIC_TABLE.get(index);
+             if (equalsVariableTime(entry.name, cursor.name)) {
+-                return index + 1;
+-            } else {
+-                cursor = entry;
++                return index + 2; // Convert to 1-based index
+             }
++            cursor = entry;
+         }
+         return length;
+     }

@@ -1,0 +1,215 @@
+The performance issue indicates that the current `toString(Charset)` implementation in `AbstractByteBuf` is slow due to unnecessary memory copies. The suggestion is to use `new String(...)` which has optimizations for these cases. However, looking at the provided source file `ByteBufUtil.java`, we need to identify the relevant method that handles decoding a `ByteBuf` to a `String` with a given `Charset`. The method `decodeString` is the primary candidate for optimization.
+
+Currently, `decodeString` uses a `CharsetDecoder` and a thread-local `CharBuffer`, and if the buffer has multiple `nioBuffer`s, it creates a temporary heap buffer. This can be inefficient. For certain charsets like UTF-8 and US-ASCII, we can use more efficient paths. Specifically, we can use `new String(byte[], Charset)` when the `ByteBuf` is backed by a single array and the charset is one of the optimized ones. However, note that the issue mentions `AbstractByteBuf.toString(Charset)`, but we are only allowed to modify the provided source file. The `toString(Charset)` method in `AbstractByteBuf` likely calls `ByteBufUtil.decodeString`. So we can optimize `decodeString` to use `new String` when possible.
+
+Let's examine the `decodeString` method:
+
+```java
+static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {
+    if (len == 0) {
+        return StringUtil.EMPTY_STRING;
+    }
+    final CharsetDecoder decoder = CharsetUtil.decoder(charset);
+    final int maxLength = (int) ((double) len * decoder.maxCharsPerByte());
+    CharBuffer dst = CHAR_BUFFERS.get();
+    if (dst.length() < maxLength) {
+        dst = CharBuffer.allocate(maxLength);
+        if (maxLength <= MAX_CHAR_BUFFER_SIZE) {
+            CHAR_BUFFERS.set(dst);
+        }
+    } else {
+        dst.clear();
+    }
+    if (src.nioBufferCount() == 1) {
+        decodeString(decoder, src.nioBuffer(readerIndex, len), dst);
+    } else {
+        // We use a heap buffer as CharsetDecoder is most likely able to use a fast-path if src and dst buffers
+        // are both backed by a byte array.
+        ByteBuf buffer = src.alloc().heapBuffer(len);
+        try {
+            buffer.writeBytes(src, readerIndex, len);
+            // Use internalNioBuffer(...) to reduce object creation.
+            decodeString(decoder, buffer.internalNioBuffer(buffer.readerIndex(), len), dst);
+        } finally {
+            // Release the temporary buffer again.
+            buffer.release();
+        }
+    }
+    return dst.flip().toString();
+}
+```
+
+We can optimize this by checking if the charset is UTF-8 or US-ASCII and the buffer has a backing array. If so, we can directly use `new String(src.array(), src.arrayOffset() + readerIndex, len, charset)`. However, we must also consider that the buffer might be read-only or have a different array offset. Also, we need to ensure we don't break existing functionality.
+
+But note: the `ByteBuf` might be direct or composite. The current code already handles the case where `src.nioBufferCount() == 1` efficiently. However, we can still improve by using `new String` for array-backed buffers.
+
+Let's also check if there are other methods like `toString(Charset)` in `AbstractByteBuf` that we cannot modify. Since we cannot modify `AbstractByteBuf`, we must improve `ByteBufUtil.decodeString` to be faster.
+
+We can add a fast path for charsets that are known to be efficiently handled by `String` constructor: UTF-8, ISO-8859-1, and US-ASCII. Also, we can check if the buffer has a backing array and use it directly.
+
+We must be careful to maintain thread-safety and not break existing tests.
+
+Let's propose changes to `decodeString`:
+
+1. If the charset is UTF-8 or US-ASCII, and the buffer has a backing array, we can use `new String(bytes, charset)`.
+2. Additionally, if the buffer is a single NIO buffer, we can still use the existing path but maybe we can also use `new String` for array-backed buffers.
+
+However, note that the `String` constructor might be slower for non-array buffers because it would require an extra copy. So we should only apply the optimization when there is a backing array.
+
+Let's implement:
+
+```java
+static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {
+    if (len == 0) {
+        return StringUtil.EMPTY_STRING;
+    }
+    // Fast path for charsets that are known to be efficiently handled by String constructor and array-backed buffers.
+    if (src.hasArray() && (charset.equals(CharsetUtil.UTF_8) || charset.equals(CharsetUtil.US_ASCII) || charset.equals(CharsetUtil.ISO_8859_1))) {
+        return new String(src.array(), src.arrayOffset() + readerIndex, len, charset);
+    }
+    final CharsetDecoder decoder = CharsetUtil.decoder(charset);
+    // ... rest of the existing code
+}
+```
+
+But wait: we must also consider that the buffer might be read-only? The `hasArray()` method returns true even for read-only buffers? Actually, if the buffer is read-only, the array might be inaccessible? The `array()` method will throw an exception if the buffer is not backed by an accessible array. The `hasArray()` method should return false for read-only buffers? In Netty, `hasArray()` returns true only if there is a backing array that is accessible. So it should be safe.
+
+Also, we should consider the performance of `new String` for ISO-8859-1. It is also a single-byte charset and should be efficient.
+
+Now, we must also update the `decodeString` method that takes a `ByteBuffer`? Actually, there is a private `decodeString(CharsetDecoder, ByteBuffer, CharBuffer)` method. We don't need to change that.
+
+We also need to ensure that the change does not affect the behavior for composite buffers or direct buffers. The fast path will only be taken for array-backed buffers and specific charsets.
+
+Let's create the JSON changes.
+
+We'll make one change: modify the `decodeString` method to include the fast path.
+
+But note: the method is `static` and package-private? It is package-private (no modifier) and located in `io.netty.buffer`. We are allowed to change it.
+
+Now, we must also consider that the charset might be null? The method is called from within the package, and the caller ensures charset is not null.
+
+Let's write the change.
+
+We need to include the necessary import for `StringUtil`? It's already imported.
+
+Now, we must also consider that the `String` constructor might throw exceptions. It should be safe.
+
+Let's output the JSON.
+
+But wait: we also need to consider the `toString(Charset)` method in `AbstractByteBuf`. Since we cannot change it, we rely on the improved `decodeString`. However, the issue says "Our current implementation that is used for toString(Charset) operations on AbstractByteBuf implementation is quite slow". So we are on the right track.
+
+Now, we should also consider that there might be other methods that convert ByteBuf to String, but we are only allowed to change the provided file.
+
+Let's produce the JSON.
+
+We'll change only the `decodeString` method.
+
+We need to find the exact lines in the file. Let's locate the method in the provided source.
+
+Lines 594-633 (approximately). We'll copy the method signature and the first few lines.
+
+We'll replace from the start of the method to just before the `final CharsetDecoder` line.
+
+We'll insert our fast path after the length check.
+
+Let's write the search block:
+
+```java
+    static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {
+        if (len == 0) {
+            return StringUtil.EMPTY_STRING;
+        }
+        final CharsetDecoder decoder = CharsetUtil.decoder(charset);
+```
+
+But we need to include more lines to make the search unique. We'll include up to the line where `CharBuffer dst` is declared.
+
+Actually, we need to replace a larger block to insert our fast path. We'll replace from the start of the method to the line before `final CharsetDecoder decoder`.
+
+We'll write:
+
+Search:
+```java
+    static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {
+        if (len == 0) {
+            return StringUtil.EMPTY_STRING;
+        }
+        final CharsetDecoder decoder = CharsetUtil.decoder(charset);
+```
+
+Replace with:
+```java
+    static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {
+        if (len == 0) {
+            return StringUtil.EMPTY_STRING;
+        }
+        // Fast path for charsets that are known to be efficiently handled by String constructor and array-backed buffers.
+        if (src.hasArray() && (charset.equals(CharsetUtil.UTF_8) || charset.equals(CharsetUtil.US_ASCII) || charset.equals(CharsetUtil.ISO_8859_1))) {
+            return new String(src.array(), src.arrayOffset() + readerIndex, len, charset);
+        }
+        final CharsetDecoder decoder = CharsetUtil.decoder(charset);
+```
+
+But note: we must also consider that the buffer might have a backing array but the array might be larger than the length. The `arrayOffset()` gives the offset into the array where the buffer starts. Adding `readerIndex` gives the correct index.
+
+Now, we must ensure that the rest of the method remains unchanged. So we only change the beginning.
+
+Let's output the JSON.
+
+But wait: we also need to consider that the charset might be something else that is also efficiently handled, like ISO-8859-1. We already included it.
+
+Now, we should also consider that the `String` constructor might not be as efficient for UTF-8 when the buffer is not array-backed. So we keep the existing path for those cases.
+
+Now, we need to ensure that the change does not break any tests. The unit tests include tests for `decodeString` (via `testDecodeUsAscii` and `testDecodeUtf8`). They should still pass because they use `Unpooled.copiedBuffer` which creates an array-backed buffer. So our fast path will be taken and should produce the same result.
+
+Let's create the JSON.
+
+We'll also need to update the method that calls `decodeString`? There is no other method to change.
+
+Now, we should also consider that the `decodeString` method is also used by `isText`? Actually, `isText` uses a `CharsetDecoder` directly, not `decodeString`. So no issue.
+
+Now, we are ready.
+
+But note: the issue says "We should just use new String(...) as it has a lot of optimizations to handle these cases." So we are following that.
+
+Let's output the explanation and JSON.
+
+```json
+[
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "    static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {\n        if (len == 0) {\n            return StringUtil.EMPTY_STRING;\n        }\n        final CharsetDecoder decoder = CharsetUtil.decoder(charset);",
+    "replace": "    static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {\n        if (len == 0) {\n            return StringUtil.EMPTY_STRING;\n        }\n        // Fast path for charsets that are known to be efficiently handled by String constructor and array-backed buffers.\n        if (src.hasArray() && (charset.equals(CharsetUtil.UTF_8) || charset.equals(CharsetUtil.US_ASCII) || charset.equals(CharsetUtil.ISO_8859_1))) {\n            return new String(src.array(), src.arrayOffset() + readerIndex, len, charset);\n        }\n        final CharsetDecoder decoder = CharsetUtil.decoder(charset);"
+  }
+]
+```
+
+But wait: we need to include the entire method? No, we only change the beginning. The search string must be unique. Let's check if there are other occurrences of "static String decodeString". There is only one.
+
+We'll include a few more lines to make it unique? Actually, the method signature is unique. We'll include up to the line with `final CharsetDecoder decoder`. That should be enough.
+
+Now, we must also consider that the method might have changed in different versions. But we are given the exact file.
+
+Let's proceed.
+
+We'll also add an import for `CharsetUtil`? It's already imported.
+
+Now, we should also consider that the `String` constructor might throw `CharacterCodingException`? Actually, the `String` constructor with charset does not throw checked exceptions. It might throw `IllegalArgumentException` if the charset is not supported, but we are using `CharsetUtil` which should guarantee support.
+
+Now, we are done.
+
+But wait: we also need to consider that the buffer might be a slice or a duplicate that has an array but the array offset might be out of bounds? The `arrayOffset()` method returns the offset for the buffer, and `readerIndex` is relative to the buffer. So `arrayOffset() + readerIndex` is the index into the array. It should be within bounds because the buffer's capacity is ensured.
+
+Now, let's output the final answer.
+
+Explanation: The change adds a fast path in `ByteBufUtil.decodeString` for array-backed buffers and common charsets (UTF-8, US-ASCII, ISO-8859-1) to use the efficient `String` constructor, avoiding the overhead of `CharsetDecoder` and temporary buffers.
+
+```json
+[
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "    static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {\n        if (len == 0) {\n            return StringUtil.EMPTY_STRING;\n        }\n        final CharsetDecoder decoder = CharsetUtil.decoder(charset);",
+    "replace": "    static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {\n        if (len == 0) {\n            return StringUtil.EMPTY_STRING;\n        }\n        // Fast path for charsets that are known to be efficiently handled by String constructor and array-backed buffers.\n        if (src.hasArray() && (charset.equals(CharsetUtil.UTF_8) || charset.equals(CharsetUtil.US_ASCII) || charset.equals(CharsetUtil.ISO_8859_1))) {\n            return new String(src.array(), src.arrayOffset() + readerIndex, len, charset);\n        }\n        final CharsetDecoder decoder = CharsetUtil.decoder(charset);"
+  }
+]
+```

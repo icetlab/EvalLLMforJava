@@ -1,0 +1,217 @@
+diff --git a/codec/src/main/java/io/netty/handler/codec/DateFormatter.java b/codec/src/main/java/io/netty/handler/codec/DateFormatter.java
+index 86df148500..9223778afc 100644
+--- a/codec/src/main/java/io/netty/handler/codec/DateFormatter.java
++++ b/codec/src/main/java/io/netty/handler/codec/DateFormatter.java
+@@ -177,65 +177,51 @@ public final class DateFormatter {
+ 
+     private boolean tryParseTime(CharSequence txt, int tokenStart, int tokenEnd) {
+         int len = tokenEnd - tokenStart;
+-
+         // h:m:s to hh:mm:ss
+         if (len < 5 || len > 8) {
+             return false;
+         }
+-
+-        int localHours = -1;
+-        int localMinutes = -1;
+-        int localSeconds = -1;
+-        int currentPartNumber = 0;
+-        int currentPartValue = 0;
+-        int numDigits = 0;
+-
++        int part1 = 0, part2 = 0, part3 = 0;
++        int digitCount = 0;
++        int part = 0; // 0 for hours, 1 for minutes, 2 for seconds
+         for (int i = tokenStart; i < tokenEnd; i++) {
+             char c = txt.charAt(i);
+-            if (isDigit(c)) {
+-                currentPartValue = currentPartValue * 10 + getNumericalValue(c);
+-                if (++numDigits > 2) {
+-                  return false; // too many digits in this part
+-                }
+-            } else if (c == ':') {
+-                if (numDigits == 0) {
+-                    // no digits between separators
++            if (c == ':') {
++                if (digitCount == 0 || part >= 2) {
+                     return false;
+                 }
+-                switch (currentPartNumber) {
+-                    case 0:
+-                        // flushing hours
+-                        localHours = currentPartValue;
+-                        break;
+-                    case 1:
+-                        // flushing minutes
+-                        localMinutes = currentPartValue;
+-                        break;
+-                    default:
+-                        // invalid, too many :
+-                        return false;
++                // Store the part
++                if (part == 0) {
++                    part1 = part2;
++                } else if (part == 1) {
++                    part2 = part3;
+                 }
+-                currentPartValue = 0;
+-                currentPartNumber++;
+-                numDigits = 0;
++                part++;
++                digitCount = 0;
++                part3 = 0;
++            } else if (isDigit(c)) {
++                if (digitCount >= 2) {
++                    return false;
++                }
++                part3 = part3 * 10 + getNumericalValue(c);
++                digitCount++;
+             } else {
+-                // invalid char
+                 return false;
+             }
+         }
+-
+-        if (numDigits > 0) {
+-            // pending seconds
+-            localSeconds = currentPartValue;
++        if (digitCount == 0 || part != 2) {
++            return false;
+         }
+-
++        // part3 now holds the last part (seconds)
++        int localSeconds = part3;
++        int localMinutes = part2;
++        int localHours = part1;
+         if (localHours >= 0 && localMinutes >= 0 && localSeconds >= 0) {
+             hours = localHours;
+             minutes = localMinutes;
+             seconds = localSeconds;
+             return true;
+         }
+-
+         return false;
+     }
+ 
+@@ -261,45 +247,88 @@ public final class DateFormatter {
+         return false;
+     }
+ 
+-    private static boolean matchMonth(String month, CharSequence txt, int tokenStart) {
+-        return AsciiString.regionMatchesAscii(month, true, 0, txt, tokenStart, 3);
+-    }
+-
+     private boolean tryParseMonth(CharSequence txt, int tokenStart, int tokenEnd) {
+         int len = tokenEnd - tokenStart;
+-
+         if (len != 3) {
+             return false;
+         }
+-
+-        if (matchMonth("Jan", txt, tokenStart)) {
+-            month = Calendar.JANUARY;
+-        } else if (matchMonth("Feb", txt, tokenStart)) {
+-            month = Calendar.FEBRUARY;
+-        } else if (matchMonth("Mar", txt, tokenStart)) {
+-            month = Calendar.MARCH;
+-        } else if (matchMonth("Apr", txt, tokenStart)) {
+-            month = Calendar.APRIL;
+-        } else if (matchMonth("May", txt, tokenStart)) {
+-            month = Calendar.MAY;
+-        } else if (matchMonth("Jun", txt, tokenStart)) {
+-            month = Calendar.JUNE;
+-        } else if (matchMonth("Jul", txt, tokenStart)) {
+-            month = Calendar.JULY;
+-        } else if (matchMonth("Aug", txt, tokenStart)) {
+-            month = Calendar.AUGUST;
+-        } else if (matchMonth("Sep", txt, tokenStart)) {
+-            month = Calendar.SEPTEMBER;
+-        } else if (matchMonth("Oct", txt, tokenStart)) {
+-            month = Calendar.OCTOBER;
+-        } else if (matchMonth("Nov", txt, tokenStart)) {
+-            month = Calendar.NOVEMBER;
+-        } else if (matchMonth("Dec", txt, tokenStart)) {
+-            month = Calendar.DECEMBER;
+-        } else {
+-            return false;
++        // Get three characters (uppercased) for case-insensitive comparison
++        char c1 = toUpperCase(txt.charAt(tokenStart));
++        char c2 = toUpperCase(txt.charAt(tokenStart + 1));
++        char c3 = toUpperCase(txt.charAt(tokenStart + 2));
++        // Switch on first character to reduce comparisons
++        switch (c1) {
++            case 'J':
++                // Jan, Jun, Jul
++                if (c2 == 'A' && c3 == 'N') {
++                    month = Calendar.JANUARY;
++                } else if (c2 == 'U') {
++                    if (c3 == 'N') {
++                        month = Calendar.JUNE;
++                    } else if (c3 == 'L') {
++                        month = Calendar.JULY;
++                    } else {
++                        return false;
++                    }
++                } else {
++                    return false;
++                }
++                break;
++            case 'F':
++                if (c2 == 'E' && c3 == 'B') {
++                    month = Calendar.FEBRUARY;
++                } else {
++                    return false;
++                }
++                break;
++            case 'M':
++                if (c2 == 'A' && c3 == 'R') {
++                    month = Calendar.MARCH;
++                } else {
++                    return false;
++                }
++                break;
++            case 'A':
++                // Apr, Aug
++                if (c2 == 'P' && c3 == 'R') {
++                    month = Calendar.APRIL;
++                } else if (c2 == 'U' && c3 == 'G') {
++                    month = Calendar.AUGUST;
++                } else {
++                    return false;
++                }
++                break;
++            case 'S':
++                if (c2 == 'E' && c3 == 'P') {
++                    month = Calendar.SEPTEMBER;
++                } else {
++                    return false;
++                }
++                break;
++            case 'O':
++                if (c2 == 'C' && c3 == 'T') {
++                    month = Calendar.OCTOBER;
++                } else {
++                    return false;
++                }
++                break;
++            case 'N':
++                if (c2 == 'O' && c3 == 'V') {
++                    month = Calendar.NOVEMBER;
++                } else {
++                    return false;
++                }
++                break;
++            case 'D':
++                if (c2 == 'E' && c3 == 'C') {
++                    month = Calendar.DECEMBER;
++                } else {
++                    return false;
++                }
++                break;
++            default:
++                return false;
+         }
+-
+         return true;
+     }
+ 
