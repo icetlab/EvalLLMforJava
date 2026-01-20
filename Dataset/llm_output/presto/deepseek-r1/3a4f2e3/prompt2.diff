@@ -1,0 +1,56 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
+index aab2765889..ed1f36d9b3 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
+@@ -273,24 +273,39 @@ public class BooleanSelectiveStreamReader
+     {
+         // filter == null implies outputRequired == true
+         int streamPosition = 0;
+-        for (int i = 0; i < positionCount; i++) {
+-            int position = positions[i];
+-            if (position > streamPosition) {
+-                skip(position - streamPosition);
+-                streamPosition = position;
++        
++        if (presentStream == null) {
++            // Fast path: no nulls present
++            for (int i = 0; i < positionCount; i++) {
++                int position = positions[i];
++                if (position > streamPosition) {
++                    skip(position - streamPosition);
++                    streamPosition = position;
++                }
++                values[i] = (byte) (dataStream.nextBit() ? 1 : 0);
++                streamPosition++;
+             }
++        }
++        else {
++            // Slow path: handle possible nulls
++            for (int i = 0; i < positionCount; i++) {
++                int position = positions[i];
++                if (position > streamPosition) {
++                    skip(position - streamPosition);
++                    streamPosition = position;
++                }
+ 
+-            if (presentStream != null && !presentStream.nextBit()) {
+-                nulls[i] = true;
+-            }
+-            else {
+-                values[i] = (byte) (dataStream.nextBit() ? 1 : 0);
+-                if (presentStream != null) {
++                if (!presentStream.nextBit()) {
++                    nulls[i] = true;
++                }
++                else {
++                    values[i] = (byte) (dataStream.nextBit() ? 1 : 0);
+                     nulls[i] = false;
+                 }
++                streamPosition++;
+             }
+-            streamPosition++;
+         }
++        
+         outputPositionCount = positionCount;
+         return streamPosition;
+     }

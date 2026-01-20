@@ -1,0 +1,19 @@
+diff --git a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+index 350f609b45..9eeaaf2c73 100644
+--- a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
++++ b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+@@ -275,12 +275,10 @@ public class GeometrySerde
+         if (left == null) {
+             return right;
+         }
+-        else if (right == null) {
++        if (right == null) {
+             return left;
+         }
+-        else {
+-            right.merge(left);
+-        }
++        right.merge(left);
+         return right;
+     }
+ }

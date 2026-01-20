@@ -1,0 +1,55 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+index da887a9ba3..43c3cd84f9 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+@@ -257,6 +257,34 @@ public class ByteSelectiveStreamReader
+             throws IOException
+     {
+         // filter == null implies outputRequired == true
++        if (presentStream == null && positionCount > 0) {
++            // No nulls present, check if positions are contiguous
++            boolean contiguous = true;
++            for (int i = 1; i < positionCount; i++) {
++                if (positions[i] != positions[i - 1] + 1) {
++                    contiguous = false;
++                    break;
++                }
++            }
++            
++            if (contiguous) {
++                // All positions are contiguous, use bulk read
++                int startPosition = positions[0];
++                if (startPosition > readOffset) {
++                    skip(startPosition - readOffset);
++                }
++                
++                // Read all values in bulk
++                for (int i = 0; i < positionCount; i++) {
++                    values[i] = dataStream.next();
++                }
++                
++                outputPositionCount = positionCount;
++                return startPosition + positionCount;
++            }
++        }
++        
++        // Fall back to original implementation for non-contiguous positions or when nulls are present
+         int streamPosition = 0;
+         for (int i = 0; i < positionCount; i++) {
+             int position = positions[i];
+@@ -295,6 +323,15 @@ public class ByteSelectiveStreamReader
+         }
+     }
+ 
++    private void readContiguousValues(int startIndex, int count)
++            throws IOException
++    {
++        // Read count values starting at startIndex in the values array
++        for (int i = 0; i < count; i++) {
++            values[startIndex + i] = dataStream.next();
++        }
++    }
++
+     private void ensureValuesCapacity(int capacity, boolean recordNulls)
+     {
+         values = ensureCapacity(values, capacity);

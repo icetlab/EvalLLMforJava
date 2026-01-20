@@ -1,0 +1,13 @@
+I'll analyze the provided code to identify performance improvements. The `HashGenerator` interface is used for hashing positions in a page and computing partitions. The main optimization opportunity is in the `getPartition` default method.
+
+**Improvement Intent**: The current implementation uses modulo operation which can be expensive. We can optimize by using bitwise AND when the partition count is a power of two (common in distributed systems), falling back to modulo otherwise.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java",
+    "search": "    default int getPartition(int partitionCount, int position, Page page)\n    {\n        long rawHash = hashPosition(position, page);\n\n        // clear the sign bit\n        rawHash &= 0x7fff_ffff_ffff_ffffL;\n\n        int partition = (int) (rawHash % partitionCount);\n\n        checkState(partition >= 0 && partition < partitionCount);\n        return partition;\n    }",
+    "replace": "    default int getPartition(int partitionCount, int position, Page page)\n    {\n        long rawHash = hashPosition(position, page);\n\n        // clear the sign bit\n        rawHash &= 0x7fff_ffff_ffff_ffffL;\n\n        int partition;\n        // Use faster bitwise AND when partitionCount is power of two\n        if ((partitionCount & (partitionCount - 1)) == 0) {\n            partition = (int) (rawHash & (partitionCount - 1));\n        } else {\n            partition = (int) (rawHash % partitionCount);\n        }\n\n        checkState(partition >= 0 && partition < partitionCount);\n        return partition;\n    }"
+  }
+]
+```

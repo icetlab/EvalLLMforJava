@@ -1,0 +1,42 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java b/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java
+index a25a5916e6..6796c25a59 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java
+@@ -72,13 +72,33 @@ public final class ArrayDistinctFunction
+ 
+     public static Block distinct(Type type, Block array)
+     {
+-        if (array.getPositionCount() == 0) {
++        int positionCount = array.getPositionCount();
++        if (positionCount == 0) {
+             return array;
+         }
+ 
+-        TypedSet typedSet = new TypedSet(type, array.getPositionCount());
+-        BlockBuilder distinctElementBlockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), array.getPositionCount());
+-        for (int i = 0; i < array.getPositionCount(); i++) {
++        if (positionCount == 1) {
++            return array;
++        }
++
++        if (positionCount == 2) {
++            // Compare the two elements directly
++            if (type.equalTo(array, 0, array, 1)) {
++                // Elements are equal, return array with first element only
++                BlockBuilder blockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), 1);
++                type.appendTo(array, 0, blockBuilder);
++                return blockBuilder.build();
++            }
++            else {
++                // Elements are distinct, return original array
++                return array;
++            }
++        }
++
++        // Fall back to TypedSet for arrays with more than 2 elements
++        TypedSet typedSet = new TypedSet(type, positionCount);
++        BlockBuilder distinctElementBlockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), positionCount);
++        for (int i = 0; i < positionCount; i++) {
+             if (!typedSet.contains(array, i)) {
+                 typedSet.add(array, i);
+                 type.appendTo(array, i, distinctElementBlockBuilder);

@@ -1,0 +1,62 @@
+The performance issue is to optimize `ByteSelectiveStreamReader` for the case where there is no filter and nulls are present. Currently, the `readNoFilter` method handles this scenario but can be optimized for better performance, especially when there are nulls and the positions are contiguous.
+
+Looking at the `readNoFilter` method, we can see that it currently processes each position individually, checking the present stream and reading values one by one. However, when there are no nulls (presentStream == null) and positions are contiguous, it uses a bulk read operation (`dataStream.next(values, positionCount)`). We can extend this optimization to handle cases where there are nulls but the positions are still contiguous.
+
+The main idea is to optimize the case where positions are contiguous (i.e., `positions[positionCount - 1] == positionCount - 1`). In this case, we can read the entire chunk at once, even if there are nulls, by using the present stream to determine nulls and reading data values in bulk where possible.
+
+We will modify the `readNoFilter` method to:
+1. Check if positions are contiguous.
+2. If they are contiguous and there is no present stream (no nulls), use the existing bulk read.
+3. If they are contiguous and there is a present stream, we can read the null bits in bulk and then read the non-null values in bulk using `dataStream.next(values, nonNullCount)` after skipping nulls appropriately.
+
+However, note that the current `ByteInputStream` does not have a method to read into an array with gaps (for nulls). So we cannot directly read into the `values` array when there are nulls. But we can still optimize by reading the present stream in bulk to determine nulls and then reading the data stream in a loop, but using `dataStream.next()` for each non-null value. This is not a bulk read, but we can avoid the per-position overhead of checking the position and skipping.
+
+Alternatively, we can note that when positions are contiguous, we don't need to check the position for each element because they are in order. So we can simply iterate from 0 to positionCount-1 without checking the position. This eliminates the `skip` calls and the position comparison.
+
+Currently, the method does:
+```java
+int streamPosition = 0;
+for (int i = 0; i < positionCount; i++) {
+    int position = positions[i];
+    if (position > streamPosition) {
+        skip(position - streamPosition);
+        streamPosition = position;
+    }
+    // ... read value or null
+    streamPosition++;
+}
+```
+
+If positions are contiguous, then `position == i` and `streamPosition == i`, so we can skip the `if` block and the `skip` call. This is already done in the first branch (when presentStream == null). We can extend this to the case with presentStream.
+
+Therefore, we can restructure the method to:
+- If positions are contiguous, then iterate without checking positions and without skipping.
+- Otherwise, use the existing loop.
+
+This change will reduce the overhead for contiguous positions, which is common.
+
+Additionally, we can optimize the reading of the present stream by using `nextBit` in a loop without the position checks.
+
+Let's implement these changes.
+
+We will change the `readNoFilter` method to have two branches: one for contiguous positions and one for non-contiguous positions.
+
+For contiguous positions:
+- If presentStream is null, use bulk read.
+- Otherwise, loop from 0 to positionCount-1, reading the null bit and then the value if not null.
+
+For non-contiguous positions, keep the existing logic.
+
+We also need to update the `skip` method to be efficient, but that is already done.
+
+Now, let's produce the JSON changes.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "    private int readNoFilter(int[] positions, int positionCount)\n            throws IOException\n    {\n        // filter == null implies outputRequired == true\n        if (presentStream == null && positions[positionCount - 1] == positionCount - 1) {\n            // contiguous chunk of rows, no nulls\n            dataStream.next(values, positionCount);\n            outputPositionCount = positionCount;\n            return positionCount;\n        }\n\n        int streamPosition = 0;\n        for (int i = 0; i < positionCount; i++) {\n            int position = positions[i];\n            if (position > streamPosition) {\n                skip(position - streamPosition);\n                streamPosition = position;\n            }\n\n            if (presentStream != null && !presentStream.nextBit()) {\n                nulls[i] = true;\n            }\n            else {\n                values[i] = dataStream.next();\n                if (presentStream != null) {\n                    nulls[i] = false;\n                }\n            }\n            streamPosition++;\n        }\n        outputPositionCount = positionCount;\n        return streamPosition;\n    }",
+    "replace": "    private int readNoFilter(int[] positions, int positionCount)\n            throws IOException\n    {\n        // filter == null implies outputRequired == true\n        if (positions[positionCount - 1] == positionCount - 1) {\n            // contiguous chunk of rows\n            if (presentStream == null) {\n                // no nulls\n                dataStream.next(values, positionCount);\n                outputPositionCount = positionCount;\n                return positionCount;\n            }\n            else {\n                // with nulls, but contiguous positions\n                for (int i = 0; i < positionCount; i++) {\n                    if (!presentStream.nextBit()) {\n                        nulls[i] = true;\n                    }\n                    else {\n                        values[i] = dataStream.next();\n                        nulls[i] = false;\n                    }\n                }\n                outputPositionCount = positionCount;\n                return positionCount;\n            }\n        }\n\n        // non-contiguous positions\n        int streamPosition = 0;\n        for (int i = 0; i < positionCount; i++) {\n            int position = positions[i];\n            if (position > streamPosition) {\n                skip(position - streamPosition);\n                streamPosition = position;\n            }\n\n            if (presentStream != null && !presentStream.nextBit()) {\n                nulls[i] = true;\n            }\n            else {\n                values[i] = dataStream.next();\n                if (presentStream != null) {\n                    nulls[i] = false;\n                }\n            }\n            streamPosition++;\n        }\n        outputPositionCount = positionCount;\n        return streamPosition;\n    }"
+  }
+]
+```

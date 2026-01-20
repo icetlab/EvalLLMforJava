@@ -1,0 +1,31 @@
+## Explanation
+
+The performance issue is to optimize `ByteSelectiveStreamReader` for the "no filter with nulls" case. Currently, the `readNoFilter` method handles this scenario, but it can be optimized for better performance when there are nulls present. The main optimization opportunities are:
+
+1. **Bulk reading for contiguous rows without nulls**: When there's no present stream (all values are non-null) and positions are contiguous, we can use bulk reading.
+2. **Reduced branching and better loop structure**: The current implementation has conditional checks inside the loop that can be optimized.
+3. **Avoid unnecessary nulls array operations**: When there's no present stream, we don't need to handle nulls at all.
+
+Looking at the `readNoFilter` method, I see it already has some optimization for the case where `presentStream == null && positions[positionCount - 1] == positionCount - 1` (contiguous rows, no nulls). However, we can further optimize the general case with nulls.
+
+The key optimizations are:
+1. Separate handling for cases with and without present stream to avoid conditional checks in the loop
+2. Use bulk operations when possible
+3. Simplify the loop structure for better CPU pipelining
+
+Here are the specific changes:
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "    private int readNoFilter(int[] positions, int positionCount)\n            throws IOException\n    {\n        // filter == null implies outputRequired == true\n        if (presentStream == null && positions[positionCount - 1] == positionCount - 1) {\n            // contiguous chunk of rows, no nulls\n            dataStream.next(values, positionCount);\n            outputPositionCount = positionCount;\n            return positionCount;\n        }\n\n        int streamPosition = 0;\n        for (int i = 0; i < positionCount; i++) {\n            int position = positions[i];\n            if (position > streamPosition) {\n                skip(position - streamPosition);\n                streamPosition = position;\n            }\n\n            if (presentStream != null && !presentStream.nextBit()) {\n                nulls[i] = true;\n            }\n            else {\n                values[i] = dataStream.next();\n                if (presentStream != null) {\n                    nulls[i] = false;\n                }\n            }\n            streamPosition++;\n        }\n        outputPositionCount = positionCount;\n        return streamPosition;\n    }",
+    "replace": "    private int readNoFilter(int[] positions, int positionCount)\n            throws IOException\n    {\n        // filter == null implies outputRequired == true\n        if (presentStream == null && positions[positionCount - 1] == positionCount - 1) {\n            // contiguous chunk of rows, no nulls\n            dataStream.next(values, positionCount);\n            outputPositionCount = positionCount;\n            return positionCount;\n        }\n\n        int streamPosition = 0;\n        if (presentStream == null) {\n            // No nulls present, just read values\n            for (int i = 0; i < positionCount; i++) {\n                int position = positions[i];\n                if (position > streamPosition) {\n                    skip(position - streamPosition);\n                    streamPosition = position;\n                }\n                values[i] = dataStream.next();\n                streamPosition++;\n            }\n        }\n        else {\n            // Nulls may be present\n            for (int i = 0; i < positionCount; i++) {\n                int position = positions[i];\n                if (position > streamPosition) {\n                    skip(position - streamPosition);\n                    streamPosition = position;\n                }\n\n                if (!presentStream.nextBit()) {\n                    nulls[i] = true;\n                }\n                else {\n                    values[i] = dataStream.next();\n                    nulls[i] = false;\n                }\n                streamPosition++;\n            }\n        }\n        outputPositionCount = positionCount;\n        return streamPosition;\n    }"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "    private void skip(int items)\n            throws IOException\n    {\n        if (dataStream == null) {\n            presentStream.skip(items);\n        }\n        else if (presentStream != null) {\n            int dataToSkip = presentStream.countBitsSet(items);\n            dataStream.skip(dataToSkip);\n        }\n        else {\n            dataStream.skip(items);\n        }\n    }",
+    "replace": "    private void skip(int items)\n            throws IOException\n    {\n        if (dataStream == null) {\n            presentStream.skip(items);\n        }\n        else if (presentStream != null) {\n            int dataToSkip = presentStream.countBitsSet(items);\n            dataStream.skip(dataToSkip);\n        }\n        else {\n            dataStream.skip(items);\n        }\n    }"
+  }
+]
+```

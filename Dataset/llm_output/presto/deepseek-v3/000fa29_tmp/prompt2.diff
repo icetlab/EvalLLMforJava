@@ -1,0 +1,29 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
+index 30e0088e35..eb75fb66c1 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
+@@ -561,12 +561,23 @@ public class OptimizedPartitionedOutputOperator
+ 
+         private void resetPositions(int positionCount)
+         {
+-            positions = ensureCapacity(positions, positionCount);
++            // Allocate initial capacity as the smaller of page position count and 64, but at least 1.
++            int initialCapacity = Math.max(1, Math.min(positionCount, 64));
++            if (positions == null || positions.length < initialCapacity) {
++                positions = new int[initialCapacity];
++            }
+             this.positionCount = 0;
+         }
+ 
+         private void addPosition(int position)
+         {
++            if (positionCount >= positions.length) {
++                // Expand by at least 1.5 times, but ensure at least capacity for one more element.
++                int newCapacity = Math.max(positionCount + 1, positions.length + (positions.length >> 1));
++                int[] newPositions = new int[newCapacity];
++                System.arraycopy(positions, 0, newPositions, 0, positionCount);
++                positions = newPositions;
++            }
+             positions[positionCount++] = position;
+         }
+ 

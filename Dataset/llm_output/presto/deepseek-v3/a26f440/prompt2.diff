@@ -1,0 +1,243 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java b/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
+index ce0ca747f2..78b6487d0a 100644
+--- a/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
++++ b/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
+@@ -195,13 +195,26 @@ public class TDigest
+         checkArgument(!Double.isNaN(x), "Cannot add NaN to t-digest");
+         checkArgument(w > 0L, "weight must be > 0");
+ 
+-        if (tempUsed >= tempWeight.length - activeCentroids - 1) {
+-            mergeNewValues();
++        // For very small distributions, we can avoid merging overhead
++        if (totalWeight + unmergedWeight + w <= 10 && activeCentroids == 0) {
++            // Store directly in temp arrays without immediate merging
++            if (tempUsed >= tempWeight.length) {
++                mergeNewValues();
++            }
++            int where = tempUsed++;
++            tempWeight[where] = w;
++            tempMean[where] = x;
++            unmergedWeight += w;
++        } else {
++            if (tempUsed >= tempWeight.length - activeCentroids - 1) {
++                mergeNewValues();
++            }
++            int where = tempUsed++;
++            tempWeight[where] = w;
++            tempMean[where] = x;
++            unmergedWeight += w;
+         }
+-        int where = tempUsed++;
+-        tempWeight[where] = w;
+-        tempMean[where] = x;
+-        unmergedWeight += w;
++        
+         if (x < min) {
+             min = x;
+         }
+@@ -228,7 +241,12 @@ public class TDigest
+ 
+     private void mergeNewValues()
+     {
+-        mergeNewValues(false, compression);
++        // For very small distributions, use simpler merging logic
++        if (totalWeight + unmergedWeight <= 10) {
++            mergeNewValuesSmall();
++        } else {
++            mergeNewValues(false, compression);
++        }
+     }
+ 
+     private void mergeNewValues(boolean force, double compression)
+@@ -238,14 +256,153 @@ public class TDigest
+         }
+ 
+         if (force || unmergedWeight > 0) {
+-            // note that we run the merge in reverse every other merge to avoid left-to-right bias in merging
+-            merge(tempMean, tempWeight, tempUsed, order, unmergedWeight, mergeCount % 2 == 1, compression);
++            // For small numbers of points, use optimized path
++            if (tempUsed <= 5 && activeCentroids == 0) {
++                // Direct insertion sort for very small datasets
++                for (int i = 0; i < tempUsed; i++) {
++                    mean[activeCentroids] = tempMean[i];
++                    weight[activeCentroids] = tempWeight[i];
++                    activeCentroids++;
++                    totalWeight += tempWeight[i];
++                }
++                // Sort the small array
++                for (int i = 0; i < activeCentroids; i++) {
++                    for (int j = i + 1; j < activeCentroids; j++) {
++                        if (mean[i] > mean[j]) {
++                            double tempMeanVal = mean[i];
++                            double tempWeightVal = weight[i];
++                            mean[i] = mean[j];
++                            weight[i] = weight[j];
++                            mean[j] = tempMeanVal;
++                            weight[j] = tempWeightVal;
++                        }
++                    }
++                }
++            } else {
++                // note that we run the merge in reverse every other merge to avoid left-to-right bias in merging
++                merge(tempMean, tempWeight, tempUsed, order, unmergedWeight, mergeCount % 2 == 1, compression);
++            }
+             mergeCount++;
+             tempUsed = 0;
+             unmergedWeight = 0;
+         }
+     }
+ 
++    private void mergeNewValuesSmall()
++    {
++        if (unmergedWeight == 0) {
++            return;
++        }
++
++        // Simple merge for small distributions
++        for (int i = 0; i < tempUsed; i++) {
++            boolean merged = false;
++            for (int j = 0; j < activeCentroids; j++) {
++                if (Math.abs(tempMean[i] - mean[j]) < 1e-10) {
++                    // Merge with existing centroid
++                    double newWeight = weight[j] + tempWeight[i];
++                    mean[j] = mean[j] + (tempMean[i] - mean[j]) * tempWeight[i] / newWeight;
++                    weight[j] = newWeight;
++                    merged = true;
++                    break;
++                }
++            }
++            if (!merged) {
++                // Add as new centroid
++                mean[activeCentroids] = tempMean[i];
++                weight[activeCentroids] = tempWeight[i];
++                activeCentroids++;
++            }
++            totalWeight += tempWeight[i];
++        }
++        
++        // Sort centroids
++        for (int i = 0; i < activeCentroids; i++) {
++            for (int j = i + 1; j < activeCentroids; j++) {
++                if (mean[i] > mean[j]) {
++                    double tempMeanVal = mean[i];
++                    double tempWeightVal = weight[i];
++                    mean[i] = mean[j];
++                    weight[i] = weight[j];
++                    mean[j] = tempMeanVal;
++                    weight[j] = tempWeightVal;
++                }
++            }
++        }
++        
++        tempUsed = 0;
++        unmergedWeight = 0;
++    }
++
++    private double computeCdfFromTemp(double x)
++    {
++        // Simple CDF computation from unmerged temp values
++        if (tempUsed == 0) {
++            return Double.NaN;
++        }
++        
++        int lessCount = 0;
++        double lessWeight = 0;
++        double equalWeight = 0;
++        
++        for (int i = 0; i < tempUsed; i++) {
++            if (tempMean[i] < x) {
++                lessWeight += tempWeight[i];
++                lessCount++;
++            } else if (tempMean[i] == x) {
++                equalWeight += tempWeight[i];
++            }
++        }
++        
++        if (lessCount == 0 && equalWeight == 0) {
++            return 0;
++        }
++        if (lessCount == tempUsed) {
++            return 1;
++        }
++        
++        return (lessWeight + equalWeight / 2) / (totalWeight + unmergedWeight);
++    }
++
++    private double computeQuantileFromTemp(double q)
++    {
++        // Simple quantile computation from unmerged temp values
++        if (tempUsed == 0) {
++            return Double.NaN;
++        }
++        
++        double targetWeight = q * (totalWeight + unmergedWeight);
++        double[] sortedMeans = new double[tempUsed];
++        double[] sortedWeights = new double[tempUsed];
++        
++        // Copy and sort
++        System.arraycopy(tempMean, 0, sortedMeans, 0, tempUsed);
++        System.arraycopy(tempWeight, 0, sortedWeights, 0, tempUsed);
++        
++        for (int i = 0; i < tempUsed; i++) {
++            for (int j = i + 1; j < tempUsed; j++) {
++                if (sortedMeans[i] > sortedMeans[j]) {
++                    double tempMeanVal = sortedMeans[i];
++                    double tempWeightVal = sortedWeights[i];
++                    sortedMeans[i] = sortedMeans[j];
++                    sortedWeights[i] = sortedWeights[j];
++                    sortedMeans[j] = tempMeanVal;
++                    sortedWeights[j] = tempWeightVal;
++                }
++            }
++        }
++        
++        double cumulativeWeight = 0;
++        for (int i = 0; i < tempUsed; i++) {
++            if (cumulativeWeight + sortedWeights[i] >= targetWeight) {
++                return sortedMeans[i];
++            }
++            cumulativeWeight += sortedWeights[i];
++        }
++        
++        return sortedMeans[tempUsed - 1];
++    }
++
+     private void merge(double[] incomingMean,
+             double[] incomingWeight,
+             int incomingCount,
+@@ -336,11 +493,16 @@ public class TDigest
+ 
+     public double getCdf(double x)
+     {
+-        if (unmergedWeight > 0) {
++        // Only compress if we have pending values AND we have enough data to benefit from compression
++        if (unmergedWeight > 0 && totalWeight + unmergedWeight > 100) {
+             compress();
+         }
+ 
+         if (activeCentroids == 0) {
++            // If we have unmerged values but didn't compress, handle them directly
++            if (unmergedWeight > 0) {
++                return computeCdfFromTemp(x);
++            }
+             return Double.NaN;
+         }
+         if (activeCentroids == 1) {
+@@ -461,11 +623,16 @@ public class TDigest
+     public double getQuantile(double q)
+     {
+         checkArgument(q >= 0 && q <= 1, "q should be in [0,1], got %s", q);
+-        if (unmergedWeight > 0) {
++        // Only compress if we have pending values AND we have enough data to benefit from compression
++        if (unmergedWeight > 0 && totalWeight + unmergedWeight > 100) {
+             compress();
+         }
+ 
+         if (activeCentroids == 0) {
++            // If we have unmerged values but didn't compress, handle them directly
++            if (unmergedWeight > 0) {
++                return computeQuantileFromTemp(q);
++            }
+             return Double.NaN;
+         }
+         else if (activeCentroids == 1) {

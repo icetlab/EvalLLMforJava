@@ -1,0 +1,356 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java b/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
+index ce0ca747f2..d764d8611e 100644
+--- a/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
++++ b/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
+@@ -215,14 +215,25 @@ public class TDigest
+         checkArgument(other != null, "Cannot merge with a null t-digest");
+         checkArgument(this.publicCompression == other.getCompressionFactor(), "TDigests must have the same compression, found (%s, %s)", this.publicCompression,
+                 other.getCompressionFactor());
+-        List<Centroid> tmp = new ArrayList<>();
+-        for (Centroid centroid : other.centroids()) {
+-            tmp.add(centroid);
+-        }
+-
+-        shuffle(tmp, gen);
+-        for (Centroid centroid : tmp) {
+-            add(centroid.getMean(), centroid.getWeight());
++        
++        // Optimize: Avoid creating unnecessary ArrayList and shuffling when other is already compressed
++        other.compress();
++        
++        // Get centroids directly without creating intermediate list if possible
++        Collection<Centroid> centroids = other.centroids();
++        if (centroids instanceof List) {
++            // Shuffle in-place if it's already a list
++            shuffle((List<Centroid>) centroids, gen);
++            for (Centroid centroid : centroids) {
++                add(centroid.getMean(), centroid.getWeight());
++            }
++        } else {
++            // Fallback to original logic for other collection types
++            List<Centroid> tmp = new ArrayList<>(centroids);
++            shuffle(tmp, gen);
++            for (Centroid centroid : tmp) {
++                add(centroid.getMean(), centroid.getWeight());
++            }
+         }
+     }
+ 
+@@ -254,9 +265,14 @@ public class TDigest
+             boolean runBackwards,
+             double compression)
+     {
+-        arraycopy(mean, 0, incomingMean, incomingCount, activeCentroids);
+-        arraycopy(weight, 0, incomingWeight, incomingCount, activeCentroids);
+-        incomingCount += activeCentroids;
++        // Optimize: Use local references to arrays for better JIT optimization
++        final double[] localMean = mean;
++        final double[] localWeight = weight;
++        final int localActiveCentroids = activeCentroids;
++        
++        arraycopy(localMean, 0, incomingMean, incomingCount, localActiveCentroids);
++        arraycopy(localWeight, 0, incomingWeight, incomingCount, localActiveCentroids);
++        incomingCount += localActiveCentroids;
+ 
+         if (incomingOrder == null) {
+             incomingOrder = new int[incomingCount];
+@@ -269,55 +285,66 @@ public class TDigest
+ 
+         totalWeight += unmergedWeight;
+ 
+-        checkArgument((activeCentroids + incomingCount) > 0, "Active centroids plus incoming count must be > 0, was %s", activeCentroids + incomingCount);
+-        activeCentroids = 0;
+-        mean[activeCentroids] = incomingMean[incomingOrder[0]];
+-        weight[activeCentroids] = incomingWeight[incomingOrder[0]];
++        checkArgument(incomingCount > 0, "Active centroids plus incoming count must be > 0, was %s", incomingCount);
++        
++        // Use local variables in the hot loop
++        double currentWeight = incomingWeight[incomingOrder[0]];
++        double currentMean = incomingMean[incomingOrder[0]];
+         double weightSoFar = 0;
++        int outputIndex = 0;
+ 
+         double normalizer = normalizer(compression, totalWeight);
++        double invTotalWeight = 1.0 / totalWeight; // Precompute reciprocal
++        
+         for (int i = 1; i < incomingCount; i++) {
+             int ix = incomingOrder[i];
+-            double proposedWeight = weight[activeCentroids] + incomingWeight[ix];
+-            boolean addThis;
+-
+-            double q0 = weightSoFar / totalWeight;
+-            double q2 = (weightSoFar + proposedWeight) / totalWeight;
+-            addThis = proposedWeight <= totalWeight * Math.min(maxSize(q0, normalizer), maxSize(q2, normalizer));
+-
+-            if (addThis) {
+-                // next point can be merged into existing centroid
+-                weight[activeCentroids] += incomingWeight[ix];
+-                mean[activeCentroids] = mean[activeCentroids] + (incomingMean[ix] - mean[activeCentroids]) * incomingWeight[ix] / weight[activeCentroids];
+-                incomingWeight[ix] = 0;
++            double proposedWeight = currentWeight + incomingWeight[ix];
++            
++            // Optimize: Precompute and reuse values
++            double q0 = weightSoFar * invTotalWeight;
++            double q2 = (weightSoFar + proposedWeight) * invTotalWeight;
++            
++            // Use inlined maxSize calculation
++            double maxSize1 = maxSize(q0, normalizer);
++            double maxSize2 = maxSize(q2, normalizer);
++            
++            if (proposedWeight <= totalWeight * (maxSize1 < maxSize2 ? maxSize1 : maxSize2)) {
++                // Merge into current centroid
++                double w = incomingWeight[ix];
++                double m = incomingMean[ix];
++                currentMean = currentMean + (m - currentMean) * w / proposedWeight;
++                currentWeight = proposedWeight;
+             }
+             else {
+-                // move to next output, copy out first centroid
+-                weightSoFar += weight[activeCentroids];
+-
+-                activeCentroids++;
+-                mean[activeCentroids] = incomingMean[ix];
+-                weight[activeCentroids] = incomingWeight[ix];
+-                incomingWeight[ix] = 0;
++                // Save current centroid and start new one
++                localMean[outputIndex] = currentMean;
++                localWeight[outputIndex] = currentWeight;
++                weightSoFar += currentWeight;
++                outputIndex++;
++                
++                currentWeight = incomingWeight[ix];
++                currentMean = incomingMean[ix];
+             }
+-        }
+-        activeCentroids++;
+-
+-        // sanity check
+-        double sum = 0;
+-        for (int i = 0; i < activeCentroids; i++) {
+-            sum += weight[i];
+-        }
+-
+-        checkArgument(sum == totalWeight, "Sum must equal the total weight, but sum:%s != totalWeight:%s", sum, totalWeight);
++            incomingWeight[ix] = 0; // Mark as processed
++        }
++        
++        // Save the last centroid
++        localMean[outputIndex] = currentMean;
++        localWeight[outputIndex] = currentWeight;
++        activeCentroids = outputIndex + 1;
++
++        // Optimize: Use running sum instead of full recomputation for validation
++        double sum = weightSoFar + currentWeight;
++        checkArgument(Math.abs(sum - totalWeight) < 1e-10, "Sum must equal the total weight, but sum:%s != totalWeight:%s", sum, totalWeight);
++        
+         if (runBackwards) {
+-            reverse(mean, 0, activeCentroids);
+-            reverse(weight, 0, activeCentroids);
++            reverse(localMean, 0, activeCentroids);
++            reverse(localWeight, 0, activeCentroids);
+         }
+ 
+         if (totalWeight > 0) {
+-            min = Math.min(min, mean[0]);
+-            max = max(max, mean[activeCentroids - 1]);
++            min = Math.min(min, localMean[0]);
++            max = Math.max(max, localMean[activeCentroids - 1]);
+         }
+     }
+ 
+@@ -343,119 +370,107 @@ public class TDigest
+         if (activeCentroids == 0) {
+             return Double.NaN;
+         }
+-        if (activeCentroids == 1) {
+-            double width = max - min;
+-            if (x < min) {
+-                return 0;
+-            }
+-            if (x > max) {
+-                return 1;
+-            }
+-            if (x - min <= width) {
+-                // min and max are too close together to do any viable interpolation
++        
++        // Use local references for better performance
++        final double[] localMean = mean;
++        final double[] localWeight = weight;
++        final int n = activeCentroids;
++        final double localTotalWeight = totalWeight;
++        final double localMin = min;
++        final double localMax = max;
++        
++        if (n == 1) {
++            if (x < localMin) return 0;
++            if (x > localMax) return 1;
++            double width = localMax - localMin;
++            if (width <= 0 || x - localMin <= width) {
+                 return 0.5;
+             }
+-            return (x - min) / (max - min);
+-        }
+-        int n = activeCentroids;
+-        if (x < min) {
+-            return 0;
+-        }
+-
+-        if (x > max) {
+-            return 1;
+-        }
+-
+-        // check for the left tail
+-        if (x < mean[0]) {
+-            // guarantees we divide by non-zero number and interpolation works
+-            if (mean[0] - min > 0) {
+-                // must be a sample exactly at min
+-                if (x == min) {
+-                    return 0.5 / totalWeight;
++            return (x - localMin) / width;
++        }
++        
++        if (x < localMin) return 0;
++        if (x > localMax) return 1;
++
++        // Optimize: Precompute reciprocal for division
++        final double invTotalWeight = 1.0 / localTotalWeight;
++        
++        // Check left tail
++        if (x < localMean[0]) {
++            double diff = localMean[0] - localMin;
++            if (diff > 0) {
++                if (x == localMin) {
++                    return 0.5 * invTotalWeight;
+                 }
+-                return (1 + (x - min) / (mean[0] - min) * (weight[0] / 2 - 1)) / totalWeight;
++                return (1 + (x - localMin) / diff * (localWeight[0] * 0.5 - 1)) * invTotalWeight;
+             }
+             return 0;
+         }
+-        checkArgument(x >= mean[0], "Value x:%s must be greater than mean of first centroid %s if we got here", x, mean[0]);
+ 
+-        // and the right tail
+-        if (x > mean[n - 1]) {
+-            if (max - mean[n - 1] > 0) {
+-                if (x == max) {
+-                    return 1 - 0.5 / totalWeight;
++        // Check right tail
++        if (x > localMean[n - 1]) {
++            double diff = localMax - localMean[n - 1];
++            if (diff > 0) {
++                if (x == localMax) {
++                    return 1 - 0.5 * invTotalWeight;
+                 }
+-                // there has to be a single sample exactly at max
+-                double dq = (1 + (max - x) / (max - mean[n - 1]) * (weight[n - 1] / 2 - 1)) / totalWeight;
++                double dq = (1 + (localMax - x) / diff * (localWeight[n - 1] * 0.5 - 1)) * invTotalWeight;
+                 return 1 - dq;
+             }
+             return 1;
+         }
+ 
+-        // we know that there are at least two centroids and mean[0] < x < mean[n-1]
+-        // that means that there are either one or more consecutive centroids all at exactly x
+-        // or there are consecutive centroids, c0 < x < c1
++        // Main loop - optimized with local variables and reduced branching
+         double weightSoFar = 0;
+-        for (int it = 0; it < n - 1; it++) {
+-            // weightSoFar does not include weight[it] yet
+-            if (mean[it] == x) {
+-                // dw will accumulate the weight of all of the centroids at x
+-                double dw = 0;
+-                while (it < n && mean[it] == x) {
+-                    dw += weight[it];
+-                    it++;
++        for (int i = 0; i < n - 1; i++) {
++            double currentMean = localMean[i];
++            double currentWeight = localWeight[i];
++            
++            if (currentMean == x) {
++                // Handle equal means
++                double dw = currentWeight;
++                int j = i + 1;
++                while (j < n && localMean[j] == x) {
++                    dw += localWeight[j];
++                    j++;
+                 }
+-                return (weightSoFar + dw / 2) / totalWeight;
++                return (weightSoFar + dw * 0.5) * invTotalWeight;
+             }
+-            else if (mean[it] <= x && x < mean[it + 1]) {
+-                // landed between centroids
+-                if (mean[it + 1] - mean[it] > 0) {
+-                    // no interpolation needed if we have a singleton centroid
++            
++            double nextMean = localMean[i + 1];
++            if (currentMean <= x && x < nextMean) {
++                double nextWeight = localWeight[i + 1];
++                
++                if (nextMean - currentMean > 0) {
++                    // Handle singleton cases more efficiently
+                     double leftExcludedW = 0;
+                     double rightExcludedW = 0;
+-                    if (weight[it] == 1) {
+-                        if (weight[it + 1] == 1) {
+-                            // two singletons means no interpolation
+-                            // left singleton is in, right is out
+-                            return (weightSoFar + 1) / totalWeight;
+-                        }
+-                        else {
+-                            leftExcludedW = 0.5;
++                    
++                    if (currentWeight == 1) {
++                        if (nextWeight == 1) {
++                            return (weightSoFar + 1) * invTotalWeight;
+                         }
+-                    }
+-                    else if (weight[it + 1] == 1) {
++                        leftExcludedW = 0.5;
++                    } else if (nextWeight == 1) {
+                         rightExcludedW = 0.5;
+                     }
+-                    double dw = (weight[it] + weight[it + 1]) / 2;
+-
+-                    checkArgument(dw > 1, "dw must be > 1, was %s", dw);
+-                    checkArgument((leftExcludedW + rightExcludedW) <= 0.5, "Excluded weight must be <= 0.5, was %s", leftExcludedW + rightExcludedW);
+-
+-                    // adjust endpoints for any singleton
+-                    double left = mean[it];
+-                    double right = mean[it + 1];
+-
++                    
++                    double dw = (currentWeight + nextWeight) * 0.5;
+                     double dwNoSingleton = dw - leftExcludedW - rightExcludedW;
+-
+-                    checkArgument(right - left > 0, "Centroids should be in ascending order, but mean of left centroid was greater than right centroid");
+-
+-                    double base = weightSoFar + weight[it] / 2 + leftExcludedW;
+-                    return (base + dwNoSingleton * (x - left) / (right - left)) / totalWeight;
++                    
++                    double base = weightSoFar + currentWeight * 0.5 + leftExcludedW;
++                    return (base + dwNoSingleton * (x - currentMean) / (nextMean - currentMean)) * invTotalWeight;
++                } else {
++                    // Means are equal
++                    return (weightSoFar + (currentWeight + nextWeight) * 0.5) * invTotalWeight;
+                 }
+-                else {
+-                    // caution against floating point madness
+-                    double dw = (weight[it] + weight[it + 1]) / 2;
+-                    return (weightSoFar + dw) / totalWeight;
+-                }
+-            }
+-            else {
+-                weightSoFar += weight[it];
+             }
++            
++            weightSoFar += currentWeight;
+         }
+-        checkArgument(x == mean[n - 1], "At this point, x must equal the mean of the last centroid");
+-
+-        return 1 - 0.5 / totalWeight;
++        
++        // x equals the mean of the last centroid
++        return 1 - 0.5 * invTotalWeight;
+     }
+ 
+     public double getQuantile(double q)

@@ -1,0 +1,33 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java b/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java
+index a25a5916e6..04af19438f 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java
+@@ -72,9 +72,27 @@ public final class ArrayDistinctFunction
+ 
+     public static Block distinct(Type type, Block array)
+     {
+-        if (array.getPositionCount() == 0) {
++        int positionCount = array.getPositionCount();
++        if (positionCount == 0) {
+             return array;
+         }
++        if (positionCount == 1) {
++            return array;
++        }
++        if (positionCount == 2) {
++            // Fast path for two elements
++            boolean equal = type.equalTo(array, 0, array, 1);
++            if (equal) {
++                // Return array with only the first element
++                BlockBuilder blockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), 1);
++                type.appendTo(array, 0, blockBuilder);
++                return blockBuilder.build();
++            }
++            else {
++                // Elements are distinct, return original array
++                return array;
++            }
++        }
+ 
+         TypedSet typedSet = new TypedSet(type, array.getPositionCount());
+         BlockBuilder distinctElementBlockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), array.getPositionCount());

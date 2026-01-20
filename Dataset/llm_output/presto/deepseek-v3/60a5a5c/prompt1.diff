@@ -1,0 +1,95 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java b/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java
+index 74b77228f0..114647f6b7 100644
+--- a/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java
++++ b/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java
+@@ -79,9 +79,8 @@ public class PagesSerde
+             slice = Slices.wrappedBuffer(spillCipher.get().encrypt(slice.toByteBuffer()));
+             markers = ENCRYPTED.set(markers);
+         }
+-        else {
+-            //  Encryption disabled, slice data is likely much smaller than its backing buffer
+-            //  either because of compression or dynamic sizing of the initial output slice
++        else if (COMPRESSED.isSet(markers)) {
++            // Only need to copy if compressed, otherwise the slice already references the exact data
+             slice = Slices.copyOf(slice);
+         }
+ 
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java
+index d3b9621b8e..f6b77fc4e0 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java
+@@ -348,11 +348,11 @@ public class PartitionedOutputOperator
+ 
+         public long getSizeInBytes()
+         {
+-            // We use a foreach loop instead of streams
+-            // as it has much better performance.
++            // Use a local variable and loop with index for better performance
+             long sizeInBytes = 0;
+-            for (PageBuilder pageBuilder : pageBuilders) {
+-                sizeInBytes += pageBuilder.getSizeInBytes();
++            PageBuilder[] builders = this.pageBuilders;
++            for (int i = 0; i < builders.length; i++) {
++                sizeInBytes += builders[i].getSizeInBytes();
+             }
+             return sizeInBytes;
+         }
+@@ -363,8 +363,9 @@ public class PartitionedOutputOperator
+         public long getRetainedSizeInBytes()
+         {
+             long sizeInBytes = 0;
+-            for (PageBuilder pageBuilder : pageBuilders) {
+-                sizeInBytes += pageBuilder.getRetainedSizeInBytes();
++            PageBuilder[] builders = this.pageBuilders;
++            for (int i = 0; i < builders.length; i++) {
++                sizeInBytes += builders[i].getRetainedSizeInBytes();
+             }
+             return sizeInBytes;
+         }
+@@ -379,18 +380,25 @@ public class PartitionedOutputOperator
+             requireNonNull(page, "page is null");
+ 
+             Page partitionFunctionArgs = getPartitionFunctionArguments(page);
+-            for (int position = 0; position < page.getPositionCount(); position++) {
++            int positionCount = page.getPositionCount();
++            PageBuilder[] builders = this.pageBuilders;
++            int builderCount = builders.length;
++            
++            // Cache null channel check if present
++            Block nullBlock = nullChannel.isPresent() ? page.getBlock(nullChannel.getAsInt()) : null;
++            
++            for (int position = 0; position < positionCount; position++) {
+                 boolean shouldReplicate = (replicatesAnyRow && !hasAnyRowBeenReplicated) ||
+-                        nullChannel.isPresent() && page.getBlock(nullChannel.getAsInt()).isNull(position);
++                        (nullBlock != null && nullBlock.isNull(position));
+                 if (shouldReplicate) {
+-                    for (PageBuilder pageBuilder : pageBuilders) {
+-                        appendRow(pageBuilder, page, position);
++                    for (int i = 0; i < builderCount; i++) {
++                        appendRow(builders[i], page, position);
+                     }
+                     hasAnyRowBeenReplicated = true;
+                 }
+                 else {
+                     int partition = partitionFunction.getPartition(partitionFunctionArgs, position);
+-                    appendRow(pageBuilders[partition], page, position);
++                    appendRow(builders[partition], page, position);
+                 }
+             }
+             flush(false);
+@@ -415,9 +423,12 @@ public class PartitionedOutputOperator
+         {
+             pageBuilder.declarePosition();
+ 
+-            for (int channel = 0; channel < sourceTypes.size(); channel++) {
+-                Type type = sourceTypes.get(channel);
+-                type.appendTo(page.getBlock(channel), position, pageBuilder.getBlockBuilder(channel));
++            // Cache sourceTypes for better performance
++            List<Type> types = this.sourceTypes;
++            int channelCount = types.size();
++            
++            for (int channel = 0; channel < channelCount; channel++) {
++                types.get(channel).appendTo(page.getBlock(channel), position, pageBuilder.getBlockBuilder(channel));
+             }
+         }
+ 
