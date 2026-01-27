@@ -1,0 +1,140 @@
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/RunContainer.java b/RoaringBitmap/src/main/java/org/roaringbitmap/RunContainer.java
+index dc605afc..2473039b 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/RunContainer.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/RunContainer.java
+@@ -30,12 +30,13 @@ public final class RunContainer extends Container implements Cloneable {
+       final int end, final char k) {
+     int low = begin;
+     int high = end - 1;
++    int kint = (int) k;
+     while (low <= high) {
+       final int middleIndex = (low + high) >>> 1;
+       final int middleValue = (array[2 * middleIndex]);
+-      if (middleValue < (int) (k)) {
++      if (middleValue < kint) {
+         low = middleIndex + 1;
+-      } else if (middleValue > (int) (k)) {
++      } else if (middleValue > kint) {
+         high = middleIndex - 1;
+       } else {
+         return middleIndex;
+@@ -49,13 +50,14 @@ public final class RunContainer extends Container implements Cloneable {
+       final int end, final char k) {
+     int low = begin;
+     int high = end - 1;
++    int kint = (int) k;
+     // 16 in the next line matches the size of a cache line
+     while (low + 16 <= high) {
+       final int middleIndex = (low + high) >>> 1;
+       final int middleValue = (array[2 * middleIndex]);
+-      if (middleValue < (int) (k)) {
++      if (middleValue < kint) {
+         low = middleIndex + 1;
+-      } else if (middleValue > (int) (k)) {
++      } else if (middleValue > kint) {
+         high = middleIndex - 1;
+       } else {
+         return middleIndex;
+@@ -63,14 +65,16 @@ public final class RunContainer extends Container implements Cloneable {
+     }
+     // we finish the job with a sequential search
+     int x = low;
+-    for (; x <= high; ++x) {
++    int limit = high;
++    while (x <= limit) {
+       final int val = (array[2 * x]);
+-      if (val >= (int) (k)) {
+-        if (val == (int) (k)) {
++      if (val >= kint) {
++        if (val == kint) {
+           return x;
+         }
+         break;
+       }
++      x++;
+     }
+     return -(x + 1);
+   }
+@@ -309,11 +313,13 @@ public final class RunContainer extends Container implements Cloneable {
+     }
+     int rlepos = 0;
+     int arraypos = 0;
++    final char[] xcontent = x.content;
++    final int xcardinality = x.cardinality;
+ 
+     int rleval = (this.getValue(rlepos));
+     int rlelength = (this.getLength(rlepos));
+-    while (arraypos < x.cardinality) {
+-      int arrayval = (x.content[arraypos]);
++    while (arraypos < xcardinality) {
++      int arrayval = (xcontent[arraypos]);
+       while (rleval + rlelength < arrayval) {// this will frequently be false
+         ++rlepos;
+         if (rlepos == this.nbrruns) {
+@@ -323,7 +329,7 @@ public final class RunContainer extends Container implements Cloneable {
+         rlelength = (this.getLength(rlepos));
+       }
+       if (rleval > arrayval) {
+-        arraypos = Util.advanceUntil(x.content, arraypos, x.cardinality, (char)rleval);
++        arraypos = Util.advanceUntil(xcontent, arraypos, xcardinality, (char)rleval);
+       } else {
+         ac.content[ac.cardinality] = (char) arrayval;
+         ac.cardinality++;
+@@ -458,15 +464,18 @@ public final class RunContainer extends Container implements Cloneable {
+   @Override
+   public int andCardinality(ArrayContainer x) {
+     if (this.nbrruns == 0) {
+-      return x.cardinality;
++      return 0;
+     }
+     int rlepos = 0;
+     int arraypos = 0;
+     int andCardinality = 0;
++    final char[] xcontent = x.content;
++    final int xcardinality = x.cardinality;
++    
+     int rleval = (this.getValue(rlepos));
+     int rlelength = (this.getLength(rlepos));
+-    while (arraypos < x.cardinality) {
+-      int arrayval = (x.content[arraypos]);
++    while (arraypos < xcardinality) {
++      int arrayval = (xcontent[arraypos]);
+       while (rleval + rlelength < arrayval) {// this will frequently be false
+         ++rlepos;
+         if (rlepos == this.nbrruns) {
+@@ -476,7 +485,7 @@ public final class RunContainer extends Container implements Cloneable {
+         rlelength = (this.getLength(rlepos));
+       }
+       if (rleval > arrayval) {
+-        arraypos = Util.advanceUntil(x.content, arraypos, x.cardinality, this.getValue(rlepos));
++        arraypos = Util.advanceUntil(xcontent, arraypos, xcardinality, this.getValue(rlepos));
+       } else {
+         andCardinality++;
+         arraypos++;
+@@ -1008,7 +1017,7 @@ public final class RunContainer extends Container implements Cloneable {
+   public int getCardinality() {
+     int sum = nbrruns;// lengths are returned -1
+     for (int k = 0; k < nbrruns; ++k) {
+-      sum = sum + (getLength(k))/* + 1 */;
++      sum += (valueslength[2 * k + 1]);
+     }
+     return sum;
+   }
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MappeableRunContainer.java b/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MappeableRunContainer.java
+index 28c87f31..733e0d76 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MappeableRunContainer.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MappeableRunContainer.java
+@@ -917,11 +917,11 @@ public final class MappeableRunContainer extends MappeableContainer implements C
+     if (isArrayBacked()) {
+       char[] vl = valueslength.array();
+       for (int k = 0; k < nbrruns; ++k) {
+-        sum = sum + (vl[2 * k + 1])/* + 1 */;
++        sum += vl[2 * k + 1];
+       }
+     } else {
+       for (int k = 0; k < nbrruns; ++k) {
+-        sum = sum + (getLength(k))/* + 1 */;
++        sum += valueslength.get(2 * k + 1);
+       }
+     }
+     return sum;
