@@ -1,0 +1,16 @@
+I’ve hoisted the `presentStream`, `dataStream`, and the arrays into local variables in `readNoFilter` to reduce repeated field dereferences inside the hot loop, which should improve throughput without altering behavior.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java",
+    "search": "private int readNoFilter(int[] positions, int positionCount)\n            throws IOException\n    {\n        // filter == null implies outputRequired == true\n        int streamPosition = 0;",
+    "replace": "private int readNoFilter(int[] positions, int positionCount)\n            throws IOException\n    {\n        // filter == null implies outputRequired == true\n        // hoist streams and buffers into locals for performance\n        BooleanInputStream present = presentStream;\n        BooleanInputStream data = dataStream;\n        byte[] valuesLocal = values;\n        boolean[] nullsLocal = nulls;\n        int streamPosition = 0;"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java",
+    "search": "if (presentStream != null && !presentStream.nextBit()) {\n                nulls[i] = true;\n            }\n            else {\n                values[i] = (byte) (dataStream.nextBit() ? 1 : 0);\n                if (presentStream != null) {\n                    nulls[i] = false;\n                }\n            }",
+    "replace": "if (present != null && !present.nextBit()) {\n                nullsLocal[i] = true;\n            }\n            else {\n                valuesLocal[i] = (byte) (data.nextBit() ? 1 : 0);\n                if (present != null) {\n                    nullsLocal[i] = false;\n                }\n            }"
+  }
+]
+```

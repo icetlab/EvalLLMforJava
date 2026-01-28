@@ -1,0 +1,52 @@
+diff --git a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+index 58860be864..869a6e2929 100644
+--- a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
++++ b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+@@ -63,7 +63,7 @@ object AclAuthorizer {
+   }
+ 
+   class AclSets(sets: Set[AclEntry]*) {
+-    def find(p: AclEntry => Boolean): Option[AclEntry] = sets.flatMap(_.find(p)).headOption
++    def find(p: AclEntry => Boolean): Option[AclEntry] = sets.view.flatMap(_.find(p)).headOption
+     def isEmpty: Boolean = !sets.exists(_.nonEmpty)
+   }
+ 
+@@ -324,7 +324,7 @@ class AclAuthorizer extends Authorizer with Logging {
+       //we allow an operation if no acls are found and user has configured to allow all users
+       //when no acls are found or if no deny acls are found and at least one allow acls matches.
+       val acls = matchingAcls(resource.resourceType, resource.name)
+-      isEmptyAclAndAuthorized(acls) || (!denyAclExists(acls) && allowAclExists(acls))
++      isEmptyAclAndAuthorized(acls) || (allowAclExists(acls) && !denyAclExists(acls))
+     }
+ 
+     // Evaluate if operation is allowed
+@@ -352,15 +352,21 @@ class AclAuthorizer extends Authorizer with Logging {
+       .map(_.acls)
+       .getOrElse(Set.empty)
+ 
+-    val prefixed = aclCacheSnapshot
+-      .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))
+-      .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))
+-      .filterKeys(resource => resourceName.startsWith(resource.name))
+-      .values
+-      .flatMap { _.acls }
+-      .toSet
++    val prefixed = {
++      val builder = Set.newBuilder[AclEntry]
++      var i = 1
++      while (i <= resourceName.length) {
++        val prefix = resourceName.substring(0, i)
++        val resourcePattern = new ResourcePattern(resourceType, prefix, PatternType.PREFIXED)
++        aclCacheSnapshot.get(resourcePattern).foreach { versionedAcls =>
++          builder ++= versionedAcls.acls
++        }
++        i += 1
++      }
++      builder.result()
++    }
+ 
+-    new AclSets(prefixed, wildcard, literal)
++    new AclSets(literal, prefixed, wildcard)
+   }
+ 
+   private def matchingAclExists(operation: AclOperation,

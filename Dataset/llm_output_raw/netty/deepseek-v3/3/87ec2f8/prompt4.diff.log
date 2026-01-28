@@ -1,0 +1,217 @@
+The performance issue indicates that the current `decodeString` method in `ByteBufUtil` does unnecessary memory copies and could be optimized by using `new String(...)` directly when possible. Looking at the `decodeString` method, it currently uses a `CharsetDecoder` and a thread-local `CharBuffer`, which involves extra copying and allocation. For certain cases (like when the buffer is backed by a single array and the charset is UTF-8 or US-ASCII), we can use `new String(byte[], Charset)` which is highly optimized in the JVM.
+
+Specifically, we can optimize:
+1. When the buffer has a single backing array (`hasArray()` returns true) and the charset is UTF-8 or US-ASCII, we can use `new String(array, offset, length, charset)`.
+2. For direct buffers or composite buffers, we might still need the existing decoder path.
+
+But note: the `decodeString` method is used for general charset decoding. We should also consider other charsets? The benchmark focuses on US-ASCII and UTF-8. The existing method already has a fast path for single NIO buffer? Actually, it uses `src.nioBufferCount() == 1` to get a single `ByteBuffer` and then decodes. However, creating a `String` from a `ByteBuffer` still involves copying. We can improve by using `CharsetDecoder.decode` with a `CharBuffer` but that's what we already do.
+
+Wait: the issue says "We should just use new String(...) as it has a lot of optimizations". Indeed, for heap buffers with array, we can avoid the `CharsetDecoder` overhead.
+
+Let's examine the current `decodeString` method:
+
+```java
+static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {
+    if (len == 0) {
+        return StringUtil.EMPTY_STRING;
+    }
+    final CharsetDecoder decoder = CharsetUtil.decoder(charset);
+    final int maxLength = (int) ((double) len * decoder.maxCharsPerByte());
+    CharBuffer dst = CHAR_BUFFERS.get();
+    if (dst.length() < maxLength) {
+        dst = CharBuffer.allocate(maxLength);
+        if (maxLength <= MAX_CHAR_BUFFER_SIZE) {
+            CHAR_BUFFERS.set(dst);
+        }
+    } else {
+        dst.clear();
+    }
+    if (src.nioBufferCount() == 1) {
+        decodeString(decoder, src.nioBuffer(readerIndex, len), dst);
+    } else {
+        // We use a heap buffer as CharsetDecoder is most likely able to use a fast-path if src and dst buffers
+        // are both backed by a byte array.
+        ByteBuf buffer = src.alloc().heapBuffer(len);
+        try {
+            buffer.writeBytes(src, readerIndex, len);
+            // Use internalNioBuffer(...) to reduce object creation.
+            decodeString(decoder, buffer.internalNioBuffer(buffer.readerIndex(), len), dst);
+        } finally {
+            // Release the temporary buffer again.
+            buffer.release();
+        }
+    }
+    return dst.flip().toString();
+}
+```
+
+We can add a fast path for when `src.hasArray()` and charset is UTF-8 or US-ASCII (or maybe any charset that has a fast path in `String` constructor). However, note that `String` constructor uses `StringCoding.decode` which might also use `CharsetDecoder`. But it might have internal optimizations.
+
+But the issue says "a lot of unnecessary memory copies". The current method already creates a temporary heap buffer for non-single NIO buffer case. That's a copy. Also, the `CharBuffer` is a temporary copy. Then `dst.flip().toString()` creates another copy (since `String` copies the char array). Actually, `String` constructor from `CharBuffer` might not copy if the `CharBuffer` is backed by an array and we use `CharBuffer.array()`. But we are using `CharBuffer` from thread-local, which is allocated by us, so we could use `new String(dst.array(), 0, dst.position())`? But we need to be careful with `flip()` and `position`.
+
+Alternatively, we can use `decoder.decode` directly into a `char[]` and then create a `String`. But the current method already does that via `CharBuffer`.
+
+Let's think: the fastest would be to use `new String(byte[], Charset)` when we have a byte array. That avoids the `CharBuffer` allocation and the extra copy from `CharBuffer` to `String` internal char array. So for heap buffers, we can do:
+
+```java
+if (src.hasArray()) {
+    return new String(src.array(), src.arrayOffset() + readerIndex, len, charset);
+}
+```
+
+But we must ensure that the charset is supported and that the byte array is not modified concurrently. That should be fine.
+
+However, note that the `decodeString` method is `static` and used in various places. We must ensure that the behavior is exactly the same (including error handling, malformed input, etc.). The `String` constructor uses the charset's default replacement policy? The current method uses `CharsetUtil.decoder(charset)` which uses the default error actions (REPORT? Actually `CharsetUtil.decoder` uses the default error actions, which are REPLACE? Let's check `CharsetUtil`. In `CharsetUtil`, `decoder(Charset)` returns `charset.newDecoder()`, which by default uses `CodingErrorAction.REPLACE` for malformed input and unmappable characters. The `String` constructor also uses REPLACE? According to Java docs, `String(byte[], Charset)` uses the charset's default replacement byte sequence. So it should be equivalent.
+
+Thus, we can add a fast path for `src.hasArray()`. But we also need to consider that the buffer might be read-only or have a different order? That shouldn't matter for the array.
+
+Also, we should consider the case when `len == 0` already handled.
+
+Now, what about direct buffers? They don't have an array, so we cannot avoid the copy. But we can still try to use `new String` by copying to a temporary byte array? That would be an extra copy, but the current method already copies to a heap buffer in the else branch. Actually, the current method for `src.nioBufferCount() == 1` does not copy the bytes; it uses the direct `ByteBuffer`. That might be faster than copying to a byte array. So we should keep that path.
+
+But the issue says "a lot of unnecessary memory copies". The current method for composite buffers copies to a temporary heap buffer. That's necessary. For direct buffers with single NIO buffer, it does not copy the bytes, but it does copy to a `CharBuffer`. That's unavoidable.
+
+Maybe we can also use `new String` with a `ByteBuffer`? There is no `String` constructor that takes a `ByteBuffer`. So we have to stick with the decoder.
+
+Thus, the optimization is primarily for heap buffers with backing array.
+
+Let's implement the change in `ByteBufUtil.java`. We'll modify the `decodeString` method to add a fast path for `src.hasArray()`.
+
+But note: the method `decodeString` is package-private (`static` method in same package). We can change it.
+
+We'll also need to consider that the charset might be one that has a fast path in `String` constructor (like UTF-8, US-ASCII, ISO-8859-1). But we can just let the `String` constructor handle it.
+
+Now, we must ensure that the unit tests still pass. The tests include `testDecodeUsAscii` and `testDecodeUtf8` which use heap buffers (Unpooled.copiedBuffer). Those should still pass.
+
+We also need to consider the `toString` method in `ByteBuf` that uses `ByteBufUtil.decodeString`. That will benefit.
+
+Let's write the change.
+
+We'll replace the current `decodeString` method with a version that checks for `hasArray()`.
+
+But we must be careful: the buffer might be a sliced buffer, so `arrayOffset()` is relative to the backing array. We need to add `readerIndex` to the offset.
+
+Also, we should keep the existing `len == 0` check.
+
+Now, we also need to consider that the buffer might be a read-only buffer that still has an array? That's fine.
+
+Let's craft the change.
+
+We'll also need to import `java.nio.charset.Charset` (already there).
+
+Now, we'll output the JSON array with the change.
+
+But note: the issue says "Our current implementation that is used for toString(Charset) operations on AbstractByteBuf implementation is quite slow". Actually, `AbstractByteBuf.toString(Charset)` calls `ByteBufUtil.decodeString`. So our change will affect that.
+
+Let's produce the change.
+
+We'll also consider that the fast path might not be correct for all charsets? The `String` constructor should handle all charsets. So we can use it for any charset when there's an array.
+
+But we must ensure that the behavior is identical in terms of error handling. The `String` constructor uses `CharsetDecoder` with default error actions, which is the same as `CharsetUtil.decoder(charset)` (since `decoder` method returns a new decoder with default actions). So it should be identical.
+
+Thus, we can safely use the fast path.
+
+Now, we need to update the method accordingly.
+
+We'll also note that the existing method uses a thread-local `CharBuffer` to avoid allocations. Our fast path will allocate a new `String` directly, which internally allocates a `char[]`. That's fine because we need the `String` anyway.
+
+Let's write the new method:
+
+```java
+static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {
+    if (len == 0) {
+        return StringUtil.EMPTY_STRING;
+    }
+    if (src.hasArray()) {
+        // Use the fast path via String constructor which may use intrinsics.
+        return new String(src.array(), src.arrayOffset() + readerIndex, len, charset);
+    }
+    final CharsetDecoder decoder = CharsetUtil.decoder(charset);
+    final int maxLength = (int) ((double) len * decoder.maxCharsPerByte());
+    CharBuffer dst = CHAR_BUFFERS.get();
+    if (dst.length() < maxLength) {
+        dst = CharBuffer.allocate(maxLength);
+        if (maxLength <= MAX_CHAR_BUFFER_SIZE) {
+            CHAR_BUFFERS.set(dst);
+        }
+    } else {
+        dst.clear();
+    }
+    if (src.nioBufferCount() == 1) {
+        decodeString(decoder, src.nioBuffer(readerIndex, len), dst);
+    } else {
+        // We use a heap buffer as CharsetDecoder is most likely able to use a fast-path if src and dst buffers
+        // are both backed by a byte array.
+        ByteBuf buffer = src.alloc().heapBuffer(len);
+        try {
+            buffer.writeBytes(src, readerIndex, len);
+            // Use internalNioBuffer(...) to reduce object creation.
+            decodeString(decoder, buffer.internalNioBuffer(buffer.readerIndex(), len), dst);
+        } finally {
+            // Release the temporary buffer again.
+            buffer.release();
+        }
+    }
+    return dst.flip().toString();
+}
+```
+
+But wait: what about the case when `src.hasArray()` but the array is read-only? The `String` constructor does not modify the array, so it's fine.
+
+Now, we must also consider that the buffer might be a derived buffer (like a slice) that has a different `readerIndex` than 0. The `arrayOffset()` already accounts for the start of the buffer in the backing array. We add `readerIndex` to get the correct offset.
+
+Now, we need to ensure that the `readerIndex` is within bounds. The method is called with valid indices.
+
+Now, we should also consider that the buffer might be a composite buffer that has a single backing array? No, composite buffers do not have an array. So they will fall back.
+
+Now, we need to test this change. Since we cannot run the tests, we rely on the existing unit tests.
+
+We'll output the change as a JSON array.
+
+But note: the method `decodeString` is called from `public static String decodeString(ByteBuf src, Charset charset)`? Actually, there is no such method. There is only the package-private static method we are modifying.
+
+Now, we also need to consider the `decodeString` method that takes a `ByteBuf` and `Charset`? Actually, there is a `decodeString` method in `ByteBufUtil`? Looking at the source file, there is no public `decodeString`. Wait, there is a `decodeString` method in the same file? I see only the static package-private method. So we are safe.
+
+Now, we must also consider that the `decodeString` method is used by `ByteBuf.toString(Charset)`. That's fine.
+
+Now, we should also consider that the `decodeString` method might be used for other charsets that have different error handling if we change the decoder? But we are using the same charset, and the `String` constructor uses the charset's default decoder, which should be the same.
+
+Thus, we will make the change.
+
+Now, we need to output the JSON array with the search and replace.
+
+We'll include the entire method block.
+
+But note: the method is long, so we need to include enough context to uniquely identify it.
+
+We'll search from "static String decodeString(" to the closing brace.
+
+Let's extract the original method from the source.
+
+We'll write the search block as the original method and replace with the new method.
+
+Now, we need to be careful with formatting. We'll keep the same indentation.
+
+Let's produce the JSON.
+
+```json
+[
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "    static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {\n        if (len == 0) {\n            return StringUtil.EMPTY_STRING;\n        }\n        final CharsetDecoder decoder = CharsetUtil.decoder(charset);\n        final int maxLength = (int) ((double) len * decoder.maxCharsPerByte());\n        CharBuffer dst = CHAR_BUFFERS.get();\n        if (dst.length() < maxLength) {\n            dst = CharBuffer.allocate(maxLength);\n            if (maxLength <= MAX_CHAR_BUFFER_SIZE) {\n                CHAR_BUFFERS.set(dst);\n            }\n        } else {\n            dst.clear();\n        }\n        if (src.nioBufferCount() == 1) {\n            decodeString(decoder, src.nioBuffer(readerIndex, len), dst);\n        } else {\n            // We use a heap buffer as CharsetDecoder is most likely able to use a fast-path if src and dst buffers\n            // are both backed by a byte array.\n            ByteBuf buffer = src.alloc().heapBuffer(len);\n            try {\n                buffer.writeBytes(src, readerIndex, len);\n                // Use internalNioBuffer(...) to reduce object creation.\n                decodeString(decoder, buffer.internalNioBuffer(buffer.readerIndex(), len), dst);\n            } finally {\n                // Release the temporary buffer again.\n                buffer.release();\n            }\n        }\n        return dst.flip().toString();\n    }",
+    "replace": "    static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {\n        if (len == 0) {\n            return StringUtil.EMPTY_STRING;\n        }\n        if (src.hasArray()) {\n            // Use the fast path via String constructor which may use intrinsics.\n            return new String(src.array(), src.arrayOffset() + readerIndex, len, charset);\n        }\n        final CharsetDecoder decoder = CharsetUtil.decoder(charset);\n        final int maxLength = (int) ((double) len * decoder.maxCharsPerByte());\n        CharBuffer dst = CHAR_BUFFERS.get();\n        if (dst.length() < maxLength) {\n            dst = CharBuffer.allocate(maxLength);\n            if (maxLength <= MAX_CHAR_BUFFER_SIZE) {\n                CHAR_BUFFERS.set(dst);\n            }\n        } else {\n            dst.clear();\n        }\n        if (src.nioBufferCount() == 1) {\n            decodeString(decoder, src.nioBuffer(readerIndex, len), dst);\n        } else {\n            // We use a heap buffer as CharsetDecoder is most likely able to use a fast-path if src and dst buffers\n            // are both backed by a byte array.\n            ByteBuf buffer = src.alloc().heapBuffer(len);\n            try {\n                buffer.writeBytes(src, readerIndex, len);\n                // Use internalNioBuffer(...) to reduce object creation.\n                decodeString(decoder, buffer.internalNioBuffer(buffer.readerIndex(), len), dst);\n            } finally {\n                // Release the temporary buffer again.\n                buffer.release();\n            }\n        }\n        return dst.flip().toString();\n    }"
+  }
+]
+```
+
+But note: there is also a `decodeString` method that takes a `CharsetDecoder` and `ByteBuffer` and `CharBuffer`. That's a different method. We are only changing the static method that takes `ByteBuf`, `int`, `int`, `Charset`.
+
+Now, we should also consider that the `decodeString` method might be called from other places within the package. The change should be safe.
+
+Now, we need to provide an explanation.
+
+Explanation: The current `decodeString` method performs unnecessary memory copies for heap buffers with a backing array. By using `new String(byte[], Charset)` directly, we leverage JVM optimizations and avoid the overhead of `CharsetDecoder` and temporary `CharBuffer` allocations. This change adds a fast path for buffers that have an array (i.e., heap buffers) and falls back to the existing logic for direct and composite buffers.
+
+Now, we output the JSON.
+
+But wait: we need to ensure that the `String` constructor does not throw any exceptions that the previous method didn't. The previous method could throw `CharacterCodingException` wrapped in `IllegalStateException`. The `String` constructor throws `CharacterCodingException`? Actually, `String` constructor can throw `CharacterCodingException`? According to the Javadoc, `String(byte

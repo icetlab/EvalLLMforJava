@@ -1,0 +1,17 @@
+My analysis of the `TDigest` implementation indicates a significant performance bottleneck in the `merge(TDigest other)` method. The current implementation creates an `ArrayList` and populates it with new `Centroid` objects for every centroid in the `other` digest. This leads to excessive object allocation and garbage collection overhead, especially when merging digests with many centroids.
+
+To address this, I will refactor the `merge` method to operate on primitive arrays directly, avoiding the creation of intermediate `Centroid` objects and the `ArrayList`. The new implementation will:
+1.  Introduce a private helper method, `shuffle(int[] array, Random random)`, to perform an in-place Fisher-Yates shuffle on an integer array. This is necessary to replicate the shuffling behavior of the original implementation, which is important for maintaining the statistical properties of the t-digest by avoiding order-dependent biases during merging.
+2.  Replace the body of the `merge` method. The new version will first compress the `other` digest, then create an array of indices corresponding to its centroids. This index array is shuffled using the new helper method. Finally, it iterates through the shuffled indices to add the centroids from the `other` digest to the current one by calling the `add` method with values read directly from `other`'s internal arrays.
+
+This change preserves the original merging logic, including the crucial shuffling step, while drastically reducing object allocation, which will improve both speed and memory efficiency.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "public void merge(TDigest other)\n    {\n        checkArgument(other != null, \"Cannot merge with a null t-digest\");\n        checkArgument(this.publicCompression == other.getCompressionFactor(), \"TDigests must have the same compression, found (%s, %s)\", this.publicCompression,\n                other.getCompressionFactor());\n        List<Centroid> tmp = new ArrayList<>();\n        for (Centroid centroid : other.centroids()) {\n            tmp.add(centroid);\n        }\n\n        shuffle(tmp, gen);\n        for (Centroid centroid : tmp) {\n            add(centroid.getMean(), centroid.getWeight());\n        }\n    }",
+    "replace": "    private static void shuffle(int[] array, Random random)\n    {\n        for (int i = array.length - 1; i > 0; i--) {\n            int index = random.nextInt(i + 1);\n            // Simple swap\n            int a = array[index];\n            array[index] = array[i];\n            array[i] = a;\n        }\n    }\n\n    public void merge(TDigest other)\n    {\n        checkArgument(other != null, \"Cannot merge with a null t-digest\");\n        checkArgument(this.publicCompression == other.getCompressionFactor(), \"TDigests must have the same compression, found (%s, %s)\", this.publicCompression,\n                other.getCompressionFactor());\n\n        other.compress();\n        if (other.activeCentroids == 0) {\n            return;\n        }\n\n        int[] indices = new int[other.activeCentroids];\n        for (int i = 0; i < other.activeCentroids; i++) {\n            indices[i] = i;\n        }\n        shuffle(indices, gen);\n\n        for (int index : indices) {\n            add(other.mean[index], (long) other.weight[index]);\n        }\n    }"
+  }
+]
+```

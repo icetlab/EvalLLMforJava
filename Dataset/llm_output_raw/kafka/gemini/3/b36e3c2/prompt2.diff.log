@@ -1,0 +1,18 @@
+My improvement strategy is to eliminate tuple allocations in hot paths within the `LogValidator`. The use of `zipWithIndex` on collections creates a new `Tuple2` for each element, which can lead to significant garbage collection pressure when processing a large number of records.
+
+I will replace the `for` loops that use `zipWithIndex` with `while` loops that iterate using a `java.util.Iterator` and a manually incremented index. This avoids the overhead of tuple allocation and should improve performance, especially in scenarios with many small records.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogValidator.scala",
+    "search": "      val recordErrors = new ArrayBuffer[ApiRecordError](0)\n      for ((record, batchIndex) <- batch.asScala.view.zipWithIndex) {\n        validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,\n          timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)\n        // we fail the batch if any record fails, so we stop appending if any record fails\n        if (recordErrors.isEmpty)\n          builder.appendWithOffset(offsetCounter.getAndIncrement(), record)\n      }\n\n      processRecordErrors(recordErrors)",
+    "replace": "      val recordErrors = new ArrayBuffer[ApiRecordError](0)\n      val recordIterator = batch.iterator\n      var batchIndex = 0\n      while (recordIterator.hasNext) {\n        val record = recordIterator.next()\n        validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,\n          timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)\n        // we fail the batch if any record fails, so we stop appending if any record fails\n        if (recordErrors.isEmpty)\n          builder.appendWithOffset(offsetCounter.getAndIncrement(), record)\n        batchIndex += 1\n      }\n\n      processRecordErrors(recordErrors)"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogValidator.scala",
+    "search": "      val recordErrors = new ArrayBuffer[ApiRecordError](0)\n      for ((record, batchIndex) <- batch.asScala.view.zipWithIndex) {\n        validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,\n          timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)\n\n        val offset = offsetCounter.getAndIncrement()\n        if (batch.magic > RecordBatch.MAGIC_VALUE_V0 && record.timestamp > maxBatchTimestamp) {\n          maxBatchTimestamp = record.timestamp\n          offsetOfMaxBatchTimestamp = offset\n        }\n      }\n\n      processRecordErrors(recordErrors)",
+    "replace": "      val recordErrors = new ArrayBuffer[ApiRecordError](0)\n      val recordIterator = batch.iterator\n      var batchIndex = 0\n      while (recordIterator.hasNext) {\n        val record = recordIterator.next()\n        validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,\n          timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)\n\n        val offset = offsetCounter.getAndIncrement()\n        if (batch.magic > RecordBatch.MAGIC_VALUE_V0 && record.timestamp > maxBatchTimestamp) {\n          maxBatchTimestamp = record.timestamp\n          offsetOfMaxBatchTimestamp = offset\n        }\n        batchIndex += 1\n      }\n\n      processRecordErrors(recordErrors)"
+  }
+]
+```

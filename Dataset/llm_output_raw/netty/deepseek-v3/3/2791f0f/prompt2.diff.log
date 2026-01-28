@@ -1,0 +1,77 @@
+Explanation:
+The performance issue is that a static AtomicLong (`nextTaskId`) is used to allocate a unique ID for every scheduled task across all event loops. This can cause contention when many tasks are scheduled concurrently from different threads. The fix is to replace the static AtomicLong with a per-instance counter in `ScheduledFutureTask`. Since each event loop has its own queue and tasks are only compared within the same queue, we can use a local counter per `AbstractScheduledEventExecutor` (or per task queue) to generate IDs without global contention. However, note that `ScheduledFutureTask` is a static inner class and the ID is used for tie-breaking in `compareTo` when deadlines are equal. The tie-breaking only needs to be consistent within the same queue, not globally. Therefore, we can move the ID counter to `AbstractScheduledEventExecutor` and pass it to `ScheduledFutureTask` via constructor.
+
+We'll make the following changes:
+1. In `AbstractScheduledEventExecutor`, add a private `nextTaskId` field (non-volatile long) and a method to get the next ID.
+2. Modify the `schedule` methods to pass the ID to `ScheduledFutureTask`.
+3. Update `ScheduledFutureTask` to remove the static `nextTaskId` and accept an ID via constructor.
+4. Adjust the constructors and factory methods accordingly.
+
+But note: `ScheduledFutureTask` has multiple constructors. We need to update all of them to accept an `id` parameter. Also, the `compareTo` method uses `id` for tie-breaking; we must ensure IDs are still unique within the same executor.
+
+Let's implement step by step.
+
+First, change `AbstractScheduledEventExecutor` to have a task ID counter and modify the schedule methods to generate IDs.
+
+Second, update `ScheduledFutureTask` to remove the static `nextTaskId` and take ID as a constructor parameter.
+
+We must also update the `toStringBuilder` method to still include the ID.
+
+Now, we need to ensure that the unit tests still pass. The tests do not depend on the ID generation mechanism, only on scheduling behavior, so they should remain valid.
+
+Let's produce the JSON changes.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "public abstract class AbstractScheduledEventExecutor extends AbstractEventExecutor {\n    private static final Comparator<ScheduledFutureTask<?>> SCHEDULED_FUTURE_TASK_COMPARATOR =\n            new Comparator<ScheduledFutureTask<?>>() {\n                @Override\n                public int compare(ScheduledFutureTask<?> o1, ScheduledFutureTask<?> o2) {\n                    return o1.compareTo(o2);\n                }\n            };\n\n    PriorityQueue<ScheduledFutureTask<?>> scheduledTaskQueue;",
+    "replace": "public abstract class AbstractScheduledEventExecutor extends AbstractEventExecutor {\n    private static final Comparator<ScheduledFutureTask<?>> SCHEDULED_FUTURE_TASK_COMPARATOR =\n            new Comparator<ScheduledFutureTask<?>>() {\n                @Override\n                public int compare(ScheduledFutureTask<?> o1, ScheduledFutureTask<?> o2) {\n                    return o1.compareTo(o2);\n                }\n            };\n\n    PriorityQueue<ScheduledFutureTask<?>> scheduledTaskQueue;\n    private long nextTaskId;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "    @Override\n    public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {\n        ObjectUtil.checkNotNull(command, \"command\");\n        ObjectUtil.checkNotNull(unit, \"unit\");\n        if (delay < 0) {\n            delay = 0;\n        }\n        validateScheduled0(delay, unit);\n\n        return schedule(new ScheduledFutureTask<Void>(\n                this, command, null, ScheduledFutureTask.deadlineNanos(unit.toNanos(delay))));\n    }",
+    "replace": "    @Override\n    public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {\n        ObjectUtil.checkNotNull(command, \"command\");\n        ObjectUtil.checkNotNull(unit, \"unit\");\n        if (delay < 0) {\n            delay = 0;\n        }\n        validateScheduled0(delay, unit);\n\n        return schedule(new ScheduledFutureTask<Void>(\n                this, nextTaskId++, command, null, ScheduledFutureTask.deadlineNanos(unit.toNanos(delay))));\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "    @Override\n    public <V> ScheduledFuture<V> schedule(Callable<V> callable, long delay, TimeUnit unit) {\n        ObjectUtil.checkNotNull(callable, \"callable\");\n        ObjectUtil.checkNotNull(unit, \"unit\");\n        if (delay < 0) {\n            delay = 0;\n        }\n        validateScheduled0(delay, unit);\n\n        return schedule(new ScheduledFutureTask<V>(\n                this, callable, ScheduledFutureTask.deadlineNanos(unit.toNanos(delay))));\n    }",
+    "replace": "    @Override\n    public <V> ScheduledFuture<V> schedule(Callable<V> callable, long delay, TimeUnit unit) {\n        ObjectUtil.checkNotNull(callable, \"callable\");\n        ObjectUtil.checkNotNull(unit, \"unit\");\n        if (delay < 0) {\n            delay = 0;\n        }\n        validateScheduled0(delay, unit);\n\n        return schedule(new ScheduledFutureTask<V>(\n                this, nextTaskId++, callable, ScheduledFutureTask.deadlineNanos(unit.toNanos(delay))));\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "    @Override\n    public ScheduledFuture<?> scheduleAtFixedRate(Runnable command, long initialDelay, long period, TimeUnit unit) {\n        ObjectUtil.checkNotNull(command, \"command\");\n        ObjectUtil.checkNotNull(unit, \"unit\");\n        if (initialDelay < 0) {\n            throw new IllegalArgumentException(\n                    String.format(\"initialDelay: %d (expected: >= 0)\", initialDelay));\n        }\n        if (period <= 0) {\n            throw new IllegalArgumentException(\n                    String.format(\"period: %d (expected: > 0)\", period));\n        }\n        validateScheduled0(initialDelay, unit);\n        validateScheduled0(period, unit);\n\n        return schedule(new ScheduledFutureTask<Void>(\n                this, Executors.<Void>callable(command, null),\n                ScheduledFutureTask.deadlineNanos(unit.toNanos(initialDelay)), unit.toNanos(period)));\n    }",
+    "replace": "    @Override\n    public ScheduledFuture<?> scheduleAtFixedRate(Runnable command, long initialDelay, long period, TimeUnit unit) {\n        ObjectUtil.checkNotNull(command, \"command\");\n        ObjectUtil.checkNotNull(unit, \"unit\");\n        if (initialDelay < 0) {\n            throw new IllegalArgumentException(\n                    String.format(\"initialDelay: %d (expected: >= 0)\", initialDelay));\n        }\n        if (period <= 0) {\n            throw new IllegalArgumentException(\n                    String.format(\"period: %d (expected: > 0)\", period));\n        }\n        validateScheduled0(initialDelay, unit);\n        validateScheduled0(period, unit);\n\n        return schedule(new ScheduledFutureTask<Void>(\n                this, nextTaskId++, Executors.<Void>callable(command, null),\n                ScheduledFutureTask.deadlineNanos(unit.toNanos(initialDelay)), unit.toNanos(period)));\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "    @Override\n    public ScheduledFuture<?> scheduleWithFixedDelay(Runnable command, long initialDelay, long delay, TimeUnit unit) {\n        ObjectUtil.checkNotNull(command, \"command\");\n        ObjectUtil.checkNotNull(unit, \"unit\");\n        if (initialDelay < 0) {\n            throw new IllegalArgumentException(\n                    String.format(\"initialDelay: %d (expected: >= 0)\", initialDelay));\n        }\n        if (delay <= 0) {\n            throw new IllegalArgumentException(\n                    String.format(\"delay: %d (expected: > 0)\", delay));\n        }\n\n        validateScheduled0(initialDelay, unit);\n        validateScheduled0(delay, unit);\n\n        return schedule(new ScheduledFutureTask<Void>(\n                this, Executors.<Void>callable(command, null),\n                ScheduledFutureTask.deadlineNanos(unit.toNanos(initialDelay)), -unit.toNanos(delay)));\n    }",
+    "replace": "    @Override\n    public ScheduledFuture<?> scheduleWithFixedDelay(Runnable command, long initialDelay, long delay, TimeUnit unit) {\n        ObjectUtil.checkNotNull(command, \"command\");\n        ObjectUtil.checkNotNull(unit, \"unit\");\n        if (initialDelay < 0) {\n            throw new IllegalArgumentException(\n                    String.format(\"initialDelay: %d (expected: >= 0)\", initialDelay));\n        }\n        if (delay <= 0) {\n            throw new IllegalArgumentException(\n                    String.format(\"delay: %d (expected: > 0)\", delay));\n        }\n\n        validateScheduled0(initialDelay, unit);\n        validateScheduled0(delay, unit);\n\n        return schedule(new ScheduledFutureTask<Void>(\n                this, nextTaskId++, Executors.<Void>callable(command, null),\n                ScheduledFutureTask.deadlineNanos(unit.toNanos(initialDelay)), -unit.toNanos(delay)));\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    private static final AtomicLong nextTaskId = new AtomicLong();\n    private static final long START_TIME = System.nanoTime();",
+    "replace": "    private static final long START_TIME = System.nanoTime();"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    private final long id = nextTaskId.getAndIncrement();\n    private long deadlineNanos;",
+    "replace": "    private final long id;\n    private long deadlineNanos;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    ScheduledFutureTask(\n            AbstractScheduledEventExecutor executor,\n            Runnable runnable, V result, long nanoTime) {\n\n        this(executor, toCallable(runnable, result), nanoTime);\n    }",
+    "replace": "    ScheduledFutureTask(\n            AbstractScheduledEventExecutor executor,\n            long id, Runnable runnable, V result, long nanoTime) {\n\n        this(executor, id, toCallable(runnable, result), nanoTime);\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    ScheduledFutureTask(\n            AbstractScheduledEventExecutor executor,\n            Callable<V> callable, long nanoTime, long period) {\n\n        super(executor, callable);\n        if (period == 0) {\n            throw new IllegalArgumentException(\"period: 0 (expected: != 0)\");\n        }\n        deadlineNanos = nanoTime;\n        periodNanos = period;\n    }",
+    "replace": "    ScheduledFutureTask(\n            AbstractScheduledEventExecutor executor,\n            long id, Callable<V> callable, long nanoTime, long period) {\n\n        super(executor, callable);\n        if (period == 0) {\n            throw new IllegalArgumentException(\"period: 0 (expected: != 0)\");\n        }\n        this.id = id;\n        deadlineNanos = nanoTime;\n        periodNanos = period;\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    ScheduledFutureTask(\n            AbstractScheduledEventExecutor executor,\n            Callable<V> callable, long nanoTime) {\n\n        super(executor, callable);\n        deadlineNanos = nanoTime;\n        periodNanos = 0;\n    }",
+    "replace": "    ScheduledFutureTask(\n            AbstractScheduledEventExecutor executor,\n            long id, Callable<V> callable, long nanoTime) {\n\n        super(executor, callable);\n        this.id = id;\n        deadlineNanos = nanoTime;\n        periodNanos = 0;\n    }"
+  }
+]
+```

@@ -1,0 +1,54 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
+index 6813ba04fa..b8cafb3f69 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
+@@ -120,7 +120,7 @@ public class WindowOperator
+             requireNonNull(orderingCompiler, "orderingCompiler is null");
+             checkArgument(sortChannels.size() == sortOrder.size(), "Must have same number of sort channels as sort orders");
+             checkArgument(preSortedChannelPrefix <= sortChannels.size(), "Cannot have more pre-sorted channels than specified sorted channels");
+-            checkArgument(preSortedChannelPrefix == 0 || ImmutableSet.copyOf(preGroupedChannels).equals(ImmutableSet.copyOf(partitionChannels)), "preSortedChannelPrefix can only be greater than zero if all partition channels are pre-grouped");
++            checkArgument(preSortedChannelPrefix == 0 || preGroupedChannels.size() == partitionChannels.size(), "preSortedChannelPrefix can only be greater than zero if all partition channels are pre-grouped");
+ 
+             this.pagesIndexFactory = pagesIndexFactory;
+             this.operatorId = operatorId;
+@@ -232,7 +232,7 @@ public class WindowOperator
+         requireNonNull(spillerFactory, "spillerFactory is null");
+         checkArgument(sortChannels.size() == sortOrder.size(), "Must have same number of sort channels as sort orders");
+         checkArgument(preSortedChannelPrefix <= sortChannels.size(), "Cannot have more pre-sorted channels than specified sorted channels");
+-        checkArgument(preSortedChannelPrefix == 0 || ImmutableSet.copyOf(preGroupedChannels).equals(ImmutableSet.copyOf(partitionChannels)), "preSortedChannelPrefix can only be greater than zero if all partition channels are pre-grouped");
++        checkArgument(preSortedChannelPrefix == 0 || preGroupedChannels.size() == partitionChannels.size(), "preSortedChannelPrefix can only be greater than zero if all partition channels are pre-grouped");
+ 
+         this.operatorContext = operatorContext;
+         this.outputChannels = Ints.toArray(outputChannels);
+@@ -247,8 +247,9 @@ public class WindowOperator
+                         .map(WindowFunctionDefinition::getType))
+                 .collect(toImmutableList());
+ 
++        ImmutableSet<Integer> preGroupedChannelsSet = ImmutableSet.copyOf(preGroupedChannels);
+         List<Integer> unGroupedPartitionChannels = partitionChannels.stream()
+-                .filter(channel -> !preGroupedChannels.contains(channel))
++                .filter(channel -> !preGroupedChannelsSet.contains(channel))
+                 .collect(toImmutableList());
+         List<Integer> preSortedChannels = sortChannels.stream()
+                 .limit(preSortedChannelPrefix)
+@@ -923,9 +924,19 @@ public class WindowOperator
+         checkArgument(startPosition >= 0, "startPosition must be greater or equal than zero: %s", startPosition);
+         checkArgument(startPosition < endPosition, "startPosition (%s) must be less than endPosition (%s)", startPosition, endPosition);
+ 
++        // Gallop to find a range [left, right) that contains the end of the group.
+         int left = startPosition;
+-        int right = endPosition;
++        int step = 1;
++        int right = startPosition + step;
++        while (right < endPosition && comparator.test(startPosition, right)) {
++            left = right;
++            step <<= 1;
++            right = startPosition + step;
++        }
++
++        right = Math.min(right + 1, endPosition);
+ 
++        // Binary search for the end of the group within [left, right).
+         while (left + 1 < right) {
+             int middle = (left + right) >>> 1;
+ 

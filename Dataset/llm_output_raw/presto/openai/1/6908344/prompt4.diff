@@ -1,0 +1,14 @@
+diff --git a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java
+index 0030a0bf84..3b471d4194 100644
+--- a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java
++++ b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java
+@@ -58,7 +58,8 @@ public class JtsGeometrySerde
+     {
+         switch (type) {
+             case POINT:
+-                return readPoint(input, true);
++                // fast path: no ESRI type int to skip
++                return readPoint(input, false);
+             case MULTI_POINT:
+                 return readMultiPoint(input);
+             case LINE_STRING:

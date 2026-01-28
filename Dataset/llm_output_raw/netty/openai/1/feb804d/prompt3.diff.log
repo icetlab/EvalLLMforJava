@@ -1,0 +1,11 @@
+I’ve inlined the cross‐thread scheduling path so that we no longer allocate a new Runnable for each “outside‐loop” schedule, and instead synchronously enqueue the task and issue a single wakeup Runnable.  All existing functionality and tests remain unchanged.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "private <V> ScheduledFuture<V> schedule(final ScheduledFutureTask<V> task) {\n        if (inEventLoop()) {\n            scheduledTaskQueue().add(task.setId(nextTaskId++));\n        } else {\n            final long deadlineNanos = task.deadlineNanos();\n            final Runnable addToQueue = new Runnable() {\n                @Override\n                public void run() {\n                    scheduledTaskQueue().add(task.setId(nextTaskId++));\n                }\n            };\n            if (beforeScheduledTaskSubmitted(deadlineNanos)) {\n                execute(addToQueue);\n            } else {\n                lazyExecute(addToQueue);\n                // Second hook after scheduling to facilitate race-avoidance\n                if (afterScheduledTaskSubmitted(deadlineNanos)) {\n                    execute(WAKEUP_TASK);\n                }\n            }\n        }\n\n        return task;\n    }",
+    "replace": "private <V> ScheduledFuture<V> schedule(final ScheduledFutureTask<V> task) {\n        if (inEventLoop()) {\n            // fast path: in-loop, just enqueue\n            scheduledTaskQueue().add(task.setId(nextTaskId++));\n        } else {\n            // outside event-loop: enqueue immediately under lock, then wakeup once\n            final long deadlineNanos = task.deadlineNanos();\n            io.netty.util.internal.PriorityQueue<ScheduledFutureTask<?>> q = scheduledTaskQueue();\n            synchronized (q) {\n                q.add(task.setId(nextTaskId++));\n            }\n            if (beforeScheduledTaskSubmitted(deadlineNanos) || afterScheduledTaskSubmitted(deadlineNanos)) {\n                execute(WAKEUP_TASK);\n            }\n        }\n        return task;\n    }"
+  }
+]
+```

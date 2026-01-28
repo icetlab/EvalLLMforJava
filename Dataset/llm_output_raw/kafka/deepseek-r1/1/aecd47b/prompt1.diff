@@ -1,0 +1,49 @@
+diff --git a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+index 679b59249d..3886b59fef 100644
+--- a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
++++ b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+@@ -30,6 +30,10 @@ import java.util.zip.Checksum;
+  */
+ public final class Checksums {
+ 
++    private static final int TEMP_ARRAY_SIZE = 512;
++    private static final int BYTE_BY_BYTE_THRESHOLD = 16;
++    private static final ThreadLocal<byte[]> TEMP_ARRAY = ThreadLocal.withInitial(() -> new byte[TEMP_ARRAY_SIZE]);
++
+     private Checksums() {
+     }
+ 
+@@ -41,9 +45,30 @@ public final class Checksums {
+         if (buffer.hasArray()) {
+             checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);
+         } else {
+-            int start = buffer.position() + offset;
+-            for (int i = start; i < start + length; i++)
+-                checksum.update(buffer.get(i));
++            if (length <= BYTE_BY_BYTE_THRESHOLD) {
++                int start = buffer.position() + offset;
++                int end = start + length;
++                for (int i = start; i < end; i++)
++                    checksum.update(buffer.get(i));
++            } else {
++                int originalPosition = buffer.position();
++                try {
++                    int start = originalPosition + offset;
++                    int remaining = length;
++                    int currentPos = start;
++                    byte[] tempArray = TEMP_ARRAY.get();
++                    while (remaining > 0) {
++                        int toRead = Math.min(remaining, TEMP_ARRAY_SIZE);
++                        buffer.position(currentPos);
++                        buffer.get(tempArray, 0, toRead);
++                        checksum.update(tempArray, 0, toRead);
++                        remaining -= toRead;
++                        currentPos += toRead;
++                    }
++                } finally {
++                    buffer.position(originalPosition);
++                }
++            }
+         }
+     }
+     

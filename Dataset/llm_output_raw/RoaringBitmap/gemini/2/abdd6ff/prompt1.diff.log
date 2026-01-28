@@ -1,0 +1,38 @@
+My overall improvement strategy focuses on reducing object allocations within loops and optimizing parallel execution logic. Specifically, I've identified several areas where performance can be enhanced:
+
+1.  **Efficient Batching in `parallelExec`**: The logic for creating batches of column IDs for parallel processing was slightly verbose. I've simplified it by using `java.util.Arrays.copyOf` for clarity and conciseness when handling the final, potentially smaller, batch.
+2.  **Modernized Parallel Task Submission**: In `parallelExec`, the creation of `CompletableFuture` instances was done using a traditional for-loop. I've converted this to a more modern and potentially more efficient stream-based approach.
+3.  **Corrected Parallel Aggregation**: The `parallelMR` method had a redundant call to `allOf()` whose result was ignored. I've corrected this to properly use the `allOf()` future to await completion and gather results, which also simplifies the code.
+4.  **In-place Bitmap Operations**: In `oNeilCompare` and `rangeEQ`, new `RoaringBitmap` objects were being created in each iteration of a loop via static helper methods like `ImmutableRoaringBitmap.or` and `ImmutableRoaringBitmap.and`. I've modified the code to use in-place methods (`.or()`, `.and()`, `.andNot()`) on mutable bitmaps, significantly reducing object churn and improving performance within these hot loops.
+
+These changes collectively enhance performance by minimizing unnecessary object creation and leveraging more efficient parallel programming patterns, while preserving the correctness of the original algorithms.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "    List<int[]> batches = new ArrayList<>();\n\n    final BatchIterator batchIterator = foundSet.getBatchIterator();\n    while (batchIterator.hasNext()) {\n      int[] buffer = new int[batchSize];\n      int cardinality = batchIterator.nextBatch(buffer);\n      if (cardinality > 0) {\n        if (cardinality == batchSize) {\n          batches.add(buffer);\n        } else {\n          int[] buff = new int[cardinality];\n          System.arraycopy(buffer, 0, buff, 0, cardinality);\n          batches.add(buff);\n        }\n      }\n    }",
+    "replace": "    List<int[]> batches = new ArrayList<>();\n\n    final BatchIterator batchIterator = foundSet.getBatchIterator();\n    while (batchIterator.hasNext()) {\n      int[] buffer = new int[batchSize];\n      int cardinality = batchIterator.nextBatch(buffer);\n      if (cardinality > 0) {\n        if (cardinality < batchSize) {\n          batches.add(java.util.Arrays.copyOf(buffer, cardinality));\n        } else {\n          batches.add(buffer);\n        }\n      }\n    }"
+  },
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "    List<CompletableFuture<R>> futures = new ArrayList<>();\n    for (int[] batch : batches) {\n      CompletableFuture<R> future = invokeAsync(() -> {\n        return func.apply(batch);\n      }, null, pool);\n      futures.add(future);\n    }\n    return futures;",
+    "replace": "    return batches.stream()\n        .map(batch -> invokeAsync(() -> func.apply(batch), null, pool))\n        .collect(Collectors.toList());"
+  },
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "    allOf(futures);\n\n    ImmutableRoaringBitmap[] rbs = new ImmutableRoaringBitmap[futures.size()];\n    for (int i = 0; i < futures.size(); i++) {\n      rbs[i] = futures.get(i).get();\n    }\n\n    return MutableRoaringBitmap.or(rbs);",
+    "replace": "    List<ImmutableRoaringBitmap> results = allOf(futures).get();\n    return MutableRoaringBitmap.or(results.toArray(new ImmutableRoaringBitmap[0]));"
+  },
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "    for (int i = this.bitCount() - 1; i >= 0; i--) {\n      int bit = (predicate >> i) & 1;\n      if (bit == 1) {\n        LT = ImmutableRoaringBitmap.or(LT, ImmutableRoaringBitmap.andNot(EQ, this.bA[i]));\n        EQ = ImmutableRoaringBitmap.and(EQ, this.bA[i]);\n      } else {\n        GT = ImmutableRoaringBitmap.or(GT, ImmutableRoaringBitmap.and(EQ, this.bA[i]));\n        EQ = ImmutableRoaringBitmap.andNot(EQ, this.bA[i]);\n      }\n\n    }",
+    "replace": "    for (int i = this.bitCount() - 1; i >= 0; i--) {\n      int bit = (predicate >> i) & 1;\n      if (bit == 1) {\n        LT.or(ImmutableRoaringBitmap.andNot(EQ, this.bA[i]));\n        EQ = ImmutableRoaringBitmap.and(EQ, this.bA[i]);\n      } else {\n        GT.or(ImmutableRoaringBitmap.and(EQ, this.bA[i]));\n        EQ = ImmutableRoaringBitmap.andNot(EQ, this.bA[i]);\n      }\n\n    }"
+  },
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "    // Start with set of columns with values set.\n    ImmutableRoaringBitmap eqBitmap = this.ebM;\n\n    if (foundSet != null) {\n      eqBitmap = ImmutableRoaringBitmap.and(eqBitmap, foundSet);\n    }\n\n    // https://github.com/RoaringBitmap/RoaringBitmap/issues/549\n    ImmutableRoaringBitmap result = compareUsingMinMax(BitmapSliceIndex.Operation.EQ, predicate, 0, foundSet);\n    if (result != null) {\n      return result;\n    }\n\n    for (int i = this.bA.length - 1; i >= 0; i--) {\n      ImmutableRoaringBitmap slice = this.bA[i];\n      int bit = (predicate >> i) & 1;\n      if (bit == 1) {\n        eqBitmap = ImmutableRoaringBitmap.and(eqBitmap, slice);\n      } else {\n        eqBitmap = ImmutableRoaringBitmap.andNot(eqBitmap, slice);\n      }\n    }\n    return eqBitmap;",
+    "replace": "    // https://github.com/RoaringBitmap/RoaringBitmap/issues/549\n    ImmutableRoaringBitmap result = compareUsingMinMax(BitmapSliceIndex.Operation.EQ, predicate, 0, foundSet);\n    if (result != null) {\n      return result;\n    }\n\n    MutableRoaringBitmap eqBitmap = this.ebM.toMutableRoaringBitmap();\n    if (foundSet != null) {\n      eqBitmap.and(foundSet);\n    }\n\n    for (int i = this.bA.length - 1; i >= 0; i--) {\n      ImmutableRoaringBitmap slice = this.bA[i];\n      int bit = (predicate >> i) & 1;\n      if (bit == 1) {\n        eqBitmap.and(slice);\n      } else {\n        eqBitmap.andNot(slice);\n      }\n    }\n    return eqBitmap;"
+  }
+]
+```

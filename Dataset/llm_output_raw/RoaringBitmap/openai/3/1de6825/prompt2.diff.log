@@ -1,0 +1,16 @@
+I’ve replaced the entire `getChildPos` and `getChildKey` methods with in-place bit-shifts to eliminate the temporary byte arrays and ensure the class remains syntactically valid.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java",
+    "search": "@Override\n  public int getChildPos(byte k) {\n    byte[] firstBytes = LongUtils.toBDBytes(firstV);\n    if (count <= 8) {\n      return Node.binarySearch(firstBytes, 0, count, k);\n    } else {\n      int pos = Node.binarySearch(firstBytes, 0, 8, k);\n      if (pos != ILLEGAL_IDX) {\n        return pos;\n      } else {\n        byte[] secondBytes = LongUtils.toBDBytes(secondV);\n        pos = Node.binarySearch(secondBytes, 0, (count - 8), k);\n        if (pos != ILLEGAL_IDX) {\n          return 8 + pos;\n        } else {\n          return ILLEGAL_IDX;\n        }\n      }\n    }\n  }",
+    "replace": "@Override\n  public int getChildPos(byte k) {\n    if (count <= 8) {\n      for (int i = 0; i < count; i++) {\n        if ((byte)(firstV >>> ((7 - i) * 8)) == k) {\n          return i;\n        }\n      }\n      return ILLEGAL_IDX;\n    } else {\n      for (int i = 0; i < 8; i++) {\n        if ((byte)(firstV >>> ((7 - i) * 8)) == k) {\n          return i;\n        }\n      }\n      for (int i = 0; i < (count - 8); i++) {\n        if ((byte)(secondV >>> ((7 - i) * 8)) == k) {\n          return 8 + i;\n        }\n      }\n      return ILLEGAL_IDX;\n    }\n  }"
+  },
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java",
+    "search": "@Override\n  public byte getChildKey(int pos) {\n    int posInLong;\n    if (pos <= 7) {\n      posInLong = pos;\n      byte[] firstBytes = LongUtils.toBDBytes(firstV);\n      return firstBytes[posInLong];\n    } else {\n      posInLong = pos - 8;\n      byte[] secondBytes = LongUtils.toBDBytes(secondV);\n      return secondBytes[posInLong];\n    }\n  }",
+    "replace": "@Override\n  public byte getChildKey(int pos) {\n    if (pos <= 7) {\n      return (byte)(firstV >>> ((7 - pos) * 8));\n    } else {\n      int posInLong = pos - 8;\n      return (byte)(secondV >>> ((7 - posInLong) * 8));\n    }\n  }"
+  }
+]
+```

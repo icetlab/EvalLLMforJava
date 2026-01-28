@@ -1,0 +1,53 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+index 93aeb97e76..b3438c49f1 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+@@ -265,23 +265,36 @@ public class ByteSelectiveStreamReader
+         }
+ 
+         int streamPosition = 0;
+-        for (int i = 0; i < positionCount; i++) {
+-            int position = positions[i];
+-            if (position > streamPosition) {
+-                skip(position - streamPosition);
+-                streamPosition = position;
++        if (presentStream == null) {
++            // No nulls present, just read values
++            for (int i = 0; i < positionCount; i++) {
++                int position = positions[i];
++                if (position > streamPosition) {
++                    skip(position - streamPosition);
++                    streamPosition = position;
++                }
++                values[i] = dataStream.next();
++                streamPosition++;
+             }
++        }
++        else {
++            // Nulls may be present
++            for (int i = 0; i < positionCount; i++) {
++                int position = positions[i];
++                if (position > streamPosition) {
++                    skip(position - streamPosition);
++                    streamPosition = position;
++                }
+ 
+-            if (presentStream != null && !presentStream.nextBit()) {
+-                nulls[i] = true;
+-            }
+-            else {
+-                values[i] = dataStream.next();
+-                if (presentStream != null) {
++                if (!presentStream.nextBit()) {
++                    nulls[i] = true;
++                }
++                else {
++                    values[i] = dataStream.next();
+                     nulls[i] = false;
+                 }
++                streamPosition++;
+             }
+-            streamPosition++;
+         }
+         outputPositionCount = positionCount;
+         return streamPosition;

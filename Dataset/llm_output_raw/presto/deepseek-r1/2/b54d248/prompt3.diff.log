@@ -1,0 +1,11 @@
+The main performance improvement focuses on optimizing the hash partitioning logic in `HashGenerator.java`. The current implementation uses modulo division for computing partition indices, which can be expensive. The optimized version leverages bitwise operations when the partition count is a power of two—a common scenario in distributed data processing systems like Presto. This change provides significant speedup while maintaining exact functional equivalence.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java",
+    "search": "    default int getPartition(int partitionCount, int position, Page page)\n    {\n        long rawHash = hashPosition(position, page);\n\n        // clear the sign bit\n        rawHash &= 0x7fff_ffff_ffff_ffffL;\n\n        int partition = (int) (rawHash % partitionCount);\n\n        checkState(partition >= 0 && partition < partitionCount);\n        return partition;\n    }",
+    "replace": "    default int getPartition(int partitionCount, int position, Page page)\n    {\n        long rawHash = hashPosition(position, page);\n\n        // clear the sign bit\n        rawHash &= 0x7fff_ffff_ffff_ffffL;\n\n        int partition;\n        // Use faster bitwise AND when partitionCount is a power of two\n        if ((partitionCount & (partitionCount - 1)) == 0) {\n            partition = (int) (rawHash & (partitionCount - 1));\n        } else {\n            partition = (int) (rawHash % partitionCount);\n        }\n\n        checkState(partition >= 0 && partition < partitionCount);\n        return partition;\n    }"
+  }
+]
+```

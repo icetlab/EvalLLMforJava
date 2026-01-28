@@ -1,0 +1,11 @@
+I’ve optimized getPartition by using a bitmask for power-of-two partition counts (avoiding the expensive modulus and sign-bit mask) and Long.remainderUnsigned for all other cases.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java",
+    "search": "default int getPartition(int partitionCount, int position, Page page)\n    {\n        long rawHash = hashPosition(position, page);\n\n        // clear the sign bit\n        rawHash &= 0x7fff_ffff_ffff_ffffL;\n\n        int partition = (int) (rawHash % partitionCount);\n\n        checkState(partition >= 0 && partition < partitionCount);\n        return partition;\n    }",
+    "replace": "default int getPartition(int partitionCount, int position, Page page)\n    {\n        long rawHash = hashPosition(position, page);\n        int partition;\n        // use fast bitmask when partitionCount is power of two\n        if ((partitionCount & (partitionCount - 1)) == 0) {\n            partition = (int) (rawHash & (partitionCount - 1));\n        }\n        else {\n            // unsigned remainder avoids clearing sign bit manually\n            partition = (int) Long.remainderUnsigned(rawHash, partitionCount);\n        }\n        checkState(partition >= 0 && partition < partitionCount);\n        return partition;\n    }"
+  }
+]
+```

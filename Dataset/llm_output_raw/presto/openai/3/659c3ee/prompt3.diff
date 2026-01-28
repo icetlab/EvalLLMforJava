@@ -1,0 +1,48 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+index 93aeb97e76..bb1deedcc0 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+@@ -174,6 +174,9 @@ public class ByteSelectiveStreamReader
+     private int readWithFilter(int[] positions, int positionCount)
+             throws IOException
+     {
++        // cache presence checks
++        boolean hasPresent = (presentStream != null);
++        boolean recordNulls = nullsAllowed && hasPresent;
+         int streamPosition = 0;
+         outputPositionCount = 0;
+         for (int i = 0; i < positionCount; i++) {
+@@ -183,9 +186,9 @@ public class ByteSelectiveStreamReader
+                 streamPosition = position;
+             }
+ 
+-            if (presentStream != null && !presentStream.nextBit()) {
++            if (hasPresent && !presentStream.nextBit()) {
+                 if ((nonDeterministicFilter && filter.testNull()) || nullsAllowed) {
+-                    if (outputRequired) {
++                    if (outputRequired && recordNulls) {
+                         nulls[outputPositionCount] = true;
+                     }
+                     outputPositions[outputPositionCount] = position;
+@@ -290,14 +293,17 @@ public class ByteSelectiveStreamReader
+     private void skip(int items)
+             throws IOException
+     {
+-        if (dataStream == null) {
+-            presentStream.skip(items);
+-        }
+-        else if (presentStream != null) {
++        if (presentStream != null) {
++            if (dataStream != null) {
+                 int dataToSkip = presentStream.countBitsSet(items);
+                 dataStream.skip(dataToSkip);
+             }
+             else {
++                presentStream.skip(items);
++            }
++        }
++        else {
++            // no present stream, skip directly on data stream
+             dataStream.skip(items);
+         }
+     }

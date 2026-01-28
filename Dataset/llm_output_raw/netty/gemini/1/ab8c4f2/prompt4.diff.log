@@ -1,0 +1,13 @@
+The performance of HPACK static table lookups can be improved. The static table is structured so that entries with the same header name are contiguous. The existing lookup implementation iterates through the table even after passing all possible matches for a given header name.
+
+My change optimizes `HpackStaticTable.getIndexInsensitive` to take advantage of this structure. It now short-circuits the search, exiting the loop as soon as an entry with a non-matching header name is encountered. This avoids scanning the rest of the table unnecessarily, which is particularly beneficial when a header name exists in the table but the specific value does not.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "        // Note this assumes all entries for a given header field are sequential.\n        while (index <= length) {\n            HpackHeaderField entry = getEntry(index);\n            if (equalsVariableTime(name, entry.name) && equalsVariableTime(value, entry.value)) {\n                return index;\n            }\n            index++;\n        }",
+    "replace": "        // Note this assumes all entries for a given header field are sequential.\n        while (index <= length) {\n            HpackHeaderField entry = getEntry(index);\n            if (!equalsVariableTime(name, entry.name)) {\n                break;\n            }\n            if (equalsVariableTime(value, entry.value)) {\n                return index;\n            }\n            index++;\n        }"
+  }
+]
+```

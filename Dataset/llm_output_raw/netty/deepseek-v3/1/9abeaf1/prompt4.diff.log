@@ -1,0 +1,22 @@
+The performance issue indicates that the wakeup logic in EpollEventLoop is overly complex and can be simplified. The current implementation uses an atomic updater for `wakenUp` and includes a race condition workaround that requires an extra eventfd write after `epollWait`. This extra write can be eliminated by reading the eventfd when it becomes ready, which resets its counter and ensures proper edge-triggered behavior. This simplifies the logic and reduces syscalls.
+
+The changes are:
+1. In `processReady`, read the eventfd when it's triggered to clear its counter.
+2. Remove the extra eventfd write after `epollWait` in the `run` method.
+
+These changes maintain correctness while reducing complexity and improving performance.
+
+```json
+[
+  {
+    "filepath": "../netty/transport-native-epoll/src/main/java/io/netty/channel/epoll/EpollEventLoop.java",
+    "search": "            if (fd == eventFd.intValue() || fd == timerFd.intValue()) {\n                // Just ignore as we use ET mode for the eventfd and timerfd.\n                //\n                // See also https://stackoverflow.com/a/12492308/1074097\n            }",
+    "replace": "            if (fd == eventFd.intValue()) {\n                // Read the eventfd to reset its counter to 0, ensuring edge-triggered notifications work correctly.\n                Native.eventFdRead(eventFd.intValue());\n            } else if (fd == timerFd.intValue()) {\n                // Just ignore as we use ET mode for the timerfd.\n                //\n                // See also https://stackoverflow.com/a/12492308/1074097\n            }"
+  },
+  {
+    "filepath": "../netty/transport-native-epoll/src/main/java/io/netty/channel/epoll/EpollEventLoop.java",
+    "search": "                        if (wakenUp == 1) {\n                            Native.eventFdWrite(eventFd.intValue(), 1L);\n                        }",
+    "replace": ""
+  }
+]
+```

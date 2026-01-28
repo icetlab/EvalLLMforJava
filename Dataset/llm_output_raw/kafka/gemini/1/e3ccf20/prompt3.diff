@@ -1,0 +1,40 @@
+diff --git a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+index 86f06981ff..7e1e9baecf 100644
+--- a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
++++ b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+@@ -260,15 +260,15 @@ class AclAuthorizer extends Authorizer with Logging {
+ 
+   override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {
+     inReadLock(lock) {
+-      val aclBindings = new util.ArrayList[AclBinding]()
++      val aclBindings = new mutable.ArrayBuffer[AclBinding]
+       unorderedAcls.foreach { case (resource, versionedAcls) =>
+         versionedAcls.acls.foreach { acl =>
+           val binding = new AclBinding(resource, acl.ace)
+           if (filter.matches(binding))
+-            aclBindings.add(binding)
++            aclBindings += binding
+         }
+       }
+-      aclBindings
++      aclBindings.asJava
+     }
+   }
+ 
+@@ -349,13 +349,9 @@ class AclAuthorizer extends Authorizer with Logging {
+         .map(_.acls)
+         .getOrElse(Set.empty)
+ 
+-      val prefixed = aclCache
+-        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))
+-        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))
+-        .filterKeys(resource => resourceName.startsWith(resource.name))
+-        .values
+-        .flatMap { _.acls }
+-        .toSet
++      val prefixed = (1 to resourceName.length).iterator.flatMap { i =>
++        aclCache.get(new ResourcePattern(resourceType, resourceName.substring(0, i), PatternType.PREFIXED))
++      }.flatMap(_.acls).toSet
+ 
+       prefixed ++ wildcard ++ literal
+     }

@@ -1,0 +1,32 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java b/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java
+index c586b38f12..6f12e941fb 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java
+@@ -86,6 +86,14 @@ public final class MapToMapCast
+         Type fromValueType = boundVariables.getTypeVariable("FV");
+         Type toKeyType = boundVariables.getTypeVariable("TK");
+         Type toValueType = boundVariables.getTypeVariable("TV");
++        // fast path: no cast required when key and value types are the same
++        if (fromKeyType.equals(toKeyType) && fromValueType.equals(toValueType)) {
++            MethodHandle identity = methodHandle(MapToMapCast.class, "identity", SqlFunctionProperties.class, Block.class);
++            return new BuiltInScalarFunctionImplementation(
++                    true,
++                    ImmutableList.of(valueTypeArgumentProperty(RETURN_NULL_ON_NULL)),
++                    identity);
++        }
+         Type toMapType = functionAndTypeManager.getParameterizedType(
+                 "map",
+                 ImmutableList.of(
+@@ -205,6 +213,12 @@ public final class MapToMapCast
+         return value;
+     }
+ 
++    @UsedByGeneratedCode
++    public static Block identity(SqlFunctionProperties properties, Block fromMap) {
++        // identity cast: return the original map block
++        return fromMap;
++    }
++
+     @UsedByGeneratedCode
+     public static Block mapCast(
+             MethodHandle keyProcessFunction,

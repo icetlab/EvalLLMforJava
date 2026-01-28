@@ -1,0 +1,31 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapConcatFunction.java b/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapConcatFunction.java
+index 24e83bddde..41ef39b69b 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapConcatFunction.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapConcatFunction.java
+@@ -40,14 +40,22 @@ public final class MapConcatFunction
+             @SqlType("map(K,V)") Block leftMap,
+             @SqlType("map(K,V)") Block rightMap)
+     {
+-        TypedSet typedSet = new TypedSet(keyType, rightMap.getPositionCount());
+-        BlockBuilder blockBuilder = new InterleavedBlockBuilder(ImmutableList.of(keyType, valueType), new BlockBuilderStatus(), leftMap.getPositionCount() + rightMap.getPositionCount());
+-        for (int i = 0; i < rightMap.getPositionCount(); i += 2) {
++        int leftSize = leftMap.getPositionCount();
++        int rightSize = rightMap.getPositionCount();
++        if (leftSize == 0) {
++            return rightMap;
++        }
++        if (rightSize == 0) {
++            return leftMap;
++        }
++        TypedSet typedSet = new TypedSet(keyType, rightSize);
++        BlockBuilder blockBuilder = new InterleavedBlockBuilder(ImmutableList.of(keyType, valueType), new BlockBuilderStatus(), leftSize + rightSize);
++        for (int i = 0; i < rightSize; i += 2) {
+             typedSet.add(rightMap, i);
+             keyType.appendTo(rightMap, i, blockBuilder);
+             valueType.appendTo(rightMap, i + 1, blockBuilder);
+         }
+-        for (int i = 0; i < leftMap.getPositionCount(); i += 2) {
++        for (int i = 0; i < leftSize; i += 2) {
+             if (!typedSet.contains(leftMap, i)) {
+                 keyType.appendTo(leftMap, i, blockBuilder);
+                 valueType.appendTo(leftMap, i + 1, blockBuilder);

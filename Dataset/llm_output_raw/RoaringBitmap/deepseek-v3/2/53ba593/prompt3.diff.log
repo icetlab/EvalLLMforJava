@@ -1,0 +1,70 @@
+Looking at the provided source code and benchmark, I can see that the `checkedAdd` method in `RoaringBitmap` has performance issues. The benchmark compares an "optimized" version (which uses the existing `checkedAdd` method) against an "original" version (which appears to be a copy of the same logic). However, both versions have the same performance characteristics.
+
+The main performance issue in `checkedAdd` is that it always creates a new container when adding an element, even when the element already exists. This is inefficient because:
+1. It allocates new container objects unnecessarily
+2. It performs redundant cardinality checks
+
+Let me analyze the `checkedAdd` method in `RoaringBitmap.java`:
+
+```java
+public boolean checkedAdd(final int x) {
+    final char hb = Util.highbits(x);
+    final int i = highLowContainer.getIndex(hb);
+    if (i >= 0) {
+        Container c = highLowContainer.getContainerAtIndex(i);
+        int oldCard = c.getCardinality();
+        // we need to keep the newContainer if a switch between containers type
+        // occur, in order to get the new cardinality
+        Container newCont = c.add(Util.lowbits(x));
+        highLowContainer.setContainerAtIndex(i, newCont);
+        if (newCont.getCardinality() > oldCard) {
+            return true;
+        }
+    } else {
+        final ArrayContainer newac = new ArrayContainer();
+        highLowContainer.insertNewKeyValueAt(-i - 1, hb, newac.add(Util.lowbits(x)));
+        return true;
+    }
+    return false;
+}
+```
+
+The performance issues are:
+1. `c.add()` always returns a new container, even if the element already exists
+2. We check cardinality after the fact instead of checking if the element exists first
+
+The optimization strategy is:
+1. First check if the element already exists using `contains()`
+2. Only call `add()` if the element doesn't exist
+3. This avoids unnecessary container allocations and cardinality checks
+
+However, we need to be careful because `add()` might return a different container type (e.g., ArrayContainer to BitmapContainer). So we still need to handle container type transitions.
+
+Here's the improved approach:
+1. Check if the element exists using `contains()` on the container
+2. If it exists, return false immediately
+3. If it doesn't exist, call `add()` and update the container
+
+This optimization is particularly effective for:
+- BitmapContainers: `contains()` is O(1) with bit operations
+- RunContainers: `contains()` uses binary search
+- ArrayContainers: `contains()` uses binary search
+
+The same optimization should be applied to `MutableRoaringBitmap.checkedAdd()`.
+
+Let me create the JSON changes:
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java",
+    "search": "  /**\n   * Add the value to the container (set the value to \"true\"), whether it already appears or not.\n   *\n   * @param x integer value\n   * @return true if the added int wasn't already contained in the bitmap. False otherwise.\n   */\n  public boolean checkedAdd(final int x) {\n    final char hb = Util.highbits(x);\n    final int i = highLowContainer.getIndex(hb);\n    if (i >= 0) {\n      Container c = highLowContainer.getContainerAtIndex(i);\n      int oldCard = c.getCardinality();\n      // we need to keep the newContainer if a switch between containers type\n      // occur, in order to get the new cardinality\n      Container newCont = c.add(Util.lowbits(x));\n      highLowContainer.setContainerAtIndex(i, newCont);\n      if (newCont.getCardinality() > oldCard) {\n        return true;\n      }\n    } else {\n      final ArrayContainer newac = new ArrayContainer();\n      highLowContainer.insertNewKeyValueAt(-i - 1, hb, newac.add(Util.lowbits(x)));\n      return true;\n    }\n    return false;\n  }",
+    "replace": "  /**\n   * Add the value to the container (set the value to \"true\"), whether it already appears or not.\n   *\n   * @param x integer value\n   * @return true if the added int wasn't already contained in the bitmap. False otherwise.\n   */\n  public boolean checkedAdd(final int x) {\n    final char hb = Util.highbits(x);\n    final int i = highLowContainer.getIndex(hb);\n    if (i >= 0) {\n      Container c = highLowContainer.getContainerAtIndex(i);\n      char lb = Util.lowbits(x);\n      if (c.contains(lb)) {\n        return false;\n      }\n      Container newCont = c.add(lb);\n      highLowContainer.setContainerAtIndex(i, newCont);\n      return true;\n    } else {\n      final ArrayContainer newac = new ArrayContainer();\n      highLowContainer.insertNewKeyValueAt(-i - 1, hb, newac.add(Util.lowbits(x)));\n      return true;\n    }\n  }"
+  },
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MutableRoaringBitmap.java",
+    "search": "  /**\n   * Add the value to the container (set the value to \"true\"), whether it already appears or not.\n   *\n   * @param x integer value\n   * @return true if the added int wasn't already contained in the bitmap. False otherwise.\n   */\n  public boolean checkedAdd(final int x) {\n    final char hb = BufferUtil.highbits(x);\n    final int i = highLowContainer.getIndex(hb);\n    if (i >= 0) {\n      MappeableContainer C = highLowContainer.getContainerAtIndex(i);\n      int oldcard = C.getCardinality();\n      C = C.add(BufferUtil.lowbits(x));\n      getMappeableRoaringArray().setContainerAtIndex(i, C);\n      return C.getCardinality() > oldcard;\n    } else {\n      final MappeableArrayContainer newac = new MappeableArrayContainer();\n      getMappeableRoaringArray().insertNewKeyValueAt(-i - 1, hb, newac.add(BufferUtil.lowbits(x)));\n      return true;\n    }\n  }",
+    "replace": "  /**\n   * Add the value to the container (set the value to \"true\"), whether it already appears or not.\n   *\n   * @param x integer value\n   * @return true if the added int wasn't already contained in the bitmap. False otherwise.\n   */\n  public boolean checkedAdd(final int x) {\n    final char hb = BufferUtil.highbits(x);\n    final int i = highLowContainer.getIndex(hb);\n    if (i >= 0) {\n      MappeableContainer c = highLowContainer.getContainerAtIndex(i);\n      char lb = BufferUtil.lowbits(x);\n      if (c.contains(lb)) {\n        return false;\n      }\n      MappeableContainer newCont = c.add(lb);\n      getMappeableRoaringArray().setContainerAtIndex(i, newCont);\n      return true;\n    } else {\n      final MappeableArrayContainer newac = new MappeableArrayContainer();\n      getMappeableRoaringArray().insertNewKeyValueAt(-i - 1, hb, newac.add(BufferUtil.lowbits(x)));\n      return true;\n    }\n  }"
+  }
+]
+```

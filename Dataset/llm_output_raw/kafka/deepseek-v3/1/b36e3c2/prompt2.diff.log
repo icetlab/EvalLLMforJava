@@ -1,0 +1,34 @@
+The performance issue indicates that `zipWithIndex` causes tuple allocation in hot paths. Looking at the source code, there are two places where `zipWithIndex` is used on a `view` of records within a batch:
+
+1. In `convertAndAssignOffsetsNonCompressed`:
+```scala
+for ((record, batchIndex) <- batch.asScala.view.zipWithIndex) {
+```
+
+2. In `assignOffsetsNonCompressed`:
+```scala
+for ((record, batchIndex) <- batch.asScala.view.zipWithIndex) {
+```
+
+The `zipWithIndex` creates tuples `(record, index)` for each iteration, which adds allocation overhead. Since we're in a hot path (record validation), we should avoid this allocation by using a manual counter.
+
+We'll replace both occurrences with a simple `for` loop that tracks the index manually.
+
+Explanation: We'll iterate over the records using a standard loop with an explicit index variable instead of using `zipWithIndex`. This eliminates tuple allocations while maintaining the same functionality.
+
+Here are the changes:
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogValidator.scala",
+    "search": "      val recordErrors = new ArrayBuffer[ApiRecordError](0)\n      for ((record, batchIndex) <- batch.asScala.view.zipWithIndex) {\n        validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,\n          timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)\n        // we fail the batch if any record fails, so we stop appending if any record fails\n        if (recordErrors.isEmpty)\n          builder.appendWithOffset(offsetCounter.getAndIncrement(), record)\n      }",
+    "replace": "      val recordErrors = new ArrayBuffer[ApiRecordError](0)\n      var batchIndex = 0\n      for (record <- batch.asScala) {\n        validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,\n          timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)\n        // we fail the batch if any record fails, so we stop appending if any record fails\n        if (recordErrors.isEmpty)\n          builder.appendWithOffset(offsetCounter.getAndIncrement(), record)\n        batchIndex += 1\n      }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogValidator.scala",
+    "search": "      val recordErrors = new ArrayBuffer[ApiRecordError](0)\n      for ((record, batchIndex) <- batch.asScala.view.zipWithIndex) {\n        validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,\n          timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)\n\n        val offset = offsetCounter.getAndIncrement()\n        if (batch.magic > RecordBatch.MAGIC_VALUE_V0 && record.timestamp > maxBatchTimestamp) {\n          maxBatchTimestamp = record.timestamp\n          offsetOfMaxBatchTimestamp = offset\n        }\n      }",
+    "replace": "      val recordErrors = new ArrayBuffer[ApiRecordError](0)\n      var batchIndex = 0\n      for (record <- batch.asScala) {\n        validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,\n          timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)\n\n        val offset = offsetCounter.getAndIncrement()\n        if (batch.magic > RecordBatch.MAGIC_VALUE_V0 && record.timestamp > maxBatchTimestamp) {\n          maxBatchTimestamp = record.timestamp\n          offsetOfMaxBatchTimestamp = offset\n        }\n        batchIndex += 1\n      }"
+  }
+]
+```

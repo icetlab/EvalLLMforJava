@@ -1,0 +1,11 @@
+I’ve replaced the allocation- and array-copy–based `shiftLeftFromSpecifiedPosition` with an in-place bitwise implementation to eliminate byte-array creation and copying, reducing GC pressure and improving throughput.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/IntegerUtil.java",
+    "search": "public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    byte[] initialVal = toBDBytes(v);\n    System.arraycopy(initialVal, pos + 1, initialVal, pos, count);\n    return fromBDBytes(initialVal);\n  }",
+    "replace": "public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    if (count <= 0) {\n      return v;\n    }\n    int result = v;\n    for (int i = 0; i < count; i++) {\n      int fromPos = pos + 1 + i;\n      int toPos = pos + i;\n      int shiftFrom = (3 - fromPos) << 3;\n      int byteVal = (v >> shiftFrom) & 0xFF;\n      int shiftTo = (3 - toPos) << 3;\n      // clear the target byte\n      result &= ~(0xFF << shiftTo);\n      // set with the extracted byte\n      result |= (byteVal << shiftTo);\n    }\n    return result;\n  }"
+  }
+]
+```

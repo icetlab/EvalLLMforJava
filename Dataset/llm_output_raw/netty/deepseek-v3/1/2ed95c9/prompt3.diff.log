@@ -1,0 +1,151 @@
+Looking at the provided code, I can see that `HpackStaticTable` is a static table used in HTTP/2 HPACK compression. The performance improvements should focus on optimizing the lookup methods, particularly `getIndexInsensitive`, which is heavily used in the benchmarks. Currently, the method uses a linear search through sequential entries with the same name after an initial index lookup. We can improve this by:
+
+1. Precomputing the range of indices for each header name to avoid linear search overhead.
+2. Using a more efficient data structure for value lookup within the same-name range.
+
+However, note that the static table is small (61 entries), and the linear search is limited to entries with the same name (at most 4 for `:status`). Still, we can micro-optimize by:
+- Avoiding repeated calls to `equalsVariableTime` for the same name comparison.
+- Storing precomputed value indices for common headers.
+
+But the current implementation already assumes entries for a given header are sequential, and `MAX_SAME_NAME_FIELD_INDEX` helps bound the search. Let's analyze the `getIndexInsensitive` method:
+
+```java
+static int getIndexInsensitive(CharSequence name, CharSequence value) {
+    int index = getIndex(name);
+    if (index == NOT_FOUND) {
+        return NOT_FOUND;
+    }
+
+    // Compare values for the first name match
+    HpackHeaderField entry = getEntry(index);
+    if (equalsVariableTime(value, entry.value)) {
+        return index;
+    }
+
+    // Note this assumes all entries for a given header field are sequential.
+    index++;
+    while (index <= MAX_SAME_NAME_FIELD_INDEX) {
+        entry = getEntry(index);
+        if (!equalsVariableTime(name, entry.name)) {
+            // As far as fields with the same name are placed in the table sequentially
+            // and INDEX_BY_NAME returns index of the fist position, - it's safe to
+            // exit immediately.
+            return NOT_FOUND;
+        }
+        if (equalsVariableTime(value, entry.value)) {
+            return index;
+        }
+        index++;
+    }
+
+    return NOT_FOUND;
+}
+```
+
+The loop condition `index <= MAX_SAME_NAME_FIELD_INDEX` is incorrect because `MAX_SAME_NAME_FIELD_INDEX` is the last index that contains multiple fields with the same name (i.e., the index after the last duplicate). Actually, from the method `maxSameNameFieldIndex`, it returns the index of the last duplicate (or length if no duplicates). The loop should be `index <= length`? Wait, the comment says "Starting from this position, all names are unique." So `MAX_SAME_NAME_FIELD_INDEX` is the first index where names become unique? Actually, the method returns the last position that contains multiple fields with the same name. Let's examine:
+
+```java
+private static int maxSameNameFieldIndex() {
+    final int length = STATIC_TABLE.size();
+    HpackHeaderField cursor = getEntry(length);
+    for (int index = length - 1; index > 0; index--) {
+        HpackHeaderField entry = getEntry(index);
+        if (equalsVariableTime(entry.name, cursor.name)) {
+            return index + 1;
+        } else {
+            cursor = entry;
+        }
+    }
+    return length;
+}
+```
+
+If there are duplicates, it returns the index after the first duplicate group? Actually, it scans from the end, and when it finds two consecutive entries with the same name, it returns the higher index (index+1). So `MAX_SAME_NAME_FIELD_INDEX` is the index of the first entry in the last duplicate group? Wait, example: For `:status` (indices 8-14), the last duplicate group is `:status` at indices 8-14. The method will compare index 14 and 13, they are same, so return 14? Actually, `index` is 13, so returns 14. So `MAX_SAME_NAME_FIELD_INDEX` is 14. That means the loop in `getIndexInsensitive` will continue while `index <= 14`. That's correct for `:status` because indices 8-14 are all `:status`. But for a header with no duplicates (e.g., `:authority` at index 1), `MAX_SAME_NAME_FIELD_INDEX` will be 61? Actually, if no duplicates, the loop returns `length` (61). Then the loop condition `index <= 61` will cause scanning through the entire table? That's inefficient.
+
+Actually, the loop should only continue while the names are equal. The current loop uses `MAX_SAME_NAME_FIELD_INDEX` as an upper bound to avoid scanning the entire table when there are no duplicates. But for headers with no duplicates, after the first mismatch (which will happen at index+1 because there is only one entry), the loop will break. However, the condition `index <= MAX_SAME_NAME_FIELD_INDEX` is still checked each iteration. Since `MAX_SAME_NAME_FIELD_INDEX` is 61 for no duplicates, the loop will iterate up to 61? Actually, the loop will break early due to the name mismatch. So it's okay.
+
+But we can improve by precomputing the end index for each header name. However, that would require additional storage. Given the small size, we can instead store a mapping from name to a range (start, end) indices. But that would increase memory footprint.
+
+Alternatively, we can optimize the loop by avoiding the repeated name comparison for each iteration. Since we know that entries for a given name are sequential, we can compute the end index by scanning until the name changes, but that's what we're doing.
+
+Given the benchmarks, the most frequent operations are lookups for existing headers. We can improve by:
+1. Using a precomputed hash map for both name and value? But the value is variable.
+2. For the static table, we can precompute a map from (name, value) to index. However, the values are fixed, so we can create a `CharSequenceMap` for the combination.
+
+But note: `getIndexInsensitive` is used for matching values insensitively (case-insensitive). The static table values are fixed. We can precompute a map that maps from a normalized (lowercase) value to index for each name? Actually, we can precompute a map from `(name, value)` to index for all static entries. That would turn O(n) search into O(1) lookup.
+
+Let's see the current `STATIC_INDEX_BY_NAME` maps name to the smallest index. We can create another map `STATIC_INDEX_BY_NAME_AND_VALUE` that maps from `(name, value)` to index. But note: the value comparison is case-insensitive (using `equalsVariableTime` which does a constant-time comparison). We can precompute a map keyed by `name + "|" + value`? But that would require creating compound keys.
+
+Alternatively, we can create a `CharSequenceMap` for each name that maps value to index. But that's more complex.
+
+Given the small number of entries (61), and the fact that the linear search is limited to at most 7 entries (for `:status`), the performance gain might be minimal. However, the benchmark shows that these lookups are critical.
+
+Let's implement a precomputed map for name-value pairs. We'll create a `CharSequenceMap<Integer>` that uses a combined key. To avoid creating new strings, we can use a custom key object, but that would be heavy. Instead, we can compute a hash from name and value.
+
+But note: `CharSequenceMap` only supports a single `CharSequence` key. We could concatenate name and value with a delimiter that doesn't appear in headers. However, that would require creating a new `CharSequence` for each lookup, which is expensive.
+
+Better approach: Since the static table is small, we can store an array of `HpackHeaderField` and perform linear search only within the same-name block. We can improve by storing for each name the start and end indices. Let's compute a `nameRange` array or map.
+
+We can create a map from name to an array of indices (or a range). But we need to keep the memory overhead low.
+
+Given the constraints, I propose the following improvements:
+
+1. Precompute an array `sameNameEndIndex` that for each index, stores the last index with the same name. This can be computed once and stored. Then in `getIndexInsensitive`, after getting the first index, we can loop from `index` to `sameNameEndIndex[index]` without checking the name each time.
+
+2. Alternatively, precompute for each name the end index in a separate map.
+
+Let's go with the first approach: compute an array `int[] sameNameEnd` of size `length+1` (1-indexed) where `sameNameEnd[i]` is the last index j (>=i) such that all entries from i to j have the same name. Then we can loop from i to sameNameEnd[i] without name comparisons.
+
+We'll compute this in a static initializer.
+
+Additionally, we can precompute a map from value to index for each name? That would be too much.
+
+Let's implement:
+
+- Add a static `int[] SAME_NAME_END`.
+- In `getIndexInsensitive`, use `int end = SAME_NAME_END[index];` and loop from `index` to `end`.
+
+This will eliminate the name comparison in the loop and the need to check against `MAX_SAME_NAME_FIELD_INDEX`.
+
+We also need to compute `SAME_NAME_END` efficiently.
+
+Now, let's produce the changes.
+
+Note: We must not break existing functionality. The unit tests should pass.
+
+We'll make two changes:
+1. Add the `SAME_NAME_END` array and its initialization.
+2. Modify `getIndexInsensitive` to use it.
+
+Let's write the JSON changes.
+
+First, we need to add the static array and its initialization. We'll do it after `MAX_SAME_NAME_FIELD_INDEX` and before the singleton constructor.
+
+Second, modify `getIndexInsensitive`.
+
+Let's craft the search and replace blocks.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "    /**\n     * Returns the last position in the array that contains multiple\n     * fields with the same name. Starting from this position, all\n     * names are unique. Similar to {@link #getIndexInsensitive(CharSequence, CharSequence)} method\n     * assumes all entries for a given header field are sequential\n     */\n    private static int maxSameNameFieldIndex() {\n        final int length = STATIC_TABLE.size();\n        HpackHeaderField cursor = getEntry(length);\n        for (int index = length - 1; index > 0; index--) {\n            HpackHeaderField entry = getEntry(index);\n            if (equalsVariableTime(entry.name, cursor.name)) {\n                return index + 1;\n            } else {\n                cursor = entry;\n            }\n        }\n        return length;\n    }\n\n    // singleton\n    private HpackStaticTable() {\n    }",
+    "replace": "    /**\n     * Returns the last position in the array that contains multiple\n     * fields with the same name. Starting from this position, all\n     * names are unique. Similar to {@link #getIndexInsensitive(CharSequence, CharSequence)} method\n     * assumes all entries for a given header field are sequential\n     */\n    private static int maxSameNameFieldIndex() {\n        final int length = STATIC_TABLE.size();\n        HpackHeaderField cursor = getEntry(length);\n        for (int index = length - 1; index > 0; index--) {\n            HpackHeaderField entry = getEntry(index);\n            if (equalsVariableTime(entry.name, cursor.name)) {\n                return index + 1;\n            } else {\n                cursor = entry;\n            }\n        }\n        return length;\n    }\n\n    private static final int[] SAME_NAME_END = computeSameNameEnd();\n\n    private static int[] computeSameNameEnd() {\n        int length = STATIC_TABLE.size();\n        int[] sameNameEnd = new int[length + 1]; // 1-indexed\n        // Traverse from the end to compute for each index the last index with the same name.\n        for (int i = length; i > 0; i--) {\n            if (i == length) {\n                sameNameEnd[i] = i;\n            } else {\n                HpackHeaderField current = getEntry(i);\n                HpackHeaderField next = getEntry(i + 1);\n                if (equalsVariableTime(current.name, next.name)) {\n                    sameNameEnd[i] = sameNameEnd[i + 1];\n                } else {\n                    sameNameEnd[i] = i;\n                }\n            }\n        }\n        return sameNameEnd;\n    }\n\n    // singleton\n    private HpackStaticTable() {\n    }"
+  },
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "    /**\n     * Returns the index value for the given header field in the static table. Returns -1 if the\n     * header field is not in the static table.\n     */\n    static int getIndexInsensitive(CharSequence name, CharSequence value) {\n        int index = getIndex(name);\n        if (index == NOT_FOUND) {\n            return NOT_FOUND;\n        }\n\n        // Compare values for the first name match\n        HpackHeaderField entry = getEntry(index);\n        if (equalsVariableTime(value, entry.value)) {\n            return index;\n        }\n\n        // Note this assumes all entries for a given header field are sequential.\n        index++;\n        while (index <= MAX_SAME_NAME_FIELD_INDEX) {\n            entry = getEntry(index);\n            if (!equalsVariableTime(name, entry.name)) {\n                // As far as fields with the same name are placed in the table sequentially\n                // and INDEX_BY_NAME returns index of the fist position, - it's safe to\n                // exit immediately.\n                return NOT_FOUND;\n            }\n            if (equalsVariableTime(value, entry.value)) {\n                return index;\n            }\n            index++;\n        }\n\n        return NOT_FOUND;\n    }",
+    "replace": "    /**\n     * Returns the index value for the given header field in the static table. Returns -1 if the\n     * header field is not in the static table.\n     */\n    static int getIndexInsensitive(CharSequence name, CharSequence value) {\n        int index = getIndex(name);\n        if (index == NOT_FOUND) {\n            return NOT_FOUND;\n        }\n\n        // Compare values for the first name match\n        HpackHeaderField entry = getEntry(index);\n        if (equalsVariableTime(value, entry.value)) {\n            return index;\n        }\n\n        // Note this assumes all entries for a given header field are sequential.\n        int end = SAME_NAME_END[index];\n        for (int i = index + 1; i <= end; i++) {\n            entry = getEntry(i);\n            if (equalsVariableTime(value, entry.value)) {\n                return i;\n            }\n        }\n\n        return NOT_FOUND;\n    }"
+  }
+]
+```
+
+Explanation:
+1. We added a static array `SAME_NAME_END` that for each index (1-based) stores the last index with the same name. This is computed by scanning from the end.
+2. In `getIndexInsensitive`, after the first value mismatch, we loop from `index+1` to `SAME_NAME_END[index]` without comparing names, because we know all entries in that range have the same name. This eliminates the name comparison in the loop and the need to check against `MAX_SAME_NAME_FIELD_INDEX`.
+
+This should improve performance by reducing the number of comparisons and simplifying the loop condition.
+
+Note: The `MAX_SAME_NAME_FIELD_INDEX` is no longer used in `getIndexInsensitive`, but it's still used in `createMap`? Actually, `createMap` doesn't use it. It's only used in `getIndexInsensitive`. So we could remove it, but to keep changes minimal, we leave it.
+
+Let's output the JSON array.

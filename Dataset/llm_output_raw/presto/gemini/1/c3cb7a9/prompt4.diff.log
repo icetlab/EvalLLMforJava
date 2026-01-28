@@ -1,0 +1,15 @@
+The current implementation of `findEndPosition` uses a custom binary search algorithm. While correct, it can be improved. I will replace it with a standard `upper_bound` binary search implementation.
+
+This standard implementation is more aggressive in reducing the search space. When an element is found to be part of the group, it advances the lower bound of the search past that element (`low = mid + 1`). The original implementation was less aggressive (`left = middle`), which could lead to more comparisons, especially for larger groups.
+
+The new implementation is a well-known and highly optimized pattern that can be more efficiently handled by the JIT compiler. This change will improve the performance of finding group boundaries within the `WindowOperator`.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java",
+    "search": "    @VisibleForTesting\n    static int findEndPosition(int startPosition, int endPosition, BiPredicate<Integer, Integer> comparator)\n    {\n        checkArgument(startPosition >= 0, \"startPosition must be greater or equal than zero: %s\", startPosition);\n        checkArgument(startPosition < endPosition, \"startPosition (%s) must be less than endPosition (%s)\", startPosition, endPosition);\n\n        int left = startPosition;\n        int right = endPosition;\n\n        while (left + 1 < right) {\n            int middle = (left + right) >>> 1;\n\n            if (comparator.test(startPosition, middle)) {\n                left = middle;\n            }\n            else {\n                right = middle;\n            }\n        }\n\n        return right;\n    }",
+    "replace": "    @VisibleForTesting\n    static int findEndPosition(int startPosition, int endPosition, BiPredicate<Integer, Integer> comparator)\n    {\n        checkArgument(startPosition >= 0, \"startPosition must be greater or equal than zero: %s\", startPosition);\n        checkArgument(startPosition < endPosition, \"startPosition (%s) must be less than endPosition (%s)\", startPosition, endPosition);\n\n        int low = startPosition;\n        int high = endPosition;\n\n        while (low < high) {\n            int mid = (low + high) >>> 1;\n            if (comparator.test(startPosition, mid)) {\n                low = mid + 1;\n            }\n            else {\n                high = mid;\n            }\n        }\n\n        return low;\n    }"
+  }
+]
+```

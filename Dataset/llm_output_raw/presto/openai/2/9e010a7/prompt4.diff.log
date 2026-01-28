@@ -1,0 +1,11 @@
+The change adds a fast‐path in `specialize` so that when the input and target key/value types are identical, we simply return the input block directly (via an identity MethodHandle), bypassing all of the usual cast‐and‐copy logic.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java",
+    "search": "MethodHandle keyProcessor = buildProcessor(functionAndTypeManager, fromKeyType, toKeyType, true);",
+    "replace": "        // Fast path: no key or value type conversion needed\n        if (fromKeyType.equals(toKeyType) && fromValueType.equals(toValueType)) {\n            MethodHandle identity = MethodHandles.dropArguments(MethodHandles.identity(Block.class), 0, SqlFunctionProperties.class);\n            return new BuiltInScalarFunctionImplementation(true, ImmutableList.of(valueTypeArgumentProperty(RETURN_NULL_ON_NULL)), identity);\n        }\n        MethodHandle keyProcessor = buildProcessor(functionAndTypeManager, fromKeyType, toKeyType, true);"
+  }
+]
+```

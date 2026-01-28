@@ -1,0 +1,37 @@
+diff --git a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
+index da5080ff85..85605d691d 100644
+--- a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
++++ b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
+@@ -44,6 +44,23 @@ public class QueryStringEncoder {
+     private boolean hasParams;
+     private static final byte WRITE_UTF_UNKNOWN = (byte) '?';
+     private static final char[] CHAR_MAP = "0123456789ABCDEF".toCharArray();
++    private static final boolean[] DONT_NEED_ENCODING = new boolean[128];
++
++    static {
++        for (int i = 'a'; i <= 'z'; i++) {
++            DONT_NEED_ENCODING[i] = true;
++        }
++        for (int i = 'A'; i <= 'Z'; i++) {
++            DONT_NEED_ENCODING[i] = true;
++        }
++        for (int i = '0'; i <= '9'; i++) {
++            DONT_NEED_ENCODING[i] = true;
++        }
++        DONT_NEED_ENCODING['-'] = true;
++        DONT_NEED_ENCODING['_'] = true;
++        DONT_NEED_ENCODING['.'] = true;
++        DONT_NEED_ENCODING['*'] = true;
++    }
+ 
+     /**
+      * Creates a new encoder that encodes a URI that starts with the specified
+@@ -225,7 +242,6 @@ public class QueryStringEncoder {
+      * @return true or false
+      */
+     private static boolean dontNeedEncoding(char ch) {
+-        return ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9'
+-                || ch == '-' || ch == '_' || ch == '.' || ch == '*';
++        return ch < DONT_NEED_ENCODING.length && DONT_NEED_ENCODING[ch];
+     }
+ }

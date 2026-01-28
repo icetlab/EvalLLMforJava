@@ -1,0 +1,36 @@
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java b/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java
+index 9ae064da..a69d4bd7 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java
+@@ -1560,6 +1560,13 @@ public class RoaringBitmap implements Cloneable, Serializable, Iterable<Integer>
+     final int i = highLowContainer.getIndex(hb);
+     if (i >= 0) {
+       Container c = highLowContainer.getContainerAtIndex(i);
++      if (c instanceof RunContainer) {
++        if (c.contains(Util.lowbits(x))) {
++          return false;
++        }
++        highLowContainer.setContainerAtIndex(i, c.add(Util.lowbits(x)));
++        return true;
++      }
+       int oldCard = c.getCardinality();
+       // we need to keep the newContainer if a switch between containers type
+       // occur, in order to get the new cardinality
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MutableRoaringBitmap.java b/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MutableRoaringBitmap.java
+index fb9e35b4..2299fe18 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MutableRoaringBitmap.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MutableRoaringBitmap.java
+@@ -1022,6 +1022,13 @@ public class MutableRoaringBitmap extends ImmutableRoaringBitmap
+     final int i = highLowContainer.getIndex(hb);
+     if (i >= 0) {
+       MappeableContainer C = highLowContainer.getContainerAtIndex(i);
++      if (C instanceof MappeableRunContainer) {
++        if (C.contains(BufferUtil.lowbits(x))) {
++          return false;
++        }
++        getMappeableRoaringArray().setContainerAtIndex(i, C.add(BufferUtil.lowbits(x)));
++        return true;
++      }
+       int oldcard = C.getCardinality();
+       C = C.add(BufferUtil.lowbits(x));
+       getMappeableRoaringArray().setContainerAtIndex(i, C);

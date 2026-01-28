@@ -1,0 +1,26 @@
+I’ve optimized the branching in skip() for the common case and reduced repeated null‐checks in the filtered read path by caching stream presence in locals.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "private void skip(int items)\n            throws IOException\n    {\n        if (dataStream == null) {\n            presentStream.skip(items);\n        }\n        else if (presentStream != null) {\n            int dataToSkip = presentStream.countBitsSet(items);\n            dataStream.skip(dataToSkip);\n        }\n        else {\n            dataStream.skip(items);\n        }\n    }",
+    "replace": "private void skip(int items)\n            throws IOException\n    {\n        if (presentStream != null) {\n            if (dataStream != null) {\n                int dataToSkip = presentStream.countBitsSet(items);\n                dataStream.skip(dataToSkip);\n            }\n            else {\n                presentStream.skip(items);\n            }\n        }\n        else {\n            // no present stream, skip directly on data stream\n            dataStream.skip(items);\n        }\n    }"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "private int readWithFilter(int[] positions, int positionCount)\n            throws IOException\n    {\n        int streamPosition = 0;\n        outputPositionCount = 0;",
+    "replace": "private int readWithFilter(int[] positions, int positionCount)\n            throws IOException\n    {\n        // cache presence checks\n        boolean hasPresent = (presentStream != null);\n        boolean recordNulls = nullsAllowed && hasPresent;\n        int streamPosition = 0;\n        outputPositionCount = 0;"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "if (presentStream != null && !presentStream.nextBit()) {\n                if ((nonDeterministicFilter && filter.testNull()) || nullsAllowed) {\n                    if (outputRequired) {\n                        nulls[outputPositionCount] = true;\n                    }\n                    outputPositions[outputPositionCount] = position;\n                    outputPositionCount++;\n                }\n            }\n            else {\n                byte value = dataStream.next();",
+    "replace": "if (hasPresent && !presentStream.nextBit()) {\n                if ((nonDeterministicFilter && filter.testNull()) || nullsAllowed) {\n                    if (outputRequired && recordNulls) {\n                        nulls[outputPositionCount] = true;\n                    }\n                    outputPositions[outputPositionCount] = position;\n                    outputPositionCount++;\n                }\n            }\n            else {\n                byte value = dataStream.next();"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "if (filter.testLong(value)) {\n                    if (outputRequired) {\n                        values[outputPositionCount] = value;\n                        if (nullsAllowed && presentStream != null) {\n                            nulls[outputPositionCount] = false;\n                        }\n                    }",
+    "replace": "if (filter.testLong(value)) {\n                    if (outputRequired) {\n                        values[outputPositionCount] = value;\n                        if (recordNulls) {\n                            nulls[outputPositionCount] = false;\n                        }\n                    }"
+  }
+]
+```

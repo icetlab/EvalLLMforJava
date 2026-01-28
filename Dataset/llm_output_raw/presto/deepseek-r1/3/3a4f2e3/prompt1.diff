@@ -1,0 +1,181 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
+index aab2765889..6bc6d54a12 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
+@@ -188,6 +188,15 @@ public class BooleanSelectiveStreamReader
+             // - readBooleanNoNull: 0.045 vs.0.029 s/op
+             // - readBooleanNoNullWithFilter: 0.112 vs 0.099 s/op
+             outputPositionCount = 0;
++            byte[] localValues = values;
++            boolean[] localNulls = nulls;
++            int[] localOutputPositions = outputPositions;
++            BooleanInputStream localPresentStream = presentStream;
++            BooleanInputStream localDataStream = dataStream;
++            boolean localOutputRequired = outputRequired;
++            boolean localNullsAllowed = nullsAllowed;
++            boolean localNonDeterministicFilter = nonDeterministicFilter;
++            
+             for (int i = 0; i < positionCount; i++) {
+                 int position = positions[i];
+                 if (position > streamPosition) {
+@@ -195,25 +204,25 @@ public class BooleanSelectiveStreamReader
+                     streamPosition = position;
+                 }
+ 
+-                if (presentStream != null && !presentStream.nextBit()) {
+-                    if ((nonDeterministicFilter && filter.testNull()) || nullsAllowed) {
+-                        if (outputRequired) {
+-                            nulls[outputPositionCount] = true;
++                if (localPresentStream != null && !localPresentStream.nextBit()) {
++                    if ((localNonDeterministicFilter && filter.testNull()) || localNullsAllowed) {
++                        if (localOutputRequired) {
++                            localNulls[outputPositionCount] = true;
+                         }
+-                        outputPositions[outputPositionCount] = position;
++                        localOutputPositions[outputPositionCount] = position;
+                         outputPositionCount++;
+                     }
+                 }
+                 else {
+-                    boolean value = dataStream.nextBit();
++                    boolean value = localDataStream.nextBit();
+                     if (filter.testBoolean(value)) {
+-                        if (outputRequired) {
+-                            values[outputPositionCount] = (byte) (value ? 1 : 0);
+-                            if (nullsAllowed && presentStream != null) {
+-                                nulls[outputPositionCount] = false;
++                        if (localOutputRequired) {
++                            localValues[outputPositionCount] = (byte) (value ? 1 : 0);
++                            if (localNullsAllowed && localPresentStream != null) {
++                                localNulls[outputPositionCount] = false;
+                             }
+                         }
+-                        outputPositions[outputPositionCount] = position;
++                        localOutputPositions[outputPositionCount] = position;
+                         outputPositionCount++;
+                     }
+                 }
+@@ -234,6 +243,10 @@ public class BooleanSelectiveStreamReader
+                     skip(positionsToSkip);
+                 }
+             }
++            
++            values = localValues;
++            nulls = localNulls;
++            outputPositions = localOutputPositions;
+         }
+ 
+         readOffset = offset + streamPosition;
+@@ -273,6 +286,11 @@ public class BooleanSelectiveStreamReader
+     {
+         // filter == null implies outputRequired == true
+         int streamPosition = 0;
++        byte[] localValues = values;
++        boolean[] localNulls = nulls;
++        BooleanInputStream localPresentStream = presentStream;
++        BooleanInputStream localDataStream = dataStream;
++        
+         for (int i = 0; i < positionCount; i++) {
+             int position = positions[i];
+             if (position > streamPosition) {
+@@ -280,42 +298,52 @@ public class BooleanSelectiveStreamReader
+                 streamPosition = position;
+             }
+ 
+-            if (presentStream != null && !presentStream.nextBit()) {
+-                nulls[i] = true;
++            if (localPresentStream != null && !localPresentStream.nextBit()) {
++                localNulls[i] = true;
+             }
+             else {
+-                values[i] = (byte) (dataStream.nextBit() ? 1 : 0);
+-                if (presentStream != null) {
+-                    nulls[i] = false;
++                localValues[i] = (byte) (localDataStream.nextBit() ? 1 : 0);
++                if (localPresentStream != null) {
++                    localNulls[i] = false;
+                 }
+             }
+             streamPosition++;
+         }
++        
+         outputPositionCount = positionCount;
++        values = localValues;
++        nulls = localNulls;
+         return streamPosition;
+     }
+ 
+     private void skip(int items)
+             throws IOException
+     {
+-        if (dataStream == null) {
++        BooleanInputStream localDataStream = dataStream;
++        if (localDataStream == null) {
+             presentStream.skip(items);
+         }
+         else if (presentStream != null) {
+             int dataToSkip = presentStream.countBitsSet(items);
+-            dataStream.skip(dataToSkip);
++            localDataStream.skip(dataToSkip);
+         }
+         else {
+-            dataStream.skip(items);
++            localDataStream.skip(items);
+         }
+     }
+ 
+     private void ensureValuesCapacity(int capacity, boolean recordNulls)
+     {
+-        values = ensureCapacity(values, capacity);
++        byte[] localValues = values;
++        if (localValues == null || localValues.length < capacity) {
++            values = ensureCapacity(localValues, capacity);
++        }
+ 
+         if (recordNulls) {
+-            nulls = ensureCapacity(nulls, capacity);
++            boolean[] localNulls = nulls;
++            if (localNulls == null || localNulls.length < capacity) {
++                nulls = ensureCapacity(localNulls, capacity);
++            }
+         }
+     }
+ 
+@@ -411,18 +439,22 @@ public class BooleanSelectiveStreamReader
+     {
+         int positionIndex = 0;
+         int nextPosition = positions[positionIndex];
++        byte[] localValues = values;
++        boolean[] localNulls = nulls;
++        int[] localOutputPositions = outputPositions;
++        
+         for (int i = 0; i < outputPositionCount; i++) {
+-            if (outputPositions[i] < nextPosition) {
++            if (localOutputPositions[i] < nextPosition) {
+                 continue;
+             }
+ 
+-            assert outputPositions[i] == nextPosition;
++            assert localOutputPositions[i] == nextPosition;
+ 
+-            values[positionIndex] = values[i];
++            localValues[positionIndex] = localValues[i];
+             if (compactNulls) {
+-                nulls[positionIndex] = nulls[i];
++                localNulls[positionIndex] = localNulls[i];
+             }
+-            outputPositions[positionIndex] = nextPosition;
++            localOutputPositions[positionIndex] = nextPosition;
+ 
+             positionIndex++;
+             if (positionIndex >= positionCount) {
+@@ -432,6 +464,9 @@ public class BooleanSelectiveStreamReader
+         }
+ 
+         outputPositionCount = positionCount;
++        values = localValues;
++        nulls = localNulls;
++        outputPositions = localOutputPositions;
+     }
+ 
+     @Override

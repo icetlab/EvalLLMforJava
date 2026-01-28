@@ -1,0 +1,11 @@
+The change optimizes `stEnvelope` by using the lightweight `deserializeEnvelope` path to extract the bounding box when possible, avoiding full geometry deserialization for non-empty geometries. It falls back to the original behavior only when needed.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "        OGCGeometry geometry = deserialize(input);\n        SpatialReference reference = geometry.getEsriSpatialReference();\n        Envelope envelope = getEnvelope(geometry);\n        return serialize(createFromEsriGeometry(envelope, reference));",
+    "replace": "        // Fast path: only deserialize the envelope if possible\n        Envelope envelope = deserializeEnvelope(input);\n        if (envelope == null) {\n            // Empty geometry or unknown: fall back to full deserialization\n            OGCGeometry geometry = deserialize(input);\n            SpatialReference reference = geometry.getEsriSpatialReference();\n            envelope = getEnvelope(geometry);\n            return serialize(createFromEsriGeometry(envelope, reference));\n        }\n        // Non-empty: wrap the envelope directly (spatial ref is always null in our slice)\n        return serialize(createFromEsriGeometry(envelope, null));"
+  }
+]
+```

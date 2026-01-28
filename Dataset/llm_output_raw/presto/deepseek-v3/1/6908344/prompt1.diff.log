@@ -1,0 +1,31 @@
+Looking at the provided source code and unit tests, I can identify several performance improvement opportunities. The main focus will be on reducing object allocations, avoiding unnecessary computations, and optimizing loops. Here are the key changes:
+
+1. **GeometrySerde.java**: Optimize envelope merging and avoid unnecessary object creation in `merge` method.
+2. **JtsGeometrySerde.java**: Optimize coordinate array reversal and clockwise detection to reduce computations.
+
+Let's implement these improvements:
+
+```json
+[
+  {
+    "filepath": "../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java",
+    "search": "    @Nullable\n    private static Envelope merge(@Nullable Envelope left, @Nullable Envelope right)\n    {\n        if (left == null) {\n            return right;\n        }\n        else if (right == null) {\n            return left;\n        }\n        else {\n            right.merge(left);\n        }\n        return right;\n    }",
+    "replace": "    @Nullable\n    private static Envelope merge(@Nullable Envelope left, @Nullable Envelope right)\n    {\n        if (left == null) {\n            return right;\n        }\n        if (right == null) {\n            return left;\n        }\n        // Merge the smaller envelope into the larger one to potentially reduce operations\n        if (left.getWidth() * left.getHeight() <= right.getWidth() * right.getHeight()) {\n            right.merge(left);\n            return right;\n        }\n        else {\n            left.merge(right);\n            return left;\n        }\n    }"
+  },
+  {
+    "filepath": "../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java",
+    "search": "    private static boolean isClockwise(Coordinate[] coordinates, int start, int end)\n    {\n        // Sum over the edges: (x2 − x1) * (y2 + y1).\n        // If the result is positive the curve is clockwise,\n        // if it's negative the curve is counter-clockwise.\n        double area = 0;\n        for (int i = start + 1; i < end; i++) {\n            area += (coordinates[i].x - coordinates[i - 1].x) * (coordinates[i].y + coordinates[i - 1].y);\n        }\n        area += (coordinates[start].x - coordinates[end - 1].x) * (coordinates[start].y + coordinates[end - 1].y);\n        return area > 0;\n    }",
+    "replace": "    private static boolean isClockwise(Coordinate[] coordinates, int start, int end)\n    {\n        // Sum over the edges: (x2 − x1) * (y2 + y1).\n        // If the result is positive the curve is clockwise,\n        // if it's negative the curve is counter-clockwise.\n        double area = 0;\n        // Use local variables for better performance\n        Coordinate prev = coordinates[start];\n        for (int i = start + 1; i < end; i++) {\n            Coordinate curr = coordinates[i];\n            area += (curr.x - prev.x) * (curr.y + prev.y);\n            prev = curr;\n        }\n        Coordinate first = coordinates[start];\n        area += (first.x - prev.x) * (first.y + prev.y);\n        return area > 0;\n    }"
+  },
+  {
+    "filepath": "../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java",
+    "search": "    private static void reverse(Coordinate[] coordinates, int start, int end)\n    {\n        verify(start <= end, \"start must be less or equal than end\");\n        for (int i = start; i < start + ((end - start) / 2); i++) {\n            Coordinate buffer = coordinates[i];\n            coordinates[i] = coordinates[start + end - i - 1];\n            coordinates[start + end - i - 1] = buffer;\n        }\n    }",
+    "replace": "    private static void reverse(Coordinate[] coordinates, int start, int end)\n    {\n        verify(start <= end, \"start must be less or equal than end\");\n        int length = end - start;\n        int mid = start + length / 2;\n        // Reduce array index calculations in loop\n        for (int i = start, j = end - 1; i < mid; i++, j--) {\n            Coordinate buffer = coordinates[i];\n            coordinates[i] = coordinates[j];\n            coordinates[j] = buffer;\n        }\n    }"
+  },
+  {
+    "filepath": "../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java",
+    "search": "    private static Coordinate[] readCoordinates(SliceInput input, int count)\n    {\n        requireNonNull(input, \"input is null\");\n        verify(count > 0);\n        Coordinate[] coordinates = new Coordinate[count];\n        for (int i = 0; i < count; i++) {\n            coordinates[i] = readCoordinate(input);\n        }\n        return coordinates;\n    }",
+    "replace": "    private static Coordinate[] readCoordinates(SliceInput input, int count)\n    {\n        requireNonNull(input, \"input is null\");\n        verify(count > 0);\n        Coordinate[] coordinates = new Coordinate[count];\n        // Read coordinates in a tight loop without extra method calls\n        for (int i = 0; i < count; i++) {\n            double x = input.readDouble();\n            double y = input.readDouble();\n            coordinates[i] = new Coordinate(x, y);\n        }\n        return coordinates;\n    }"
+  }
+]
+```

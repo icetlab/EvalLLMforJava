@@ -1,0 +1,13 @@
+I understand the issue. The search block I provided doesn't match the actual code in the file because the original code is different from what I expected. The original code uses byte array operations, not the optimized bitwise operations I attempted to implement. Let me provide changes that match the actual original code.
+
+The performance improvement intent is to optimize the `shiftLeftFromSpecifiedPosition` method by replacing byte array operations with direct bitwise operations, avoiding unnecessary array allocations and copies.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/IntegerUtil.java",
+    "search": "  /**\n   * shift the byte left from the specified position\n   * @param v a integer value\n   * @param pos the position from which to shift byte values left\n   * @param count the shifting numbers\n   * @return a fresh integer value\n   */\n  public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    byte[] initialVal = toBDBytes(v);\n    System.arraycopy(initialVal, pos + 1, initialVal, pos, count);\n    return fromBDBytes(initialVal);\n  }",
+    "replace": "  /**\n   * shift the byte left from the specified position\n   * @param v a integer value\n   * @param pos the position from which to shift byte values left\n   * @param count the shifting numbers\n   * @return a fresh integer value\n   */\n  public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    if (count == 0) {\n      return v;\n    }\n    \n    // Create mask to preserve bytes that won't change\n    int preserveMask = 0;\n    \n    // Bytes before position 'pos' remain unchanged\n    for (int i = 0; i < pos; i++) {\n      preserveMask |= 0xFF << (8 * (3 - i));\n    }\n    \n    // Bytes from 'pos+count' to the end remain unchanged\n    for (int i = pos + count; i < 4; i++) {\n      preserveMask |= 0xFF << (8 * (3 - i));\n    }\n    \n    // Extract and shift the bytes that need to be moved\n    int shiftedBytes = 0;\n    for (int i = 0; i < count; i++) {\n      int srcPos = pos + i + 1;\n      int dstPos = pos + i;\n      if (srcPos < 4) { // Only if source position exists\n        int srcByte = (v >> (8 * (3 - srcPos))) & 0xFF;\n        shiftedBytes |= srcByte << (8 * (3 - dstPos));\n      }\n    }\n    \n    // Combine preserved bytes with shifted bytes\n    return (v & preserveMask) | shiftedBytes;\n  }"
+  }
+]
+```

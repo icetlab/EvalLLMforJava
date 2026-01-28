@@ -1,0 +1,76 @@
+diff --git a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+index 350f609b45..1332e995b9 100644
+--- a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
++++ b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+@@ -275,12 +275,17 @@ public class GeometrySerde
+         if (left == null) {
+             return right;
+         }
+-        else if (right == null) {
++        if (right == null) {
+             return left;
+         }
+-        else {
++        // Merge the smaller envelope into the larger one to potentially reduce operations
++        if (left.getWidth() * left.getHeight() <= right.getWidth() * right.getHeight()) {
+             right.merge(left);
++            return right;
++        }
++        else {
++            left.merge(right);
++            return left;
+         }
+-        return right;
+     }
+ }
+diff --git a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java
+index 0030a0bf84..a3363569a0 100644
+--- a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java
++++ b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java
+@@ -231,8 +231,11 @@ public class JtsGeometrySerde
+         requireNonNull(input, "input is null");
+         verify(count > 0);
+         Coordinate[] coordinates = new Coordinate[count];
++        // Read coordinates in a tight loop without extra method calls
+         for (int i = 0; i < count; i++) {
+-            coordinates[i] = readCoordinate(input);
++            double x = input.readDouble();
++            double y = input.readDouble();
++            coordinates[i] = new Coordinate(x, y);
+         }
+         return coordinates;
+     }
+@@ -468,20 +471,28 @@ public class JtsGeometrySerde
+         // If the result is positive the curve is clockwise,
+         // if it's negative the curve is counter-clockwise.
+         double area = 0;
++        // Use local variables for better performance
++        Coordinate prev = coordinates[start];
+         for (int i = start + 1; i < end; i++) {
+-            area += (coordinates[i].x - coordinates[i - 1].x) * (coordinates[i].y + coordinates[i - 1].y);
++            Coordinate curr = coordinates[i];
++            area += (curr.x - prev.x) * (curr.y + prev.y);
++            prev = curr;
+         }
+-        area += (coordinates[start].x - coordinates[end - 1].x) * (coordinates[start].y + coordinates[end - 1].y);
++        Coordinate first = coordinates[start];
++        area += (first.x - prev.x) * (first.y + prev.y);
+         return area > 0;
+     }
+ 
+     private static void reverse(Coordinate[] coordinates, int start, int end)
+     {
+         verify(start <= end, "start must be less or equal than end");
+-        for (int i = start; i < start + ((end - start) / 2); i++) {
++        int length = end - start;
++        int mid = start + length / 2;
++        // Reduce array index calculations in loop
++        for (int i = start, j = end - 1; i < mid; i++, j--) {
+             Coordinate buffer = coordinates[i];
+-            coordinates[i] = coordinates[start + end - i - 1];
+-            coordinates[start + end - i - 1] = buffer;
++            coordinates[i] = coordinates[j];
++            coordinates[j] = buffer;
+         }
+     }
+ 

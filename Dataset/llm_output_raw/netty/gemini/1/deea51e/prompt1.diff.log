@@ -1,0 +1,27 @@
+My overall improvement strategy focuses on two areas: reducing memory allocation and eliminating redundant computations in the HPACK encoding process.
+
+First, in `DefaultHttp2HeadersEncoder`, the `tableSizeChangeOutput` buffer is initialized with a default capacity that is unnecessarily large for its purpose. I will reduce its initial capacity to a more appropriate size, which will slightly lower memory consumption.
+
+Second, and more significantly, I will address a performance issue in `HpackEncoder`. The current implementation for encoding headers with a maximum list size check (`encodeHeadersEnforceMaxHeaderListSize`) iterates through the headers twice. The first iteration calculates the total size to validate against the limit, and the second iteration re-calculates the size of each header and performs the actual encoding. This is inefficient.
+
+To optimize this, I will refactor `encodeHeadersEnforceMaxHeaderListSize` to perform a single pass over the input headers. During this pass, it will calculate the size of each header, check against the cumulative size limit, and store the header information (name, value, and calculated size) in a temporary list. A second, faster loop over this temporary list will then perform the encoding using the pre-calculated sizes. This approach avoids redundant traversals of the header collection and eliminates repeated size calculations, trading a small amount of temporary object allocation for a more efficient CPU-bound operation, especially beneficial when dealing with a large number of headers. This requires adding a new helper class, which I will introduce as a private static nested class within `HpackEncoder`.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/DefaultHttp2HeadersEncoder.java",
+    "search": "private final ByteBuf tableSizeChangeOutput = Unpooled.buffer();",
+    "replace": "    private final ByteBuf tableSizeChangeOutput = Unpooled.buffer(16);"
+  },
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java",
+    "search": "    private void encodeHeadersEnforceMaxHeaderListSize(int streamId, ByteBuf out, Http2Headers headers,\n                                                       SensitivityDetector sensitivityDetector)\n            throws Http2Exception {\n        long headerSize = 0;\n        // To ensure we stay consistent with our peer check the size is valid before we potentially modify HPACK state.\n        for (Map.Entry<CharSequence, CharSequence> header : headers) {\n            CharSequence name = header.getKey();\n            CharSequence value = header.getValue();\n            // OK to increment now and check for bounds after because this value is limited to unsigned int and will not\n            // overflow.\n            headerSize += HpackHeaderField.sizeOf(name, value);\n            if (headerSize > maxHeaderListSize) {\n                headerListSizeExceeded(streamId, maxHeaderListSize, false);\n            }\n        }\n        encodeHeadersIgnoreMaxHeaderListSize(out, headers, sensitivityDetector);\n    }",
+    "replace": "    private void encodeHeadersEnforceMaxHeaderListSize(int streamId, ByteBuf out, Http2Headers headers,\n                                                       SensitivityDetector sensitivityDetector)\n            throws Http2Exception {\n        long headerSize = 0;\n        // http2Headers should not be an iterator, but we have no choice because of the interface.\n        // This list is used to accumulate the headers and their sizes, so we can check the size before encoding.\n        final java.util.List<HeaderField> headerFields = new java.util.ArrayList<HeaderField>(headers.size());\n\n        for (Map.Entry<CharSequence, CharSequence> header : headers) {\n            CharSequence name = header.getKey();\n            CharSequence value = header.getValue();\n            long size = HpackHeaderField.sizeOf(name, value);\n            headerSize += size;\n            if (headerSize > maxHeaderListSize) {\n                headerListSizeExceeded(streamId, maxHeaderListSize, false);\n            }\n            headerFields.add(new HeaderField(name, value, size));\n        }\n\n        for (HeaderField headerField : headerFields) {\n            encodeHeader(out, headerField.name, headerField.value,\n                    sensitivityDetector.isSensitive(headerField.name, headerField.value), headerField.size);\n        }\n    }"
+  },
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java",
+    "search": "    private int index(int h) {\n        return h & hashMask;\n    }",
+    "replace": "    private int index(int h) {\n        return h & hashMask;\n    }\n\n    private static final class HeaderField {\n        final CharSequence name;\n        final CharSequence value;\n        final long size;\n\n        HeaderField(CharSequence name, CharSequence value, long size) {\n            this.name = name;\n            this.value = value;\n            this.size = size;\n        }\n    }"
+  }
+]
+```

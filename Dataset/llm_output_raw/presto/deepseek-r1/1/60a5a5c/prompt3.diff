@@ -1,0 +1,81 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java b/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java
+index 74b77228f0..da89bc995f 100644
+--- a/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java
++++ b/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java
+@@ -79,9 +79,8 @@ public class PagesSerde
+             slice = Slices.wrappedBuffer(spillCipher.get().encrypt(slice.toByteBuffer()));
+             markers = ENCRYPTED.set(markers);
+         }
+-        else {
+-            //  Encryption disabled, slice data is likely much smaller than its backing buffer
+-            //  either because of compression or dynamic sizing of the initial output slice
++        else if (!slice.isCompact()) {
++            // Only copy if slice is not compact (doesn't use entire backing buffer)
+             slice = Slices.copyOf(slice);
+         }
+ 
+@@ -104,10 +103,11 @@ public class PagesSerde
+ 
+             int uncompressedSize = serializedPage.getUncompressedSizeInBytes();
+             ByteBuffer decompressionBuffer = ByteBuffer.allocate(uncompressedSize);
+-
+-            decompressor.get().decompress(slice.toByteBuffer(), decompressionBuffer);
++            ByteBuffer inputBuffer = slice.toByteBuffer();
++            
++            decompressor.get().decompress(inputBuffer, decompressionBuffer);
+             decompressionBuffer.flip();
+-            checkState(decompressionBuffer.remaining() == uncompressedSize);
++            checkState(decompressionBuffer.remaining() == uncompressedSize, "Decompressed size mismatch");
+ 
+             slice = Slices.wrappedBuffer(decompressionBuffer);
+         }
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java
+index d3b9621b8e..214c1397ab 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java
+@@ -304,6 +304,7 @@ public class PartitionedOutputOperator
+         private final OptionalInt nullChannel; // when present, send the position to every partition if this channel is null.
+         private final AtomicLong rowsAdded = new AtomicLong();
+         private final AtomicLong pagesAdded = new AtomicLong();
++        private long totalSizeInBytes;
+         private boolean hasAnyRowBeenReplicated;
+         private final OperatorContext operatorContext;
+ 
+@@ -339,6 +340,7 @@ public class PartitionedOutputOperator
+             for (int i = 0; i < partitionCount; i++) {
+                 pageBuilders[i] = PageBuilder.withMaxPageSize(pageSize, sourceTypes);
+             }
++            this.totalSizeInBytes = 0;
+         }
+ 
+         public ListenableFuture<?> isFull()
+@@ -348,13 +350,7 @@ public class PartitionedOutputOperator
+ 
+         public long getSizeInBytes()
+         {
+-            // We use a foreach loop instead of streams
+-            // as it has much better performance.
+-            long sizeInBytes = 0;
+-            for (PageBuilder pageBuilder : pageBuilders) {
+-                sizeInBytes += pageBuilder.getSizeInBytes();
+-            }
+-            return sizeInBytes;
++            return totalSizeInBytes;
+         }
+ 
+         /**
+@@ -413,12 +409,14 @@ public class PartitionedOutputOperator
+ 
+         private void appendRow(PageBuilder pageBuilder, Page page, int position)
+         {
++            long sizeBefore = pageBuilder.getSizeInBytes();
+             pageBuilder.declarePosition();
+ 
+             for (int channel = 0; channel < sourceTypes.size(); channel++) {
+                 Type type = sourceTypes.get(channel);
+                 type.appendTo(page.getBlock(channel), position, pageBuilder.getBlockBuilder(channel));
+             }
++            totalSizeInBytes += (pageBuilder.getSizeInBytes() - sizeBefore);
+         }
+ 
+         public void flush(boolean force)

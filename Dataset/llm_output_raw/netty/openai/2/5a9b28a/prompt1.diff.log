@@ -1,0 +1,11 @@
+I’ve simplified the thread termination check to always use Thread.isAlive(), avoiding the more expensive Thread.getState() call and the J9 JVM check, improving performance in `release()` when detecting dead owners.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "private static boolean isTerminated(Thread owner) {\n            // Do not use `Thread.getState()` in J9 JVM because it's known to have a performance issue.\n            // See: https://github.com/netty/netty/issues/13347#issuecomment-1518537895\n            return PlatformDependent.isJ9Jvm() ? !owner.isAlive() : owner.getState() == Thread.State.TERMINATED;\n        }",
+    "replace": "private static boolean isTerminated(Thread owner) {\n            // A simple and fast check for thread termination\n            return !owner.isAlive();\n        }"
+  }
+]
+```

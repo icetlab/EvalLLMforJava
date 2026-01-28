@@ -1,0 +1,11 @@
+I have optimized the `removeExpiredProducers` method to eliminate intermediate lists and use in-place iterator removals for both producer and verification state maps, reducing overhead and improving performance.
+
+```json
+[
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "public void removeExpiredProducers(long currentTimeMs) {\n        List<Long> keys = producers.entrySet().stream()\n                .filter(entry -> isProducerExpired(currentTimeMs, entry.getValue()))\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        removeProducerIds(keys);\n\n        List<Long> verificationKeys = verificationStates.entrySet().stream()\n                .filter(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs())\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        verificationKeys.forEach(verificationStates::remove);\n    }",
+    "replace": "public void removeExpiredProducers(long currentTimeMs) {\n        // Remove expired producers efficiently\n        Iterator<Map.Entry<Long, ProducerStateEntry>> itr = producers.entrySet().iterator();\n        while (itr.hasNext()) {\n            Map.Entry<Long, ProducerStateEntry> entry = itr.next();\n            if (isProducerExpired(currentTimeMs, entry.getValue())) {\n                itr.remove();\n            }\n        }\n        producerIdCount = producers.size();\n\n        // Remove expired verification states\n        Iterator<Map.Entry<Long, VerificationStateEntry>> verItr = verificationStates.entrySet().iterator();\n        long expirationMs = producerStateManagerConfig.producerIdExpirationMs();\n        while (verItr.hasNext()) {\n            Map.Entry<Long, VerificationStateEntry> entry = verItr.next();\n            if (currentTimeMs - entry.getValue().timestamp() >= expirationMs) {\n                verItr.remove();\n            }\n        }\n    }"
+  }
+]
+```

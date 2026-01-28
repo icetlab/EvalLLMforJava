@@ -1,0 +1,53 @@
+Looking at the provided Netty scheduling code and benchmark, I can identify several performance optimization opportunities:
+
+1. **Reducing object allocations** in the schedule method by avoiding unnecessary Runnable wrapper creation
+2. **Optimizing the PriorityQueue operations** by using more efficient methods
+3. **Simplifying comparison logic** in ScheduledFutureTask to reduce overhead
+4. **Reducing redundant method calls** and inline simple methods
+
+Here are the specific improvements:
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "    private static final Comparator<ScheduledFutureTask<?>> SCHEDULED_FUTURE_TASK_COMPARATOR =\n            new Comparator<ScheduledFutureTask<?>>() {\n                @Override\n                public int compare(ScheduledFutureTask<?> o1, ScheduledFutureTask<?> o2) {\n                    return o1.compareTo(o2);\n                }\n            };",
+    "replace": "    private static final Comparator<ScheduledFutureTask<?>> SCHEDULED_FUTURE_TASK_COMPARATOR =\n            (o1, o2) -> o1.compareTo(o2);"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "   static final Runnable WAKEUP_TASK = new Runnable() {\n       @Override\n       public void run() { } // Do nothing\n    };",
+    "replace": "   static final Runnable WAKEUP_TASK = () -> { }; // Do nothing"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "    private <V> ScheduledFuture<V> schedule(final ScheduledFutureTask<V> task) {\n        if (inEventLoop()) {\n            scheduledTaskQueue().add(task.setId(nextTaskId++));\n        } else {\n            final long deadlineNanos = task.deadlineNanos();\n            final Runnable addToQueue = new Runnable() {\n                @Override\n                public void run() {\n                    scheduledTaskQueue().add(task.setId(nextTaskId++));\n                }\n            };\n            if (beforeScheduledTaskSubmitted(deadlineNanos)) {\n                execute(addToQueue);\n            } else {\n                lazyExecute(addToQueue);\n                // Second hook after scheduling to facilitate race-avoidance\n                if (afterScheduledTaskSubmitted(deadlineNanos)) {\n                    execute(WAKEUP_TASK);\n                }\n            }\n        }\n\n        return task;\n    }",
+    "replace": "    private <V> ScheduledFuture<V> schedule(final ScheduledFutureTask<V> task) {\n        if (inEventLoop()) {\n            scheduledTaskQueue().add(task.setId(nextTaskId++));\n        } else {\n            final long deadlineNanos = task.deadlineNanos();\n            final Runnable addToQueue = () -> scheduledTaskQueue().add(task.setId(nextTaskId++));\n            if (beforeScheduledTaskSubmitted(deadlineNanos)) {\n                execute(addToQueue);\n            } else {\n                lazyExecute(addToQueue);\n                // Second hook after scheduling to facilitate race-avoidance\n                if (afterScheduledTaskSubmitted(deadlineNanos)) {\n                    execute(WAKEUP_TASK);\n                }\n            }\n        }\n\n        return task;\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "    final void removeScheduled(final ScheduledFutureTask<?> task) {\n        if (inEventLoop()) {\n            scheduledTaskQueue().removeTyped(task);\n        } else {\n            lazyExecute(new Runnable() {\n                @Override\n                public void run() {\n                    scheduledTaskQueue().removeTyped(task);\n                }\n            });\n        }\n    }",
+    "replace": "    final void removeScheduled(final ScheduledFutureTask<?> task) {\n        if (inEventLoop()) {\n            scheduledTaskQueue().removeTyped(task);\n        } else {\n            lazyExecute(() -> scheduledTaskQueue().removeTyped(task));\n        }\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    @Override\n    public int compareTo(Delayed o) {\n        if (this == o) {\n            return 0;\n        }\n\n        ScheduledFutureTask<?> that = (ScheduledFutureTask<?>) o;\n        long d = deadlineNanos() - that.deadlineNanos();\n        if (d < 0) {\n            return -1;\n        } else if (d > 0) {\n            return 1;\n        } else if (id < that.id) {\n            return -1;\n        } else {\n            assert id != that.id;\n            return 1;\n        }\n    }",
+    "replace": "    @Override\n    public int compareTo(Delayed o) {\n        if (this == o) {\n            return 0;\n        }\n\n        ScheduledFutureTask<?> that = (ScheduledFutureTask<?>) o;\n        int cmp = Long.compare(deadlineNanos(), that.deadlineNanos());\n        if (cmp != 0) {\n            return cmp;\n        }\n        // Same deadline, compare by id\n        return Long.compare(id, that.id);\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "    PriorityQueue<ScheduledFutureTask<?>> scheduledTaskQueue() {\n        if (scheduledTaskQueue == null) {\n            scheduledTaskQueue = new DefaultPriorityQueue<ScheduledFutureTask<?>>(\n                    SCHEDULED_FUTURE_TASK_COMPARATOR,\n                    // Use same initial capacity as java.util.PriorityQueue\n                    11);\n        }\n        return scheduledTaskQueue;\n    }",
+    "replace": "    PriorityQueue<ScheduledFutureTask<?>> scheduledTaskQueue() {\n        if (scheduledTaskQueue == null) {\n            scheduledTaskQueue = new DefaultPriorityQueue<ScheduledFutureTask<?>>(\n                    SCHEDULED_FUTURE_TASK_COMPARATOR,\n                    // Use same initial capacity as java.util.PriorityQueue\n                    11);\n        }\n        return scheduledTaskQueue;\n    }\n\n    private PriorityQueue<ScheduledFutureTask<?>> scheduledTaskQueueFast() {\n        PriorityQueue<ScheduledFutureTask<?>> q = scheduledTaskQueue;\n        if (q == null) {\n            q = scheduledTaskQueue();\n        }\n        return q;\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "    protected final Runnable pollScheduledTask(long nanoTime) {\n        assert inEventLoop();\n\n        Queue<ScheduledFutureTask<?>> scheduledTaskQueue = this.scheduledTaskQueue;\n        ScheduledFutureTask<?> scheduledTask = scheduledTaskQueue == null ? null : scheduledTaskQueue.peek();\n        if (scheduledTask == null || scheduledTask.deadlineNanos() - nanoTime > 0) {\n            return null;\n        }\n        scheduledTaskQueue.remove();\n        return scheduledTask;\n    }",
+    "replace": "    protected final Runnable pollScheduledTask(long nanoTime) {\n        assert inEventLoop();\n\n        PriorityQueue<ScheduledFutureTask<?>> scheduledTaskQueue = this.scheduledTaskQueue;\n        if (scheduledTaskQueue == null || scheduledTaskQueue.isEmpty()) {\n            return null;\n        }\n        ScheduledFutureTask<?> scheduledTask = scheduledTaskQueue.peek();\n        if (scheduledTask.deadlineNanos() - nanoTime > 0) {\n            return null;\n        }\n        scheduledTaskQueue.remove();\n        return scheduledTask;\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "    final ScheduledFutureTask<?> peekScheduledTask() {\n        Queue<ScheduledFutureTask<?>> scheduledTaskQueue = this.scheduledTaskQueue;\n        return scheduledTaskQueue != null ? scheduledTaskQueue.peek() : null;\n    }",
+    "replace": "    final ScheduledFutureTask<?> peekScheduledTask() {\n        PriorityQueue<ScheduledFutureTask<?>> scheduledTaskQueue = this.scheduledTaskQueue;\n        return scheduledTaskQueue != null && !scheduledTaskQueue.isEmpty() ? scheduledTaskQueue.peek() : null;\n    }"
+  }
+]
+```

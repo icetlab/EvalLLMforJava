@@ -1,0 +1,45 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java b/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java
+index 979fc2cb80..08fe63a97f 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java
+@@ -155,6 +155,7 @@ public class PageProcessor
+         private Block[] previouslyComputedResults;
+         private SelectedPositions selectedPositions;
+         private long retainedSizeInBytes;
++        private final ReferenceCountMap referenceCountMap = new ReferenceCountMap();
+ 
+         // remember if we need to re-use the same batch size if we yield last time
+         private boolean lastComputeYielded;
+@@ -207,7 +208,7 @@ public class PageProcessor
+                 if (result.isPageTooLarge()) {
+                     // if the page buffer filled up, so halve the batch size and retry
+                     verify(batchSize > 1);
+-                    projectBatchSize = projectBatchSize / 2;
++                    projectBatchSize = Math.max(1, projectBatchSize / 2);
+                     continue;
+                 }
+ 
+@@ -217,12 +218,12 @@ public class PageProcessor
+                 // if we produced a large page or if the expression is expensive, halve the batch size for the next call
+                 long pageSize = resultPage.getSizeInBytes();
+                 if (resultPage.getPositionCount() > 1 && (pageSize > MAX_PAGE_SIZE_IN_BYTES || expressionProfiler.isExpressionExpensive())) {
+-                    projectBatchSize = projectBatchSize / 2;
++                    projectBatchSize = Math.max(1, projectBatchSize / 2);
+                 }
+ 
+                 // if we produced a small page, double the batch size for the next call
+                 if (pageSize < MIN_PAGE_SIZE_IN_BYTES && projectBatchSize < MAX_BATCH_SIZE && !expressionProfiler.isExpressionExpensive()) {
+-                    projectBatchSize = projectBatchSize * 2;
++                    projectBatchSize = Math.min(MAX_BATCH_SIZE, projectBatchSize * 2);
+                 }
+ 
+                 // remove batch from selectedPositions and previouslyComputedResults
+@@ -256,7 +257,7 @@ public class PageProcessor
+         {
+             // increment the size only when it is the first reference
+             retainedSizeInBytes = Page.INSTANCE_SIZE + SizeOf.sizeOfObjectArray(page.getChannelCount());
+-            ReferenceCountMap referenceCountMap = new ReferenceCountMap();
++            referenceCountMap.clear();
+             for (int channel = 0; channel < page.getChannelCount(); channel++) {
+                 Block block = page.getBlock(channel);
+                 if (!isNotLoadedLazyBlock(block)) {

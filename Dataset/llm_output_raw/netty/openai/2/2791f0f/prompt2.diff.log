@@ -1,0 +1,31 @@
+I’ve localized the global AtomicLong counter into each AbstractScheduledEventExecutor instance to eliminate cross-executor contention when assigning task IDs. Each executor now maintains its own AtomicLong, and ScheduledFutureTask retrieves its ID from its executor.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "import java.util.concurrent.TimeUnit;",
+    "replace": "import java.util.concurrent.TimeUnit;\nimport java.util.concurrent.atomic.AtomicLong;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "private static final Comparator<ScheduledFutureTask<?>> SCHEDULED_FUTURE_TASK_COMPARATOR =\n            new Comparator<ScheduledFutureTask<?>>() {\n                @Override\n                public int compare(ScheduledFutureTask<?> o1, ScheduledFutureTask<?> o2) {\n                    return o1.compareTo(o2);\n                }\n            };",
+    "replace": "private static final Comparator<ScheduledFutureTask<?>> SCHEDULED_FUTURE_TASK_COMPARATOR =\n            new Comparator<ScheduledFutureTask<?>>() {\n                @Override\n                public int compare(ScheduledFutureTask<?> o1, ScheduledFutureTask<?> o2) {\n                    return o1.compareTo(o2);\n                }\n            };\n    private final AtomicLong taskIdCounter = new AtomicLong();\n\n    /**\n     * Returns the next unique task id for scheduling to avoid contention on a global counter.\n     */\n    protected long nextTaskId() {\n        return taskIdCounter.getAndIncrement();\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "import java.util.concurrent.atomic.AtomicLong;",
+    "replace": ""
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "private static final AtomicLong nextTaskId = new AtomicLong();",
+    "replace": ""
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "private final long id = nextTaskId.getAndIncrement();",
+    "replace": "private final long id = ((AbstractScheduledEventExecutor) executor()).nextTaskId();"
+  }
+]
+```

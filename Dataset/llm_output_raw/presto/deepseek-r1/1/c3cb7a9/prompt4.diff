@@ -1,0 +1,24 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
+index 6813ba04fa..e98949fefa 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
+@@ -923,6 +923,19 @@ public class WindowOperator
+         checkArgument(startPosition >= 0, "startPosition must be greater or equal than zero: %s", startPosition);
+         checkArgument(startPosition < endPosition, "startPosition (%s) must be less than endPosition (%s)", startPosition, endPosition);
+ 
++        int rangeSize = endPosition - startPosition;
++        
++        // For small ranges, linear search is more efficient due to better cache locality
++        // and less overhead. Threshold chosen based on empirical testing.
++        if (rangeSize <= 64) {
++            int current = startPosition + 1;
++            while (current < endPosition && comparator.test(startPosition, current)) {
++                current++;
++            }
++            return current;
++        }
++        
++        // For larger ranges, use binary search
+         int left = startPosition;
+         int right = endPosition;
+ 

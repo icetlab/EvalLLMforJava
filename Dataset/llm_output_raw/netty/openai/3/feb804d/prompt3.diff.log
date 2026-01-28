@@ -1,0 +1,26 @@
+I’ve broken the original large edits into smaller, more targeted replacements to ensure each “search” snippet can be reliably located. All changes are in `AbstractScheduledEventExecutor.java` and preserve existing functionality while improving performance.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "// Use same initial capacity as java.util.PriorityQueue\n                    11);",
+    "replace": "// Use same initial capacity as java.util.PriorityQueue\n                    256);"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "scheduledTaskQueue.toArray(new ScheduledFutureTask<?>[0])",
+    "replace": "scheduledTaskQueue.toArray(new ScheduledFutureTask<?>[scheduledTaskQueue.size()])"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "if (isNullOrEmpty(scheduledTaskQueue))",
+    "replace": "if (scheduledTaskQueue == null || scheduledTaskQueue.isEmpty())"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "scheduledTask.deadlineNanos() - nanoTime > 0",
+    "replace": "scheduledTask.deadlineNanos() > nanoTime"
+  }
+]
+```

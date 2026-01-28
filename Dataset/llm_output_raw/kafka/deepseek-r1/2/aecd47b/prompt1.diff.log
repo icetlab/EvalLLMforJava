@@ -1,0 +1,16 @@
+The primary performance improvement focuses on optimizing the `Checksums.update` method for direct ByteBuffers. The current implementation processes direct buffers byte-by-byte, which is inefficient due to repeated method calls and lack of bulk operations. We'll introduce a buffering strategy using a thread-local temporary array to reduce virtual method calls and leverage bulk `Checksum.update(byte[], int, int)` operations. For small lengths, we retain the byte-by-byte approach to avoid overhead. This maintains API compatibility and passes existing unit tests.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "public final class Checksums {\n\n    private Checksums() {\n    }",
+    "replace": "public final class Checksums {\n\n    private static final int TEMP_ARRAY_SIZE = 512;\n    private static final int BYTE_BY_BYTE_THRESHOLD = 16;\n    private static final ThreadLocal<byte[]> TEMP_ARRAY = ThreadLocal.withInitial(() -> new byte[TEMP_ARRAY_SIZE]);\n\n    private Checksums() {\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }",
+    "replace": "    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            if (length <= BYTE_BY_BYTE_THRESHOLD) {\n                int start = buffer.position() + offset;\n                int end = start + length;\n                for (int i = start; i < end; i++)\n                    checksum.update(buffer.get(i));\n            } else {\n                int originalPosition = buffer.position();\n                try {\n                    int start = originalPosition + offset;\n                    int remaining = length;\n                    int currentPos = start;\n                    byte[] tempArray = TEMP_ARRAY.get();\n                    while (remaining > 0) {\n                        int toRead = Math.min(remaining, TEMP_ARRAY_SIZE);\n                        buffer.position(currentPos);\n                        buffer.get(tempArray, 0, toRead);\n                        checksum.update(tempArray, 0, toRead);\n                        remaining -= toRead;\n                        currentPos += toRead;\n                    }\n                } finally {\n                    buffer.position(originalPosition);\n                }\n            }\n        }\n    }"
+  }
+]
+```

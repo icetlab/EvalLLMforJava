@@ -1,0 +1,13 @@
+The performance issue is related to the use of `ArrayDeque::pollFirst` for retrieving objects from the recycler's thread-local cache. This implements a FIFO (First-In, First-Out) retrieval policy.
+
+My improvement switches this to `ArrayDeque::pollLast`, which implements a LIFO (Last-In, First-Out) policy. Using a LIFO policy for object pools is a common performance optimization. It improves CPU cache locality because the most recently used (and recycled) object is the most likely to still be in the CPU cache. Retrieving this "hot" object is faster than retrieving an object that was recycled longer ago and might have been evicted from the cache. This change should result in better performance without affecting the recycler's correctness, as the pooled objects are interchangeable.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "            DefaultHandle<T> handle = batch.pollFirst();\n            if (null != handle) {\n                handle.toClaimed();\n            }",
+    "replace": "            DefaultHandle<T> handle = batch.pollLast();\n            if (null != handle) {\n                handle.toClaimed();\n            }"
+  }
+]
+```

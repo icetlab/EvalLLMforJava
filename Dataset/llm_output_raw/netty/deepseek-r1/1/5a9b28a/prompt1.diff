@@ -1,0 +1,49 @@
+diff --git a/common/src/main/java/io/netty/util/Recycler.java b/common/src/main/java/io/netty/util/Recycler.java
+index a17a9906c4..aad93c1b3b 100644
+--- a/common/src/main/java/io/netty/util/Recycler.java
++++ b/common/src/main/java/io/netty/util/Recycler.java
+@@ -338,24 +338,32 @@ public abstract class Recycler<T> {
+             } else {
+                 handle.unguardedToAvailable();
+             }
+-            Thread owner = this.owner;
+-            if (owner != null && Thread.currentThread() == owner && batch.size() < chunkSize) {
+-                accept(handle);
+-            } else if (owner != null && isTerminated(owner)) {
+-                this.owner = null;
+-                pooledHandles = null;
++            final Thread currentThread = Thread.currentThread();
++            final Thread owner = this.owner;
++            if (owner != null && currentThread == owner) {
++                // Fast path: same thread
++                if (batch.size() < chunkSize) {
++                    accept(handle);
++                } else {
++                    pooledHandles.relaxedOffer(handle);
++                }
+             } else {
+-                MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;
+-                if (handles != null) {
+-                    handles.relaxedOffer(handle);
++                // Cross-thread path
++                if (owner != null && isTerminated(owner)) {
++                    this.owner = null;
++                    pooledHandles = null;
++                } else {
++                    MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;
++                    if (handles != null) {
++                        handles.relaxedOffer(handle);
++                    }
+                 }
+             }
+         }
+ 
+         private static boolean isTerminated(Thread owner) {
+-            // Do not use `Thread.getState()` in J9 JVM because it's known to have a performance issue.
+-            // See: https://github.com/netty/netty/issues/13347#issuecomment-1518537895
+-            return PlatformDependent.isJ9Jvm() ? !owner.isAlive() : owner.getState() == Thread.State.TERMINATED;
++            // Use isAlive() for all JVMs - equivalent to TERMINATED check but more efficient
++            return !owner.isAlive();
+         }
+ 
+         DefaultHandle<T> newHandle() {

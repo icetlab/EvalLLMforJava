@@ -1,0 +1,11 @@
+I’ve optimized the getChildKey method to eliminate the temporary byte[] allocations and access the bytes directly via bit shifts on the stored long values.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java",
+    "search": "  @Override\n  public byte getChildKey(int pos) {\n    int posInLong;\n    if (pos <= 7) {\n      posInLong = pos;\n      byte[] firstBytes = LongUtils.toBDBytes(firstV);\n      return firstBytes[posInLong];\n    } else {\n      posInLong = pos - 8;\n      byte[] secondBytes = LongUtils.toBDBytes(secondV);\n      return secondBytes[posInLong];\n    }\n  }",
+    "replace": "  @Override\n  public byte getChildKey(int pos) {\n    if (pos <= 7) {\n      int posInLong = pos;\n      return (byte)(firstV >>> ((7 - posInLong) << 3));\n    } else {\n      int posInLong = pos - 8;\n      return (byte)(secondV >>> ((7 - posInLong) << 3));\n    }\n  }"
+  }
+]
+```

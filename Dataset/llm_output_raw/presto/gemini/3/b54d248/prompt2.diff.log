@@ -1,0 +1,17 @@
+My proposed change optimizes the `getPartition` method in the `HashGenerator` interface. The original implementation had two performance bottlenecks for a method called in a tight loop: an expensive `long` modulo operation and a redundant `checkState` call.
+
+My improvements are:
+1.  **Fast path for power-of-two partitions:** I've added a check to see if `partitionCount` is a power of two. If it is, the expensive modulo operation (`%`) is replaced with a much faster bitwise AND (`&`). This is a common optimization as partition counts are often chosen to be powers of two.
+2.  **Removal of redundant check:** The `checkState` call was redundant because after clearing the sign bit of the hash, the result of the modulo operation is guaranteed to be within the valid partition range (`[0, partitionCount - 1]`). Removing this check eliminates a method call and conditional logic from every invocation.
+
+These changes maintain the original partitioning logic, ensuring that functionality remains identical while significantly improving performance.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java",
+    "search": "    default int getPartition(int partitionCount, int position, Page page)\n    {\n        long rawHash = hashPosition(position, page);\n\n        // clear the sign bit\n        rawHash &= 0x7fff_ffff_ffff_ffffL;\n\n        int partition = (int) (rawHash % partitionCount);\n\n        checkState(partition >= 0 && partition < partitionCount);\n        return partition;\n    }",
+    "replace": "    default int getPartition(int partitionCount, int position, Page page)\n    {\n        long rawHash = hashPosition(position, page);\n\n        // clear the sign bit\n        rawHash &= 0x7fff_ffff_ffff_ffffL;\n\n        // fast path for power of 2 partition counts\n        if ((partitionCount & (partitionCount - 1)) == 0) {\n            return (int) (rawHash & (partitionCount - 1));\n        }\n\n        return (int) (rawHash % partitionCount);\n    }"
+  }
+]
+```

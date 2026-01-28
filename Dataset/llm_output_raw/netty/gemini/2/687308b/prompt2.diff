@@ -1,0 +1,56 @@
+diff --git a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
+index da5080ff85..37d1450353 100644
+--- a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
++++ b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
+@@ -120,10 +120,25 @@ public class QueryStringEncoder {
+      * @param s The String to encode
+      */
+     private void encodeNonUtf8Component(CharSequence s) {
++        int firstNeedToEncode = -1;
++        for (int i = 0; i < s.length(); i++) {
++            if (!dontNeedEncoding(s.charAt(i))) {
++                firstNeedToEncode = i;
++                break;
++            }
++        }
++
++        if (firstNeedToEncode == -1) {
++            uriBuilder.append(s);
++            return;
++        }
++
++        uriBuilder.append(s, 0, firstNeedToEncode);
++
+         //Don't allocate memory until needed
+         char[] buf = null;
+ 
+-        for (int i = 0, len = s.length(); i < len;) {
++        for (int i = firstNeedToEncode, len = s.length(); i < len;) {
+             char c = s.charAt(i);
+             if (dontNeedEncoding(c)) {
+                 uriBuilder.append(c);
+@@ -153,7 +168,23 @@ public class QueryStringEncoder {
+      * @see ByteBufUtil#writeUtf8(io.netty.buffer.ByteBuf, CharSequence, int, int)
+      */
+     private void encodeUtf8Component(CharSequence s) {
+-        for (int i = 0, len = s.length(); i < len; i++) {
++        int firstNeedToEncode = -1;
++        for (int i = 0; i < s.length(); i++) {
++            char c = s.charAt(i);
++            if (c >= 0x80 || !dontNeedEncoding(c)) {
++                firstNeedToEncode = i;
++                break;
++            }
++        }
++
++        if (firstNeedToEncode == -1) {
++            uriBuilder.append(s);
++            return;
++        }
++
++        uriBuilder.append(s, 0, firstNeedToEncode);
++
++        for (int i = firstNeedToEncode, len = s.length(); i < len; i++) {
+             char c = s.charAt(i);
+             if (c < 0x80) {
+                 if (dontNeedEncoding(c)) {

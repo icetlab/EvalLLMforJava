@@ -1,0 +1,16 @@
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java b/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java
+index de6dddea..6c824cf9 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java
+@@ -13,6 +13,11 @@ public class Node16 extends Node {
+   long secondV = 0L;
+   Node[] children = new Node[16];
+ 
++  private static byte getByteFromLong(long value, int pos) {
++    // pos in [0,7], 0 is most significant byte (big-endian)
++    return (byte) (value >>> ((7 - pos) << 3));
++  }
++
+   public Node16(int compressionLength) {
+     super(NodeType.NODE16, compressionLength);
+   }

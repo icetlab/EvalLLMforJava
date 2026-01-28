@@ -1,0 +1,21 @@
+I’ve introduced two compile-time–stable flags to avoid repeated static field lookups and streamlined the accessible check. I also switched one bounds check to use the new flag.
+
+```json
+[
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "private static final boolean checkAccessible;\n    private static final String PROP_CHECK_BOUNDS = \"io.netty.buffer.checkBounds\";\n    private static final boolean checkBounds;",
+    "replace": "private static final boolean checkAccessible;\n    private static final boolean CHECK_ACCESSIBLE = checkAccessible;\n    private static final String PROP_CHECK_BOUNDS = \"io.netty.buffer.checkBounds\";\n    private static final boolean checkBounds;\n    private static final boolean CHECK_BOUNDS = checkBounds;"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "protected final void ensureAccessible() {\n        if (checkAccessible && refCnt() == 0) {\n            throw new IllegalReferenceCountException(0);\n        }\n    }",
+    "replace": "protected final void ensureAccessible() {\n        if (!CHECK_ACCESSIBLE) {\n            return;\n        }\n        if (refCnt() == 0) {\n            throw new IllegalReferenceCountException(0);\n        }\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "final void checkIndex0(int index, int fieldLength) {\n        if (checkBounds) {\n            checkRangeBounds(index, fieldLength, capacity());\n        }\n    }",
+    "replace": "final void checkIndex0(int index, int fieldLength) {\n        if (CHECK_BOUNDS) {\n            checkRangeBounds(index, fieldLength, capacity());\n        }\n    }"
+  }
+]
+```

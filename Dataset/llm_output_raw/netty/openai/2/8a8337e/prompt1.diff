@@ -1,0 +1,15 @@
+diff --git a/common/src/main/java/io/netty/util/Recycler.java b/common/src/main/java/io/netty/util/Recycler.java
+index dd7b2d73be..cb623347c3 100644
+--- a/common/src/main/java/io/netty/util/Recycler.java
++++ b/common/src/main/java/io/netty/util/Recycler.java
+@@ -248,8 +248,8 @@ public abstract class Recycler<T> {
+         }
+ 
+         void toAvailable() {
+-            int prev = STATE_UPDATER.getAndSet(this, STATE_AVAILABLE);
+-            if (prev == STATE_AVAILABLE) {
++            // Use CAS to switch from CLAIMED to AVAILABLE; faster than getAndSet
++            if (!STATE_UPDATER.compareAndSet(this, STATE_CLAIMED, STATE_AVAILABLE)) {
+                 throw new IllegalStateException("Object has been recycled already.");
+             }
+         }

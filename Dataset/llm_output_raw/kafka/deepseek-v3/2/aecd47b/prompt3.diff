@@ -1,0 +1,27 @@
+diff --git a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+index 679b59249d..a257237546 100644
+--- a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
++++ b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+@@ -42,8 +42,20 @@ public final class Checksums {
+             checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);
+         } else {
+             int start = buffer.position() + offset;
+-            for (int i = start; i < start + length; i++)
+-                checksum.update(buffer.get(i));
++            // Use a temporary array for bulk updates
++            byte[] tmp = new byte[Math.min(length, 4096)];
++            int remaining = length;
++            int pos = start;
++            while (remaining > 0) {
++                int chunk = Math.min(remaining, tmp.length);
++                buffer.position(pos);
++                buffer.get(tmp, 0, chunk);
++                checksum.update(tmp, 0, chunk);
++                remaining -= chunk;
++                pos += chunk;
++            }
++            // Restore original position
++            buffer.position(start);
+         }
+     }
+     

@@ -1,0 +1,113 @@
+diff --git a/codec/src/main/java/io/netty/handler/codec/DateFormatter.java b/codec/src/main/java/io/netty/handler/codec/DateFormatter.java
+index 86df148500..1df2e94a12 100644
+--- a/codec/src/main/java/io/netty/handler/codec/DateFormatter.java
++++ b/codec/src/main/java/io/netty/handler/codec/DateFormatter.java
+@@ -266,42 +266,85 @@ public final class DateFormatter {
+     }
+ 
+     private boolean tryParseMonth(CharSequence txt, int tokenStart, int tokenEnd) {
+-        int len = tokenEnd - tokenStart;
+-
+-        if (len != 3) {
++        if (tokenEnd - tokenStart != 3) {
+             return false;
+         }
+-
+-        if (matchMonth("Jan", txt, tokenStart)) {
++        char c0 = txt.charAt(tokenStart);
++        char c1 = txt.charAt(tokenStart + 1);
++        char c2 = txt.charAt(tokenStart + 2);
++        char lc0 = (char) (c0 | 0x20);
++        char lc1 = (char) (c1 | 0x20);
++        char lc2 = (char) (c2 | 0x20);
++        switch (lc0) {
++            case 'j':
++                if (lc1 == 'a' && lc2 == 'n') {
+                     month = Calendar.JANUARY;
+-        } else if (matchMonth("Feb", txt, tokenStart)) {
++                    return true;
++                }
++                if (lc1 == 'u') {
++                    if (lc2 == 'n') {
++                        month = Calendar.JUNE;
++                        return true;
++                    }
++                    if (lc2 == 'l') {
++                        month = Calendar.JULY;
++                        return true;
++                    }
++                }
++                break;
++            case 'f':
++                if (lc1 == 'e' && lc2 == 'b') {
+                     month = Calendar.FEBRUARY;
+-        } else if (matchMonth("Mar", txt, tokenStart)) {
++                    return true;
++                }
++                break;
++            case 'm':
++                if (lc1 == 'a' && lc2 == 'r') {
+                     month = Calendar.MARCH;
+-        } else if (matchMonth("Apr", txt, tokenStart)) {
+-            month = Calendar.APRIL;
+-        } else if (matchMonth("May", txt, tokenStart)) {
++                    return true;
++                }
++                if (lc1 == 'a' && lc2 == 'y') {
+                     month = Calendar.MAY;
+-        } else if (matchMonth("Jun", txt, tokenStart)) {
+-            month = Calendar.JUNE;
+-        } else if (matchMonth("Jul", txt, tokenStart)) {
+-            month = Calendar.JULY;
+-        } else if (matchMonth("Aug", txt, tokenStart)) {
++                    return true;
++                }
++                break;
++            case 'a':
++                if (lc1 == 'p' && lc2 == 'r') {
++                    month = Calendar.APRIL;
++                    return true;
++                }
++                if (lc1 == 'u' && lc2 == 'g') {
+                     month = Calendar.AUGUST;
+-        } else if (matchMonth("Sep", txt, tokenStart)) {
++                    return true;
++                }
++                break;
++            case 's':
++                if (lc1 == 'e' && lc2 == 'p') {
+                     month = Calendar.SEPTEMBER;
+-        } else if (matchMonth("Oct", txt, tokenStart)) {
++                    return true;
++                }
++                break;
++            case 'o':
++                if (lc1 == 'c' && lc2 == 't') {
+                     month = Calendar.OCTOBER;
+-        } else if (matchMonth("Nov", txt, tokenStart)) {
++                    return true;
++                }
++                break;
++            case 'n':
++                if (lc1 == 'o' && lc2 == 'v') {
+                     month = Calendar.NOVEMBER;
+-        } else if (matchMonth("Dec", txt, tokenStart)) {
+-            month = Calendar.DECEMBER;
+-        } else {
+-            return false;
++                    return true;
+                 }
+-
++                break;
++            case 'd':
++                if (lc1 == 'e' && lc2 == 'c') {
++                    month = Calendar.DECEMBER;
+                     return true;
+                 }
++                break;
++        }
++        return false;
++    }
+ 
+     private boolean tryParseYear(CharSequence txt, int tokenStart, int tokenEnd) {
+         int len = tokenEnd - tokenStart;

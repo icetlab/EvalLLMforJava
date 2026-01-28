@@ -1,0 +1,11 @@
+I’ve added a fast‐path in specialize() to short‐circuit pure identity casts—when both key and value types are unchanged, we simply return the input block, avoiding the expensive mapCast logic.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java",
+    "search": "MethodHandle keyProcessor = buildProcessor(functionAndTypeManager, fromKeyType, toKeyType, true);\n        MethodHandle valueProcessor = buildProcessor(functionAndTypeManager, fromValueType, toValueType, false);",
+    "replace": "MethodHandle keyProcessor = buildProcessor(functionAndTypeManager, fromKeyType, toKeyType, true);\n        MethodHandle valueProcessor = buildProcessor(functionAndTypeManager, fromValueType, toValueType, false);\n        // fast path: no-op cast\n        if (fromKeyType.equals(toKeyType) && fromValueType.equals(toValueType)) {\n            MethodHandle identity = MethodHandles.dropArguments(MethodHandles.identity(Block.class), 0, SqlFunctionProperties.class);\n            return new BuiltInScalarFunctionImplementation(\n                    true,\n                    ImmutableList.of(valueTypeArgumentProperty(RETURN_NULL_ON_NULL)),\n                    identity\n            );\n        }"
+  }
+]
+```

@@ -1,0 +1,79 @@
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/RunContainer.java b/RoaringBitmap/src/main/java/org/roaringbitmap/RunContainer.java
+index dc605afc..a6357506 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/RunContainer.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/RunContainer.java
+@@ -1006,9 +1006,22 @@ public final class RunContainer extends Container implements Cloneable {
+ 
+   @Override
+   public int getCardinality() {
+-    int sum = nbrruns;// lengths are returned -1
+-    for (int k = 0; k < nbrruns; ++k) {
+-      sum = sum + (getLength(k))/* + 1 */;
++    int sum = nbrruns;
++    char[] vl = valueslength;
++    int runCount = nbrruns;
++    int k = 0;
++    // Unroll loop for better performance
++    while (k + 3 < runCount) {
++      sum += vl[2 * k + 1];
++      sum += vl[2 * (k + 1) + 1];
++      sum += vl[2 * (k + 2) + 1];
++      sum += vl[2 * (k + 3) + 1];
++      k += 4;
++    }
++    // Handle remaining runs
++    while (k < runCount) {
++      sum += vl[2 * k + 1];
++      ++k;
+     }
+     return sum;
+   }
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MappeableRunContainer.java b/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MappeableRunContainer.java
+index 28c87f31..79120c2a 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MappeableRunContainer.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MappeableRunContainer.java
+@@ -913,15 +913,39 @@ public final class MappeableRunContainer extends MappeableContainer implements C
+ 
+   @Override
+   public int getCardinality() {
+-    int sum = nbrruns; // lengths are stored -1
++    int sum = nbrruns;
++    int runCount = nbrruns;
++    int k = 0;
++    
+     if (isArrayBacked()) {
+       char[] vl = valueslength.array();
+-      for (int k = 0; k < nbrruns; ++k) {
+-        sum = sum + (vl[2 * k + 1])/* + 1 */;
++      // Unroll loop for better performance
++      while (k + 3 < runCount) {
++        sum += vl[2 * k + 1];
++        sum += vl[2 * (k + 1) + 1];
++        sum += vl[2 * (k + 2) + 1];
++        sum += vl[2 * (k + 3) + 1];
++        k += 4;
++      }
++      // Handle remaining runs
++      while (k < runCount) {
++        sum += vl[2 * k + 1];
++        ++k;
+       }
+     } else {
+-      for (int k = 0; k < nbrruns; ++k) {
+-        sum = sum + (getLength(k))/* + 1 */;
++      CharBuffer vb = valueslength;
++      // Unroll loop for better performance
++      while (k + 3 < runCount) {
++        sum += vb.get(2 * k + 1);
++        sum += vb.get(2 * (k + 1) + 1);
++        sum += vb.get(2 * (k + 2) + 1);
++        sum += vb.get(2 * (k + 3) + 1);
++        k += 4;
++      }
++      // Handle remaining runs
++      while (k < runCount) {
++        sum += vb.get(2 * k + 1);
++        ++k;
+       }
+     }
+     return sum;

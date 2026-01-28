@@ -1,0 +1,51 @@
+diff --git a/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java b/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java
+index c8c40a5d24..4fc331176d 100644
+--- a/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java
++++ b/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java
+@@ -1442,11 +1442,27 @@ public abstract class AbstractByteBuf extends ByteBuf {
+      * if the buffer was released before.
+      */
+     protected final void ensureAccessible() {
+-        if (checkAccessible && refCnt() == 0) {
+-            throw new IllegalReferenceCountException(0);
++        if (checkAccessible) {
++            // Try non-volatile read first to avoid volatile read penalty in hot paths.
++            // This is safe because:
++            // 1. If we read a non-zero value, the buffer hasn't been released (release sets refCnt to 0 with volatile write).
++            // 2. If we read 0, we must double-check with volatile read to avoid false positives from
++            //    thread-local cache inconsistencies or race conditions where the buffer was just released.
++            int refCnt = refCnt0();
++            if (refCnt == 0 && refCnt() == 0) {
++                throw new IllegalReferenceCountException(0);
++            }
+         }
+     }
+ 
++    /**
++     * Non-volatile read of reference count. Used as a fast-path in ensureAccessible().
++     * Default implementation does a volatile read for safety.
++     */
++    int refCnt0() {
++        return refCnt();
++    }
++
+     final void setIndex0(int readerIndex, int writerIndex) {
+         this.readerIndex = readerIndex;
+         this.writerIndex = writerIndex;
+diff --git a/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java b/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
+index d624d855f4..884377995f 100644
+--- a/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
++++ b/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
+@@ -37,6 +37,12 @@ public abstract class AbstractReferenceCountedByteBuf extends AbstractByteBuf {
+         refCntUpdater.set(this, 1);
+     }
+ 
++    @Override
++    int refCnt0() {
++        // Plain read of volatile field - gives recent value without memory barrier
++        return refCnt;
++    }
++
+     @Override
+     public int refCnt() {
+         return refCnt;

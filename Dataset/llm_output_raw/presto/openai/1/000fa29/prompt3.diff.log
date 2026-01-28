@@ -1,0 +1,16 @@
+We avoid unnecessary flatten work for flat blocks and reduce per‐position checks when replicating the first row:
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java",
+    "search": "static DecodedBlockNode decodeBlock(BlockFlattener flattener, Closer blockLeaseCloser, Block block)\n    {\n        BlockLease lease = flattener.flatten(block);",
+    "replace": "static DecodedBlockNode decodeBlock(BlockFlattener flattener, Closer blockLeaseCloser, Block block)\n    {\n        // Skip flatten for already-flat blocks\n        if (!(block instanceof ArrayBlock)\n                && !(block instanceof MapBlock)\n                && !(block instanceof RowBlock)\n                && !(block instanceof DictionaryBlock)\n                && !(block instanceof RunLengthEncodedBlock)) {\n            return new DecodedBlockNode(block, ImmutableList.of());\n        }\n        BlockLease lease = flattener.flatten(block);"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java",
+    "search": "for (int position = 0; position < positionCount; position++) {\n                boolean shouldReplicate = (replicatesAnyRow && !hasAnyRowBeenReplicated) ||\n                        nullBlock != null && nullBlock.isNull(position);\n\n                if (shouldReplicate) {\n                    for (int i = 0; i < partitionBuffers.length; i++) {\n                        partitionBuffers[i].addPosition(position);\n                    }\n                    hasAnyRowBeenReplicated = true;\n                }\n                else {\n                    int partition = partitionFunction.getPartition(partitionFunctionArgs, position);\n                    partitionBuffers[partition].addPosition(position);\n                }\n            }",
+    "replace": "int startPosition = 0;\n            // replicate first row once if requested\n            if (replicatesAnyRow && !hasAnyRowBeenReplicated && positionCount > 0) {\n                for (int i = 0; i < partitionBuffers.length; i++) {\n                    partitionBuffers[i].addPosition(0);\n                }\n                hasAnyRowBeenReplicated = true;\n                startPosition = 1;\n            }\n            for (int position = startPosition; position < positionCount; position++) {\n                // only null-driven replication remains\n                if (nullBlock != null && nullBlock.isNull(position)) {\n                    for (int i = 0; i < partitionBuffers.length; i++) {\n                        partitionBuffers[i].addPosition(position);\n                    }\n                }\n                else {\n                    int partition = partitionFunction.getPartition(partitionFunctionArgs, position);\n                    partitionBuffers[partition].addPosition(position);\n                }\n            }"
+  }
+]
+```

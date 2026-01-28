@@ -1,0 +1,16 @@
+The performance improvement focuses on optimizing the `Checksums.update` method for non-heap `ByteBuffer` instances (e.g., direct buffers). The original implementation used a byte-by-byte update loop, which is inefficient for bulk data. The new approach uses a duplicate buffer and a thread-local cached byte array to perform bulk updates, reducing the number of calls to `Checksum.update` and leveraging more efficient buffer operations. This should significantly improve checksum calculation performance for direct and read-only buffers, as highlighted in the benchmark.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "public final class Checksums {\n\n    private Checksums() {\n    }",
+    "replace": "public final class Checksums {\n\n    private static final ThreadLocal<byte[]> BYTE_ARRAY_CACHE = ThreadLocal.withInitial(() -> new byte[4096]);\n\n    private Checksums() {\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }",
+    "replace": "    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            // Use a duplicate buffer to avoid changing the original buffer's position\n            ByteBuffer dup = buffer.duplicate();\n            dup.position(dup.position() + offset);\n            byte[] temp = BYTE_ARRAY_CACHE.get();\n            int remaining = length;\n            while (remaining > 0) {\n                int toGet = Math.min(remaining, temp.length);\n                dup.get(temp, 0, toGet);\n                checksum.update(temp, 0, toGet);\n                remaining -= toGet;\n            }\n        }\n    }"
+  }
+]
+```

@@ -1,0 +1,60 @@
+diff --git a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+index cff4f39085..82f05cba22 100644
+--- a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
++++ b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+@@ -1040,16 +1040,30 @@ public final class GeoFunctions
+     @SqlType(GEOMETRY_TYPE_NAME)
+     public static Slice stIntersection(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
+-        if (deserializeType(left) == GeometrySerializationType.ENVELOPE && deserializeType(right) == GeometrySerializationType.ENVELOPE) {
+         Envelope leftEnvelope = deserializeEnvelope(left);
++        if (leftEnvelope.isEmpty()) {
++            return EMPTY_POLYGON;
++        }
+         Envelope rightEnvelope = deserializeEnvelope(right);
++        if (rightEnvelope.isEmpty()) {
++            return EMPTY_POLYGON;
++        }
+ 
+-            // Envelope#intersect updates leftEnvelope to the intersection of the two envelopes
+-            if (!leftEnvelope.intersect(rightEnvelope)) {
++        Envelope intersectionEnvelope = new Envelope();
++        leftEnvelope.copyTo(intersectionEnvelope);
++        if (!intersectionEnvelope.intersect(rightEnvelope)) {
+             return EMPTY_POLYGON;
+         }
+ 
+-            Envelope intersection = leftEnvelope;
++        GeometrySerializationType leftType = deserializeType(left);
++        GeometrySerializationType rightType = deserializeType(right);
++        boolean leftIsEnvelope = leftType == GeometrySerializationType.ENVELOPE;
++        boolean rightIsEnvelope = rightType == GeometrySerializationType.ENVELOPE;
++
++        if (leftIsEnvelope) {
++            if (rightIsEnvelope) {
++                // Intersection of two envelopes
++                Envelope intersection = intersectionEnvelope;
+                 if (intersection.getXMin() == intersection.getXMax()) {
+                     if (intersection.getYMin() == intersection.getYMax()) {
+                         return EsriGeometrySerde.serialize(createFromEsriGeometry(new Point(intersection.getXMin(), intersection.getXMax()), null));
+@@ -1064,6 +1078,20 @@ public final class GeoFunctions
+                 return EsriGeometrySerde.serialize(intersection);
+             }
+ 
++            // Left is an envelope, right is not.
++            // If left envelope contains right's envelope, it contains right geometry.
++            if (leftEnvelope.contains(rightEnvelope)) {
++                return right;
++            }
++        }
++        else if (rightIsEnvelope) {
++            // Right is an envelope, left is not.
++            // If right envelope contains left's envelope, it contains left geometry.
++            if (rightEnvelope.contains(leftEnvelope)) {
++                return left;
++            }
++        }
++
+         OGCGeometry leftGeometry = EsriGeometrySerde.deserialize(left);
+         OGCGeometry rightGeometry = EsriGeometrySerde.deserialize(right);
+         verifySameSpatialReference(leftGeometry, rightGeometry);

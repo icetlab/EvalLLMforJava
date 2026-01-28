@@ -1,0 +1,14 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java b/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java
+index 979fc2cb80..ef682a87dc 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java
+@@ -301,7 +301,8 @@ public class PageProcessor
+                 if (previouslyComputedResults[outputChannels[0]] != null && previouslyComputedResults[outputChannels[0]].getPositionCount() >= batchSize) {
+                     for (int channel : outputChannels) {
+                         blocks[channel] = previouslyComputedResults[channel].getRegion(0, batchSize);
+-                        pageSize += blocks[channel].getSizeInBytes();
++                        // Use getRegionSizeInBytes for previously computed results - more efficient and less sensitive to skew
++                        pageSize += previouslyComputedResults[channel].getRegionSizeInBytes(0, batchSize);
+                     }
+                 }
+                 else {

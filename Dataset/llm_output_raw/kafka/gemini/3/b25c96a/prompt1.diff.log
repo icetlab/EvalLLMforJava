@@ -1,0 +1,28 @@
+My overall improvement strategy focuses on optimizing areas of the `ProducerStateManager` that use Java Streams for operations that can be performed more efficiently with direct iteration or specialized collection methods. These changes aim to reduce intermediate object allocation and processing overhead, particularly in methods that handle producer state expiration, snapshot loading, and management.
+
+Specifically, I've made the following improvements:
+1.  In `removeStraySnapshots`, I replaced `stream().max()` with `Collections.max()` for finding the maximum offset, which is a more direct and potentially faster approach for this specific task.
+2.  In `loadFromSnapshot`, the stream-based filtering and processing of producer entries from a snapshot has been converted to a more performant enhanced for-loop. This avoids the overhead associated with creating a stream pipeline for a simple iteration over a list.
+3.  In `removeExpiredProducers`, I've replaced stream-based filtering and collection of keys for removal with the `Map.entrySet().removeIf()` method. This is significantly more efficient as it avoids creating intermediate lists of keys to be removed, reducing memory pressure and improving performance.
+
+These changes preserve the original functionality while enhancing performance by using more efficient Java collection and iteration patterns.
+
+```json
+[
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "    public void removeStraySnapshots(Collection<Long> segmentBaseOffsets) throws IOException {\n        OptionalLong maxSegmentBaseOffset = segmentBaseOffsets.isEmpty() ? OptionalLong.empty() : OptionalLong.of(segmentBaseOffsets.stream().max(Long::compare).get());",
+    "replace": "    public void removeStraySnapshots(Collection<Long> segmentBaseOffsets) throws IOException {\n        OptionalLong maxSegmentBaseOffset = segmentBaseOffsets.isEmpty() ? OptionalLong.empty() : OptionalLong.of(Collections.max(segmentBaseOffsets));"
+  },
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "                    log.info(\"Loading producer state from snapshot file '{}'\", snapshot);\n                    Stream<ProducerStateEntry> loadedProducers = readSnapshot(snapshot.file()).stream().filter(producerEntry -> !isProducerExpired(currentTime, producerEntry));\n                    loadedProducers.forEach(this::loadProducerEntry);",
+    "replace": "                    log.info(\"Loading producer state from snapshot file '{}'\", snapshot);\n                    for (ProducerStateEntry producerEntry : readSnapshot(snapshot.file())) {\n                        if (!isProducerExpired(currentTime, producerEntry)) {\n                            loadProducerEntry(producerEntry);\n                        }\n                    }"
+  },
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "    public void removeExpiredProducers(long currentTimeMs) {\n        List<Long> keys = producers.entrySet().stream()\n                .filter(entry -> isProducerExpired(currentTimeMs, entry.getValue()))\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        removeProducerIds(keys);\n\n        List<Long> verificationKeys = verificationStates.entrySet().stream()\n                .filter(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs())\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        verificationKeys.forEach(verificationStates::remove);\n    }",
+    "replace": "    public void removeExpiredProducers(long currentTimeMs) {\n        if (producers.entrySet().removeIf(entry -> isProducerExpired(currentTimeMs, entry.getValue()))) {\n            producerIdCount = producers.size();\n        }\n\n        verificationStates.entrySet().removeIf(entry ->\n                currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs());\n    }"
+  }
+]
+```

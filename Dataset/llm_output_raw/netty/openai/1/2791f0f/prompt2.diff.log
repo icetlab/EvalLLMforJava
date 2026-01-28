@@ -1,0 +1,36 @@
+I’ve moved the global task‐ID generator into each executor to avoid cross‐executor contention. A per‐instance AtomicLong in AbstractScheduledEventExecutor now supplies IDs, and ScheduledFutureTask uses that instead of the static AtomicLong.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "import java.util.concurrent.TimeUnit;",
+    "replace": "import java.util.concurrent.TimeUnit;\nimport java.util.concurrent.atomic.AtomicLong;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "public abstract class AbstractScheduledEventExecutor extends AbstractEventExecutor {",
+    "replace": "public abstract class AbstractScheduledEventExecutor extends AbstractEventExecutor {\n    // Per-instance task ID counter to reduce global contention\n    private final AtomicLong taskIdCounter = new AtomicLong();\n\n    long nextScheduledTaskId() {\n        return taskIdCounter.getAndIncrement();\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "private static final AtomicLong nextTaskId = new AtomicLong();",
+    "replace": ""
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "private final long id = nextTaskId.getAndIncrement();",
+    "replace": "private final long id;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "super(executor, callable);\n        if (period == 0)",
+    "replace": "super(executor, callable);\n        this.id = executor.nextScheduledTaskId();\n        if (period == 0)"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "super(executor, callable);\n        deadlineNanos = nanoTime;",
+    "replace": "super(executor, callable);\n        this.id = executor.nextScheduledTaskId();\n        deadlineNanos = nanoTime;"
+  }
+]
+```

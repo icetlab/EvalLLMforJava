@@ -1,0 +1,16 @@
+I have introduced a thread‐local scratch buffer to enable bulk reads from non–array‐backed byte buffers in a single checksum.update call, avoiding per‐byte updates and reducing overhead. This preserves buffer position and test semantics.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "public final class Checksums {\n\n    private Checksums() {\n    }\n",
+    "replace": "public final class Checksums {\n\n    private Checksums() {\n    }\n\n    // Thread-local scratch buffer for bulk reading from direct or readonly buffers\n    private static final ThreadLocal<byte[]> UPDATE_BUFFER = ThreadLocal.withInitial(() -> new byte[1024]);\n"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }",
+    "replace": "        } else {\n            int start = buffer.position() + offset;\n            int remaining = length;\n            // Duplicate buffer to avoid changing original position\n            ByteBuffer dup = buffer.duplicate();\n            dup.position(start);\n            dup.limit(start + length);\n            // Bulk-read into thread-local scratch to minimize allocations\n            byte[] tmp = UPDATE_BUFFER.get();\n            if (tmp.length < remaining) {\n                tmp = new byte[remaining];\n                UPDATE_BUFFER.set(tmp);\n            }\n            dup.get(tmp, 0, remaining);\n            checksum.update(tmp, 0, remaining);\n        }"
+  }
+]
+```

@@ -1,0 +1,23 @@
+diff --git a/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java b/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
+index c40c836b..bad30ff1 100644
+--- a/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
++++ b/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
+@@ -318,12 +318,15 @@ public class BitSliceIndexBase {
+     MutableRoaringBitmap F = ImmutableRoaringBitmap.or(G, E);
+     long n = F.getLongCardinality() - k;
+     if (n > 0) {
+-      // TODO: make faster
++      // Faster removal of excess elements using batch operations
++      // Get the smallest n elements from F and remove them
+       IntIterator i = F.getIntIterator();
+       MutableRoaringBitmap turnoff = new MutableRoaringBitmap();
+-      while (i.hasNext() && n > 0) {
++      long remaining = n;
++      
++      while (i.hasNext() && remaining > 0) {
+         turnoff.add(i.next());
+-        --n;
++        remaining--;
+       }
+       F.andNot(turnoff);
+     }

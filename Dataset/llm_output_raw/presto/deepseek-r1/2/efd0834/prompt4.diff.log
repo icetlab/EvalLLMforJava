@@ -1,0 +1,19 @@
+The build failure shows a trailing whitespace issue at line 167 in PageProcessor.java. The performance improvement goal is to defer expensive retained size calculations until the first batch is actually processed, rather than during construction. We need to:
+
+1. Fix the trailing whitespace in the constructor comment
+2. Defer memory accounting until the first batch processing begins
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java",
+    "search": "        private ProjectSelectedPositions(ConnectorSession session, DriverYieldSignal yieldSignal, LocalMemoryContext memoryContext, Page page, SelectedPositions selectedPositions)\n        {\n            this.session = session;\n            this.yieldSignal = yieldSignal;\n            this.page = page;\n            this.memoryContext = memoryContext;\n            this.selectedPositions = selectedPositions;\n            this.previouslyComputedResults = new Block[projections.size()];\n            updateRetainedSize();\n        }",
+    "replace": "        private ProjectSelectedPositions(ConnectorSession session, DriverYieldSignal yieldSignal, LocalMemoryContext memoryContext, Page page, SelectedPositions selectedPositions)\n        {\n            this.session = session;\n            this.yieldSignal = yieldSignal;\n            this.page = page;\n            this.memoryContext = memoryContext;\n            this.selectedPositions = selectedPositions;\n            this.previouslyComputedResults = new Block[projections.size()];\n            // Memory accounting deferred until first batch processing\n        }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java",
+    "search": "        @Override\n        public ProcessState<Page> process()\n        {\n            int batchSize;\n            while (true) {\n                if (selectedPositions.isEmpty()) {\n                    memoryContext.setBytes(0);\n                    verify(!lastComputeYielded);\n                    return finished();\n                }",
+    "replace": "        @Override\n        public ProcessState<Page> process()\n        {\n            // Initialize memory accounting on first batch processing\n            if (retainedSizeInBytes == 0 && !selectedPositions.isEmpty()) {\n                updateRetainedSize();\n            }\n\n            int batchSize;\n            while (true) {\n                if (selectedPositions.isEmpty()) {\n                    memoryContext.setBytes(0);\n                    verify(!lastComputeYielded);\n                    return finished();\n                }"
+  }
+]
+```

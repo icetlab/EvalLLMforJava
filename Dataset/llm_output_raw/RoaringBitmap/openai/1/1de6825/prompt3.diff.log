@@ -1,0 +1,31 @@
+I have inlined byte‐array manipulations to avoid repeated allocations and ByteBuffer usage, and added helper methods to extract and compose bytes directly from longs. This should reduce GC pressure and improve performance while preserving functionality.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java",
+    "search": "public class Node16 extends Node {",
+    "replace": "public class Node16 extends Node {\n\n  // helper to extract the big‐endian byte at index 0..7 from a long\n  private static byte extractByte(long v, int index) {\n    return (byte)(v >>> ((7 - index) << 3));\n  }\n\n  // fill 8 bytes from a long into bytes[offset..offset+7] in big‐endian order\n  private static void fillBytesFromLong(long v, byte[] bytes, int offset) {\n    for (int i = 0; i < 8; i++) {\n      bytes[offset + i] = (byte)(v >>> ((7 - i) * 8));\n    }\n  }\n\n  // compose a long from bytes[offset..offset+7] in big‐endian order\n  private static long bytesToLong(byte[] bytes, int offset) {\n    long r = 0L;\n    for (int i = 0; i < 8; i++) {\n      r = (r << 8) | (bytes[offset + i] & 0xFFL);\n    }\n    return r;\n  }"
+  },
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java",
+    "search": "@Override\n  public byte getChildKey(int pos) {\n    int posInLong;\n    if (pos <= 7) {\n      posInLong = pos;\n      byte[] firstBytes = LongUtils.toBDBytes(firstV);\n      return firstBytes[posInLong];\n    } else {\n      posInLong = pos - 8;\n      byte[] secondBytes = LongUtils.toBDBytes(secondV);\n      return secondBytes[posInLong];\n    }\n  }",
+    "replace": "@Override\n  public byte getChildKey(int pos) {\n    if (pos <= 7) {\n      return extractByte(firstV, pos);\n    } else {\n      return extractByte(secondV, pos - 8);\n    }\n  }"
+  },
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java",
+    "search": "if (currentNode16.count < 8) {\n      //first\n      byte[] bytes = LongUtils.toBDBytes(currentNode16.firstV);\n      bytes[currentNode16.count] = key;\n      currentNode16.firstV = LongUtils.fromBDBytes(bytes);\n      currentNode16.children[currentNode16.count] = child;\n      sortSmallByteArray(bytes, currentNode16.children, 0, currentNode16.count);\n      currentNode16.count++;\n      currentNode16.firstV = LongUtils.fromBDBytes(bytes);\n      return currentNode16;\n    }",
+    "replace": "if (currentNode16.count < 8) {\n      byte[] bytes = new byte[8];\n      fillBytesFromLong(currentNode16.firstV, bytes, 0);\n      bytes[currentNode16.count] = key;\n      currentNode16.children[currentNode16.count] = child;\n      sortSmallByteArray(bytes, currentNode16.children, 0, currentNode16.count);\n      currentNode16.count++;\n      currentNode16.firstV = bytesToLong(bytes, 0);\n      return currentNode16;\n    }"
+  },
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java",
+    "search": "} else if (currentNode16.count < 16) {\n      //second\n      ByteBuffer byteBuffer = ByteBuffer.allocate(16).order(ByteOrder.BIG_ENDIAN);\n      byteBuffer.putLong(currentNode16.firstV);\n      byteBuffer.putLong(currentNode16.secondV);\n      byteBuffer.put(currentNode16.count, key);\n      currentNode16.children[currentNode16.count] = child;\n      sortSmallByteArray(byteBuffer.array(), currentNode16.children, 0, currentNode16.count);\n      currentNode16.count++;\n      currentNode16.firstV = byteBuffer.getLong(0);\n      currentNode16.secondV = byteBuffer.getLong(8);\n      return currentNode16;\n    }",
+    "replace": "} else if (currentNode16.count < 16) {\n      byte[] bytes = new byte[16];\n      fillBytesFromLong(currentNode16.firstV, bytes, 0);\n      fillBytesFromLong(currentNode16.secondV, bytes, 8);\n      bytes[currentNode16.count] = key;\n      currentNode16.children[currentNode16.count] = child;\n      sortSmallByteArray(bytes, currentNode16.children, 0, currentNode16.count);\n      currentNode16.count++;\n      currentNode16.firstV = bytesToLong(bytes, 0);\n      currentNode16.secondV = bytesToLong(bytes, 8);\n      return currentNode16;\n    }"
+  },
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java",
+    "search": "children[pos] = null;\n    ByteBuffer byteBuffer = ByteBuffer.allocate(16).order(ByteOrder.BIG_ENDIAN);\n    byte[] bytes = byteBuffer.putLong(firstV).putLong(secondV).array();\n    System.arraycopy(bytes, pos + 1, bytes, pos, (16 - pos - 1));\n    System.arraycopy(children, pos + 1, children, pos, (16 - pos - 1));\n    firstV = byteBuffer.getLong(0);\n    secondV = byteBuffer.getLong(8);\n    count--;",
+    "replace": "children[pos] = null;\n    byte[] bytes = new byte[16];\n    fillBytesFromLong(firstV, bytes, 0);\n    fillBytesFromLong(secondV, bytes, 8);\n    System.arraycopy(bytes, pos + 1, bytes, pos, (16 - pos - 1));\n    System.arraycopy(children, pos + 1, children, pos, (16 - pos - 1));\n    firstV = bytesToLong(bytes, 0);\n    secondV = bytesToLong(bytes, 8);\n    count--;"
+  }
+]
+```

@@ -1,0 +1,26 @@
+I have optimized key hotspots by replacing stream-based aggregations and lambdas with hand-written loops, reducing object allocations and improving iteration efficiency.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "Long sum = IntStream.range(0, this.bitCount())\n        .mapToLong(x -> (long) (1 << x) * ImmutableRoaringBitmap.andCardinality(this.bA[x], foundSet))\n        .sum();",
+    "replace": "long sum = 0L;\n    for (int i = 0; i < this.bA.length; i++) {\n      sum += ((long)1 << i) * ImmutableRoaringBitmap.andCardinality(this.bA[i], foundSet);\n    }"
+  },
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "public List<Pair<Integer, Integer>> toPairList() {\n    List<Pair<Integer, Integer>> pairList = new ArrayList<>();\n    this.ebM.forEach((IntConsumer) cid -> {\n      pairList.add(Pair.newPair(cid, this.getValue(cid).getKey()));\n    });\n    return pairList;",
+    "replace": "public List<Pair<Integer, Integer>> toPairList() {\n    List<Pair<Integer, Integer>> pairList = new ArrayList<>();\n    IntIterator it = this.ebM.getIntIterator();\n    while (it.hasNext()) {\n      int cid = it.next();\n      pairList.add(Pair.newPair(cid, this.getValue(cid).getKey()));\n    }\n    return pairList;"
+  },
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "public List<Pair<Integer, Integer>> toPairList(ImmutableRoaringBitmap foundSet) {\n    List<Pair<Integer, Integer>> pairList = new ArrayList<>();\n    ImmutableRoaringBitmap bitmap = ImmutableRoaringBitmap.and(this.ebM, foundSet);\n    bitmap.forEach((IntConsumer) cid -> {\n      pairList.add(Pair.newPair(cid, this.getValue(cid).getKey()));\n    });\n    return pairList;",
+    "replace": "public List<Pair<Integer, Integer>> toPairList(ImmutableRoaringBitmap foundSet) {\n    List<Pair<Integer, Integer>> pairList = new ArrayList<>();\n    ImmutableRoaringBitmap bitmap = ImmutableRoaringBitmap.and(this.ebM, foundSet);\n    IntIterator it = bitmap.getIntIterator();\n    while (it.hasNext()) {\n      int cid = it.next();\n      pairList.add(Pair.newPair(cid, this.getValue(cid).getKey()));\n    }\n    return pairList;"
+  },
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "protected <T> CompletableFuture<List<T>> allOf(List<CompletableFuture<T>> futuresList) {\n    CompletableFuture<Void> allFuturesResult =\n        CompletableFuture.allOf(futuresList.toArray(new CompletableFuture[0]));\n    return allFuturesResult.thenApply(v ->\n        futuresList.stream().\n            map(CompletableFuture::join).\n            collect(Collectors.<T>toList())\n    );\n  }",
+    "replace": "protected <T> CompletableFuture<List<T>> allOf(List<CompletableFuture<T>> futuresList) {\n    CompletableFuture<Void> allFuturesResult =\n        CompletableFuture.allOf(futuresList.toArray(new CompletableFuture[0]));\n    return allFuturesResult.thenApply(v -> {\n      List<T> results = new ArrayList<>(futuresList.size());\n      for (CompletableFuture<T> f : futuresList) {\n        results.add(f.join());\n      }\n      return results;\n    });\n  }"
+  }
+]
+```

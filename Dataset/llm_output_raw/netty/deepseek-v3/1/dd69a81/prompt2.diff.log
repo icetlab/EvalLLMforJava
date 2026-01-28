@@ -1,0 +1,24 @@
+## Explanation
+The current implementation of `HttpRequestEncoder` has performance inefficiencies when handling URIs that require slash insertion before the query string. Specifically, the code uses multiple string operations like `indexOf`, `lastIndexOf`, and string concatenation which can be optimized. The main issues are:
+
+1. **Redundant string concatenation**: Using `uri += SLASH` creates a new string.
+2. **Multiple index scans**: The code calls `uri.indexOf("://")`, `uri.indexOf(QUESTION_MARK, startIndex)`, and `uri.lastIndexOf(SLASH, index)` which scan the string multiple times.
+3. **StringBuilder overhead**: When a slash needs to be inserted before a query string, a `StringBuilder` is created even when not always needed.
+
+We can optimize by:
+- Using a single pass through the URI to determine if slash insertion is needed
+- Avoiding string concatenation by working with indices
+- Using more efficient character-by-character scanning for the protocol separator
+- Minimizing object allocations
+
+Here are the atomic changes:
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java",
+    "search": "        // Add / as absolute path if no is present.\n        // See http://tools.ietf.org/html/rfc2616#section-5.1.2\n        String uri = request.uri();\n\n        if (uri.isEmpty()) {\n            uri += SLASH;\n        } else {\n            int start = uri.indexOf(\"://\");\n            if (start != -1 && uri.charAt(0) != SLASH) {\n                int startIndex = start + 3;\n                // Correctly handle query params.\n                // See https://github.com/netty/netty/issues/2732\n                int index = uri.indexOf(QUESTION_MARK, startIndex);\n                if (index == -1) {\n                    if (uri.lastIndexOf(SLASH) <= startIndex) {\n                        uri += SLASH;\n                    }\n                } else {\n                    if (uri.lastIndexOf(SLASH, index) <= startIndex) {\n                        int len = uri.length();\n                        StringBuilder sb = new StringBuilder(len + 1);\n                        sb.append(uri, 0, index)\n                          .append(SLASH)\n                          .append(uri, index, len);\n                        uri = sb.toString();\n                    }\n                }\n            }\n        }",
+    "replace": "        // Add / as absolute path if no is present.\n        // See http://tools.ietf.org/html/rfc2616#section-5.1.2\n        String uri = request.uri();\n\n        if (uri.isEmpty()) {\n            uri = \"/\";\n        } else {\n            // Check if URI contains protocol separator\n            int start = -1;\n            int uriLen = uri.length();\n            // Manual scan for \"://\" to avoid regex overhead\n            for (int i = 0; i < uriLen - 2; i++) {\n                if (uri.charAt(i) == ':' && uri.charAt(i + 1) == '/' && uri.charAt(i + 2) == '/') {\n                    start = i;\n                    break;\n                }\n            }\n            \n            if (start != -1 && uri.charAt(0) != SLASH) {\n                int startIndex = start + 3;\n                // Find if we need to insert slash before query string\n                boolean needSlash = true;\n                int slashPos = -1;\n                int queryPos = -1;\n                \n                // Single pass through the relevant portion of the URI\n                for (int i = startIndex; i < uriLen; i++) {\n                    char c = uri.charAt(i);\n                    if (c == SLASH) {\n                        slashPos = i;\n                        needSlash = false;\n                        break;\n                    } else if (c == QUESTION_MARK) {\n                        queryPos = i;\n                        break;\n                    }\n                }\n                \n                if (needSlash) {\n                    if (queryPos == -1) {\n                        // No query string, append slash at the end\n                        uri = uri + SLASH;\n                    } else {\n                        // Insert slash before query string\n                        StringBuilder sb = new StringBuilder(uriLen + 1);\n                        sb.append(uri, 0, queryPos)\n                          .append(SLASH)\n                          .append(uri, queryPos, uriLen);\n                        uri = sb.toString();\n                    }\n                }\n            }\n        }"
+  }
+]
+```

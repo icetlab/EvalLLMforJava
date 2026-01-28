@@ -1,0 +1,88 @@
+diff --git a/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java b/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
+index c40c836b..fde5123a 100644
+--- a/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
++++ b/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
+@@ -193,21 +193,21 @@ public class BitSliceIndexBase {
+ 
+     MutableRoaringBitmap GT = new MutableRoaringBitmap();
+     MutableRoaringBitmap LT = new MutableRoaringBitmap();
+-    ImmutableRoaringBitmap EQ = this.ebM;
++    MutableRoaringBitmap EQ = this.ebM.toMutableRoaringBitmap();
+ 
+ 
+     for (int i = this.bitCount() - 1; i >= 0; i--) {
+       int bit = (predicate >> i) & 1;
++      ImmutableRoaringBitmap slice = this.bA[i];
+       if (bit == 1) {
+-        LT = ImmutableRoaringBitmap.or(LT, ImmutableRoaringBitmap.andNot(EQ, this.bA[i]));
+-        EQ = ImmutableRoaringBitmap.and(EQ, this.bA[i]);
++        LT.or(ImmutableRoaringBitmap.andNot(EQ, slice));
++        EQ.and(slice);
+       } else {
+-        GT = ImmutableRoaringBitmap.or(GT, ImmutableRoaringBitmap.and(EQ, this.bA[i]));
+-        EQ = ImmutableRoaringBitmap.andNot(EQ, this.bA[i]);
++        GT.or(ImmutableRoaringBitmap.and(EQ, slice));
++        EQ.andNot(slice);
+       }
+-
+     }
+-    EQ = ImmutableRoaringBitmap.and(fixedFoundSet, EQ);
++    EQ.and(fixedFoundSet);
+     switch (operation) {
+       case EQ:
+         return EQ;
+@@ -233,24 +233,27 @@ public class BitSliceIndexBase {
+    */
+   private ImmutableRoaringBitmap owenGreatEqual(int predicate,
+                           ImmutableRoaringBitmap foundSet) {
+-    ImmutableRoaringBitmap lastSpineGate = null;
++    MutableRoaringBitmap lastSpineGate = null;
+     int beGtrThan = predicate - 1;
+     List<ImmutableRoaringBitmap> orInputs = new ArrayList<>();
+     int leastSignifZero = Long.numberOfTrailingZeros(~beGtrThan);
+     // work from most significant bit down to the last 1.
+     for (int workingBit = this.bitCount() - 1; workingBit >= leastSignifZero; --workingBit) {
++      ImmutableRoaringBitmap slice = this.bA[workingBit];
+       if ((beGtrThan & (1L << workingBit)) == 0L) {
+         if (lastSpineGate == null) // don't make a singleton AND!
+-          orInputs.add(this.bA[workingBit]);
+-        else {
++        {
++          orInputs.add(slice);
++        } else {
+           // really make the AND
+-          orInputs.add(MutableRoaringBitmap.and(lastSpineGate, this.bA[workingBit]));
++          orInputs.add(MutableRoaringBitmap.and(lastSpineGate, slice));
+         }
+       } else {
+-        if (lastSpineGate == null)
+-          lastSpineGate = this.bA[workingBit];
+-        else
+-          lastSpineGate = ImmutableRoaringBitmap.and(lastSpineGate, this.bA[workingBit]);
++        if (lastSpineGate == null) {
++          lastSpineGate = slice.toMutableRoaringBitmap();
++        } else {
++          lastSpineGate.and(slice);
++        }
+       }
+     }
+ 
+@@ -319,6 +322,10 @@ public class BitSliceIndexBase {
+     long n = F.getLongCardinality() - k;
+     if (n > 0) {
+       // TODO: make faster
++      if (n <= Integer.MAX_VALUE) {
++        MutableRoaringBitmap turnoff = F.limit((int) n);
++        F.andNot(turnoff);
++      } else {
+         IntIterator i = F.getIntIterator();
+         MutableRoaringBitmap turnoff = new MutableRoaringBitmap();
+         while (i.hasNext() && n > 0) {
+@@ -327,6 +334,7 @@ public class BitSliceIndexBase {
+         }
+         F.andNot(turnoff);
+       }
++    }
+ 
+     if (F.getCardinality() != k)
+       throw new RuntimeException("bugs found when compute topK");

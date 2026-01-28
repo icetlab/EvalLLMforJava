@@ -1,0 +1,17 @@
+The performance of `WindowOperator.findEndPosition` can be improved. This method uses a binary search to find the end of a group of equal rows.
+
+My optimization introduces two main improvements:
+1.  A fast-path short-circuit: I've added a check for the last element in the search range. If it's part of the group, it implies all elements in the range are, and we can return immediately. This is highly effective when entire partitions or large contiguous groups are processed, as it avoids the binary search altogether.
+2.  A more efficient binary search: The original binary search implementation is correct but can be slightly improved. I've replaced it with a more standard and efficient `upper_bound`-style binary search. This version can reduce the number of comparisons, especially when combined with the narrowed search range from the fast-path check.
+
+These changes make `findEndPosition` more efficient for common data patterns seen in window operations without sacrificing correctness for any case.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java",
+    "search": "    @VisibleForTesting\n    static int findEndPosition(int startPosition, int endPosition, BiPredicate<Integer, Integer> comparator)\n    {\n        checkArgument(startPosition >= 0, \"startPosition must be greater or equal than zero: %s\", startPosition);\n        checkArgument(startPosition < endPosition, \"startPosition (%s) must be less than endPosition (%s)\", startPosition, endPosition);\n\n        int left = startPosition;\n        int right = endPosition;\n\n        while (left + 1 < right) {\n            int middle = (left + right) >>> 1;\n\n            if (comparator.test(startPosition, middle)) {\n                left = middle;\n            }\n            else {\n                right = middle;\n            }\n        }\n\n        return right;\n    }",
+    "replace": "    @VisibleForTesting\n    static int findEndPosition(int startPosition, int endPosition, BiPredicate<Integer, Integer> comparator)\n    {\n        checkArgument(startPosition >= 0, \"startPosition must be greater or equal than zero: %s\", startPosition);\n        checkArgument(startPosition < endPosition, \"startPosition (%s) must be less than endPosition (%s)\", startPosition, endPosition);\n\n        // short-circuit if the whole range is one group\n        if (comparator.test(startPosition, endPosition - 1)) {\n            return endPosition;\n        }\n\n        // binary search for the first element that is not in the group\n        int low = startPosition;\n        int high = endPosition - 1;\n        while (low < high) {\n            int middle = (low + high) >>> 1;\n            if (comparator.test(startPosition, middle)) {\n                low = middle + 1;\n            }\n            else {\n                high = middle;\n            }\n        }\n        return low;\n    }"
+  }
+]
+```

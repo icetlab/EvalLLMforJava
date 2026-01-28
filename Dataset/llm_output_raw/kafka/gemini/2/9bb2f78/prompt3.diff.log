@@ -1,0 +1,23 @@
+My improvement strategy focuses on optimizing the field filtering logic in the `ReplaceField` transformation. The original implementation uses `List.contains()` for checking `include` and `exclude` fields, which has a time complexity of O(n). This becomes a bottleneck when dealing with a large number of fields, as is the case in the provided benchmark.
+
+To address this, I will replace the `List<String>` collections for `exclude` and `include` fields with `Set<String>`. This change allows leveraging the `Set.contains()` method, which offers an average time complexity of O(1). This will significantly improve performance for transformations configured with many included or excluded fields, without altering the transformation's logic.
+
+```json
+[
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "import java.util.List;",
+    "replace": "import java.util.HashSet;\nimport java.util.List;\nimport java.util.Set;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "    private List<String> exclude;\n    private List<String> include;",
+    "replace": "    private Set<String> exclude;\n    private Set<String> include;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "        exclude = config.getList(ConfigName.EXCLUDE);\n        include = config.getList(ConfigName.INCLUDE);",
+    "replace": "        exclude = new HashSet<>(config.getList(ConfigName.EXCLUDE));\n        include = new HashSet<>(config.getList(ConfigName.INCLUDE));"
+  }
+]
+```

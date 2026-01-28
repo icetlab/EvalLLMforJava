@@ -1,0 +1,49 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java
+index 79b56c6971..b9282076fc 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java
+@@ -646,22 +646,25 @@ public class SliceDirectSelectiveStreamReader
+         if (lengthStream != null) {
+             int nonNullCount = totalPositions - nullCount;
+             lengthVector = ensureCapacity(lengthVector, nonNullCount);
+-            lengthStream.nextIntVector(nonNullCount, lengthVector, 0);
++            long longTotalLength = 0;
+ 
+             if (useBatchMode(positionCount, totalPositions)) {
+                 for (int i = 0; i < nonNullCount; i++) {
+-                    totalLength += lengthVector[i];
+-                    maxLength = Math.max(maxLength, lengthVector[i]);
++                    int length = (int) lengthStream.next();
++                    lengthVector[i] = length;
++                    longTotalLength += length;
+                 }
++                // maxLength is not used in batch mode
+             }
+             else {
++                lengthStream.nextIntVector(nonNullCount, lengthVector, 0);
+                 int positionIndex = 0;
+                 int lengthIndex = 0;
+                 for (int i = 0; i < totalPositions; i++) {
+                     boolean isNotNull = nullCount == 0 || !isNullVector[i];
+                     if (i == positions[positionIndex]) {
+                         if (isNotNull) {
+-                            totalLength += lengthVector[lengthIndex];
++                            longTotalLength += lengthVector[lengthIndex];
+                             maxLength = Math.max(maxLength, lengthVector[lengthIndex]);
+                             lengthIndex++;
+                         }
+@@ -674,12 +677,13 @@ public class SliceDirectSelectiveStreamReader
+             }
+ 
+             // TODO Do not throw if outputRequired == false
+-            if (totalLength > ONE_GIGABYTE) {
++            if (longTotalLength > ONE_GIGABYTE) {
+                 throw new GenericInternalException(
+                         format("Values in column \"%s\" are too large to process for Presto. %s column values are larger than 1GB [%s]",
+                                 streamDescriptor.getFieldName(), positionCount,
+                                 streamDescriptor.getOrcDataSourceId()));
+             }
++            totalLength = (int) longTotalLength;
+         }
+ 
+         if (outputRequired) {

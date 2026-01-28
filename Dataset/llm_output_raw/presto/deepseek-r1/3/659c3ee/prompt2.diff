@@ -1,0 +1,45 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+index 93aeb97e76..681c9f59ee 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+@@ -263,7 +263,40 @@ public class ByteSelectiveStreamReader
+             outputPositionCount = positionCount;
+             return positionCount;
+         }
++        
++        // Check if positions are contiguous
++        boolean positionsContiguous = true;
++        for (int i = 0; i < positionCount; i++) {
++            if (positions[i] != positions[0] + i) {
++                positionsContiguous = false;
++                break;
++            }
++        }
++        
++        // Optimized path: contiguous positions with nulls
++        if (positionsContiguous && presentStream != null) {
++            int streamPosition = positions[0];
++            if (streamPosition > 0) {
++                skip(streamPosition);
++            }
++            
++            // Read null bits in bulk
++            for (int i = 0; i < positionCount; i++) {
++                nulls[i] = !presentStream.nextBit();
++            }
++            
++            // Read data values for non-null positions
++            for (int i = 0; i < positionCount; i++) {
++                if (!nulls[i]) {
++                    values[i] = dataStream.next();
++                }
++            }
++            
++            outputPositionCount = positionCount;
++            return streamPosition + positionCount;
++        }
+ 
++        // Fallback to original implementation for non-contiguous positions
+         int streamPosition = 0;
+         for (int i = 0; i < positionCount; i++) {
+             int position = positions[i];

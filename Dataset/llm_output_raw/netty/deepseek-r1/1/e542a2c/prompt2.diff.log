@@ -1,0 +1,16 @@
+The performance issue is that `ensureAccessible()` performs a volatile read of the reference count on every buffer operation, which prevents JIT optimizations like eliminating redundant loads when methods are inlined. Since this check is best-effort anyway (race conditions can occur even with volatile), we can use a non-volatile read for the accessibility check. We'll modify `AbstractReferenceCountedByteBuf` to expose the refCnt field directly (non-volatile read) for the check, and update `AbstractByteBuf` to use this faster path.
+
+```json
+[
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java",
+    "search": "    private volatile int refCnt;\n\n    protected AbstractReferenceCountedByteBuf(int maxCapacity) {\n        super(maxCapacity);\n        refCntUpdater.set(this, 1);\n    }",
+    "replace": "    private volatile int refCnt;\n\n    protected AbstractReferenceCountedByteBuf(int maxCapacity) {\n        super(maxCapacity);\n        refCntUpdater.set(this, 1);\n    }\n\n    /**\n     * Non-volatile read of refCnt for best-effort accessibility check.\n     * This avoids volatile read overhead in hot paths while maintaining\n     * the same best-effort guarantee as ensureAccessible().\n     */\n    final int refCnt0() {\n        return refCnt;\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "    /**\n     * Should be called by every method that tries to access the buffers content to check\n     * if the buffer was released before.\n     */\n    protected final void ensureAccessible() {\n        if (checkAccessible && refCnt() == 0) {\n            throw new IllegalReferenceCountException(0);\n        }\n    }",
+    "replace": "    /**\n     * Should be called by every method that tries to access the buffers content to check\n     * if the buffer was released before.\n     */\n    protected final void ensureAccessible() {\n        if (checkAccessible) {\n            // Use non-volatile read for best-effort check to avoid volatile read overhead\n            // and enable better JIT optimization. This matches the best-effort nature\n            // of the check (race conditions are possible anyway).\n            int cnt = this instanceof AbstractReferenceCountedByteBuf ? \n                      ((AbstractReferenceCountedByteBuf) this).refCnt0() : refCnt();\n            if (cnt == 0) {\n                throw new IllegalReferenceCountException(0);\n            }\n        }\n    }"
+  }
+]
+```

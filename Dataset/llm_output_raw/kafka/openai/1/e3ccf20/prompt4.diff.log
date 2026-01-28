@@ -1,0 +1,26 @@
+I’ve adjusted the method signatures to accept a more general Iterable[AclEntry] instead of Set[AclEntry], resolving the type mismatches while preserving functionality.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "def isEmptyAclAndAuthorized(acls: Set[AclEntry]): Boolean = {",
+    "replace": "def isEmptyAclAndAuthorized(acls: Iterable[AclEntry]): Boolean = {"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "def denyAclExists(acls: Set[AclEntry]): Boolean = {",
+    "replace": "def denyAclExists(acls: Iterable[AclEntry]): Boolean = {"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "def allowAclExists(acls: Set[AclEntry]): Boolean = {",
+    "replace": "def allowAclExists(acls: Iterable[AclEntry]): Boolean = {"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "private def matchingAclExists(operation: AclOperation,\n                                resource: ResourcePattern,\n                                principal: KafkaPrincipal,\n                                host: String,\n                                permissionType: AclPermissionType,\n                                acls: Set[AclEntry]): Boolean = {",
+    "replace": "private def matchingAclExists(operation: AclOperation,\n                                resource: ResourcePattern,\n                                principal: KafkaPrincipal,\n                                host: String,\n                                permissionType: AclPermissionType,\n                                acls: Iterable[AclEntry]): Boolean = {"
+  }
+]
+```

@@ -1,0 +1,59 @@
+diff --git a/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java b/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java
+index 0db8a4ce34..a8088a0f54 100644
+--- a/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java
++++ b/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java
+@@ -27,6 +27,7 @@ import static io.netty.handler.codec.http.HttpConstants.SP;
+  */
+ public class HttpRequestEncoder extends HttpObjectEncoder<HttpRequest> {
+     private static final char SLASH = '/';
++    private static final byte SLASH_BYTE = '/';
+     private static final char QUESTION_MARK = '?';
+ 
+     @Override
+@@ -44,7 +45,7 @@ public class HttpRequestEncoder extends HttpObjectEncoder<HttpRequest> {
+         String uri = request.uri();
+ 
+         if (uri.isEmpty()) {
+-            uri += SLASH;
++            buf.writeByte(SLASH_BYTE);
+         } else {
+             int start = uri.indexOf("://");
+             if (start != -1 && uri.charAt(0) != SLASH) {
+@@ -54,23 +55,28 @@ public class HttpRequestEncoder extends HttpObjectEncoder<HttpRequest> {
+                 int index = uri.indexOf(QUESTION_MARK, startIndex);
+                 if (index == -1) {
+                     if (uri.lastIndexOf(SLASH) <= startIndex) {
+-                        uri += SLASH;
++                        // Write URI up to startIndex, then slash, then the rest
++                        buf.writeCharSequence(uri.substring(0, startIndex), CharsetUtil.UTF_8);
++                        buf.writeByte(SLASH_BYTE);
++                        buf.writeCharSequence(uri.substring(startIndex), CharsetUtil.UTF_8);
++                    } else {
++                        buf.writeCharSequence(uri, CharsetUtil.UTF_8);
+                     }
+                 } else {
+                     if (uri.lastIndexOf(SLASH, index) <= startIndex) {
+-                        int len = uri.length();
+-                        StringBuilder sb = new StringBuilder(len + 1);
+-                        sb.append(uri, 0, index)
+-                          .append(SLASH)
+-                          .append(uri, index, len);
+-                        uri = sb.toString();
++                        // Write URI up to index, then slash, then query part
++                        buf.writeCharSequence(uri.substring(0, index), CharsetUtil.UTF_8);
++                        buf.writeByte(SLASH_BYTE);
++                        buf.writeCharSequence(uri.substring(index), CharsetUtil.UTF_8);
++                    } else {
++                        buf.writeCharSequence(uri, CharsetUtil.UTF_8);
+                     }
+                 }
++            } else {
++                buf.writeCharSequence(uri, CharsetUtil.UTF_8);
+             }
+         }
+ 
+-        buf.writeCharSequence(uri, CharsetUtil.UTF_8);
+-
+         buf.writeByte(SP);
+         request.protocolVersion().encode(buf);
+         buf.writeBytes(CRLF);

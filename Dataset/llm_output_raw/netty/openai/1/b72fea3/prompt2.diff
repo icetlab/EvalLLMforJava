@@ -1,0 +1,109 @@
+diff --git a/codec/src/main/java/io/netty/handler/codec/DateFormatter.java b/codec/src/main/java/io/netty/handler/codec/DateFormatter.java
+index 86df148500..6221d1b29f 100644
+--- a/codec/src/main/java/io/netty/handler/codec/DateFormatter.java
++++ b/codec/src/main/java/io/netty/handler/codec/DateFormatter.java
+@@ -266,40 +266,84 @@ public final class DateFormatter {
+     }
+ 
+     private boolean tryParseMonth(CharSequence txt, int tokenStart, int tokenEnd) {
+-        int len = tokenEnd - tokenStart;
+-
+-        if (len != 3) {
++        if (tokenEnd - tokenStart != 3) {
+             return false;
+         }
+-
+-        if (matchMonth("Jan", txt, tokenStart)) {
++        char c0 = txt.charAt(tokenStart);
++        char c1 = txt.charAt(tokenStart + 1);
++        char c2 = txt.charAt(tokenStart + 2);
++        // normalize to lowercase by setting bit 0x20 (ASCII)
++        char l0 = (char) (c0 | 0x20);
++        char l1 = (char) (c1 | 0x20);
++        char l2 = (char) (c2 | 0x20);
++        switch (l0) {
++            case 'j':
++                if (l1 == 'a' && l2 == 'n') {
+                     month = Calendar.JANUARY;
+-        } else if (matchMonth("Feb", txt, tokenStart)) {
++                } else if (l1 == 'u' && l2 == 'n') {
++                    month = Calendar.JUNE;
++                } else if (l1 == 'u' && l2 == 'l') {
++                    month = Calendar.JULY;
++                } else {
++                    return false;
++                }
++                break;
++            case 'f':
++                if (l1 == 'e' && l2 == 'b') {
+                     month = Calendar.FEBRUARY;
+-        } else if (matchMonth("Mar", txt, tokenStart)) {
++                } else {
++                    return false;
++                }
++                break;
++            case 'm':
++                if (l1 == 'a' && l2 == 'r') {
+                     month = Calendar.MARCH;
+-        } else if (matchMonth("Apr", txt, tokenStart)) {
+-            month = Calendar.APRIL;
+-        } else if (matchMonth("May", txt, tokenStart)) {
++                } else if (l1 == 'a' && l2 == 'y') {
+                     month = Calendar.MAY;
+-        } else if (matchMonth("Jun", txt, tokenStart)) {
+-            month = Calendar.JUNE;
+-        } else if (matchMonth("Jul", txt, tokenStart)) {
+-            month = Calendar.JULY;
+-        } else if (matchMonth("Aug", txt, tokenStart)) {
++                } else {
++                    return false;
++                }
++                break;
++            case 'a':
++                if (l1 == 'p' && l2 == 'r') {
++                    month = Calendar.APRIL;
++                } else if (l1 == 'u' && l2 == 'g') {
+                     month = Calendar.AUGUST;
+-        } else if (matchMonth("Sep", txt, tokenStart)) {
++                } else {
++                    return false;
++                }
++                break;
++            case 's':
++                if (l1 == 'e' && l2 == 'p') {
+                     month = Calendar.SEPTEMBER;
+-        } else if (matchMonth("Oct", txt, tokenStart)) {
++                } else {
++                    return false;
++                }
++                break;
++            case 'o':
++                if (l1 == 'c' && l2 == 't') {
+                     month = Calendar.OCTOBER;
+-        } else if (matchMonth("Nov", txt, tokenStart)) {
++                } else {
++                    return false;
++                }
++                break;
++            case 'n':
++                if (l1 == 'o' && l2 == 'v') {
+                     month = Calendar.NOVEMBER;
+-        } else if (matchMonth("Dec", txt, tokenStart)) {
++                } else {
++                    return false;
++                }
++                break;
++            case 'd':
++                if (l1 == 'e' && l2 == 'c') {
+                     month = Calendar.DECEMBER;
+                 } else {
+                     return false;
+                 }
+-
++                break;
++            default:
++                return false;
++        }
+         return true;
+     }
+ 

@@ -1,0 +1,11 @@
+I’ve added a guard in equalsConstantTime to immediately return equal (1) when length is zero or negative, matching the behavior of equals and isZero and satisfying the unit tests.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "public static int equalsConstantTime(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        return !hasUnsafe() || !unalignedAccess() ?\n                  ConstantTimeUtils.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length) :\n                  PlatformDependent0.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);\n    }",
+    "replace": "public static int equalsConstantTime(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        // Treat zero or negative length as equal\n        if (length <= 0) {\n            return 1;\n        }\n        return !hasUnsafe() || !unalignedAccess() ?\n                  ConstantTimeUtils.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length) :\n                  PlatformDependent0.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);\n    }"
+  }
+]
+```

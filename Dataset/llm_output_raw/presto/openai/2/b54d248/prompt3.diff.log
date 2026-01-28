@@ -1,0 +1,11 @@
+I’ve optimized HashGenerator.getPartition by adding a fast path for power-of-two partition counts (using a bitmask), replacing the magic mask literal with Long.MAX_VALUE, and removing the runtime checkState call to reduce per-position overhead.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java",
+    "search": "default int getPartition(int partitionCount, int position, Page page)\n    {\n        long rawHash = hashPosition(position, page);\n\n        // clear the sign bit\n        rawHash &= 0x7fff_ffff_ffff_ffffL;\n\n        int partition = (int) (rawHash % partitionCount);\n\n        checkState(partition >= 0 && partition < partitionCount);\n        return partition;\n    }",
+    "replace": "default int getPartition(int partitionCount, int position, Page page)\n    {\n        long rawHash = hashPosition(position, page);\n        final int partition;\n        // fast path for power-of-two partition counts\n        if ((partitionCount & (partitionCount - 1)) == 0) {\n            partition = (int) (rawHash & (partitionCount - 1));\n        }\n        else {\n            long positiveHash = rawHash & Long.MAX_VALUE;\n            partition = (int) (positiveHash % partitionCount);\n        }\n        return partition;\n    }"
+  }
+]
+```

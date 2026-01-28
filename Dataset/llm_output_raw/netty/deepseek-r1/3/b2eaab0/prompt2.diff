@@ -1,0 +1,140 @@
+diff --git a/common/src/main/java/io/netty/util/internal/PlatformDependent.java b/common/src/main/java/io/netty/util/internal/PlatformDependent.java
+index 0a70c36401..da86b51527 100644
+--- a/common/src/main/java/io/netty/util/internal/PlatformDependent.java
++++ b/common/src/main/java/io/netty/util/internal/PlatformDependent.java
+@@ -447,61 +447,58 @@ public final class PlatformDependent {
+ 
+     private static long getLongSafe(byte[] bytes, int offset) {
+         if (BIG_ENDIAN_NATIVE_ORDER) {
+-            return (long) bytes[offset] << 56 |
+-                    ((long) bytes[offset + 1] & 0xff) << 48 |
+-                    ((long) bytes[offset + 2] & 0xff) << 40 |
+-                    ((long) bytes[offset + 3] & 0xff) << 32 |
+-                    ((long) bytes[offset + 4] & 0xff) << 24 |
+-                    ((long) bytes[offset + 5] & 0xff) << 16 |
+-                    ((long) bytes[offset + 6] & 0xff) <<  8 |
+-                    (long) bytes[offset + 7] & 0xff;
+-        }
+-        return (long) bytes[offset] & 0xff |
+-                ((long) bytes[offset + 1] & 0xff) << 8 |
+-                ((long) bytes[offset + 2] & 0xff) << 16 |
+-                ((long) bytes[offset + 3] & 0xff) << 24 |
+-                ((long) bytes[offset + 4] & 0xff) << 32 |
+-                ((long) bytes[offset + 5] & 0xff) << 40 |
+-                ((long) bytes[offset + 6] & 0xff) << 48 |
+-                (long) bytes[offset + 7] << 56;
++            return (((long) bytes[offset] << 56) |
++                   (((long) bytes[offset + 1] & 0xff) << 48) |
++                   (((long) bytes[offset + 2] & 0xff) << 40) |
++                   (((long) bytes[offset + 3] & 0xff) << 32) |
++                   (((long) bytes[offset + 4] & 0xff) << 24) |
++                   (((long) bytes[offset + 5] & 0xff) << 16) |
++                   (((long) bytes[offset + 6] & 0xff) <<  8) |
++                   ((long) bytes[offset + 7] & 0xff));
++        }
++        return (((long) bytes[offset] & 0xff) |
++               (((long) bytes[offset + 1] & 0xff) << 8) |
++               (((long) bytes[offset + 2] & 0xff) << 16) |
++               (((long) bytes[offset + 3] & 0xff) << 24) |
++               (((long) bytes[offset + 4] & 0xff) << 32) |
++               (((long) bytes[offset + 5] & 0xff) << 40) |
++               (((long) bytes[offset + 6] & 0xff) << 48) |
++               ((long) bytes[offset + 7] << 56));
+     }
+ 
+     private static int getIntSafe(byte[] bytes, int offset) {
+         if (BIG_ENDIAN_NATIVE_ORDER) {
+-            return bytes[offset] << 24 |
+-                    (bytes[offset + 1] & 0xff) << 16 |
+-                    (bytes[offset + 2] & 0xff) << 8 |
+-                    bytes[offset + 3] & 0xff;
++            return ((bytes[offset] << 24) |
++                   ((bytes[offset + 1] & 0xff) << 16) |
++                   ((bytes[offset + 2] & 0xff) << 8) |
++                   (bytes[offset + 3] & 0xff));
+         }
+-        return bytes[offset] & 0xff |
+-                (bytes[offset + 1] & 0xff) << 8 |
+-                (bytes[offset + 2] & 0xff) << 16 |
+-                bytes[offset + 3] << 24;
++        return ((bytes[offset] & 0xff) |
++               ((bytes[offset + 1] & 0xff) << 8) |
++               ((bytes[offset + 2] & 0xff) << 16) |
++               (bytes[offset + 3] << 24));
+     }
+ 
+     private static short getShortSafe(byte[] bytes, int offset) {
+         if (BIG_ENDIAN_NATIVE_ORDER) {
+-            return (short) (bytes[offset] << 8 | (bytes[offset + 1] & 0xff));
++            return (short) ((bytes[offset] << 8) | (bytes[offset + 1] & 0xff));
+         }
+-        return (short) (bytes[offset] & 0xff | (bytes[offset + 1] << 8));
++        return (short) ((bytes[offset] & 0xff) | (bytes[offset + 1] << 8));
+     }
+ 
+     /**
+      * Identical to {@link PlatformDependent0#hashCodeAsciiCompute(long, int)} but for {@link CharSequence}.
+      */
+     private static int hashCodeAsciiCompute(CharSequence value, int offset, int hash) {
++        int low, high;
+         if (BIG_ENDIAN_NATIVE_ORDER) {
+-            return hash * HASH_CODE_C1 +
+-                    // Low order int
+-                    hashCodeAsciiSanitizeInt(value, offset + 4) * HASH_CODE_C2 +
+-                    // High order int
+-                    hashCodeAsciiSanitizeInt(value, offset);
++            low = hashCodeAsciiSanitizeInt(value, offset + 4);
++            high = hashCodeAsciiSanitizeInt(value, offset);
++        } else {
++            low = hashCodeAsciiSanitizeInt(value, offset);
++            high = hashCodeAsciiSanitizeInt(value, offset + 4);
+         }
+-        return hash * HASH_CODE_C1 +
+-                // Low order int
+-                hashCodeAsciiSanitizeInt(value, offset) * HASH_CODE_C2 +
+-                // High order int
+-                hashCodeAsciiSanitizeInt(value, offset + 4);
++        return ((hash * HASH_CODE_C1) + (low * HASH_CODE_C2) + high);
+     }
+ 
+     /**
+@@ -510,15 +507,15 @@ public final class PlatformDependent {
+     private static int hashCodeAsciiSanitizeInt(CharSequence value, int offset) {
+         if (BIG_ENDIAN_NATIVE_ORDER) {
+             // mimic a unsafe.getInt call on a big endian machine
+-            return (value.charAt(offset + 3) & 0x1f) |
+-                   (value.charAt(offset + 2) & 0x1f) << 8 |
+-                   (value.charAt(offset + 1) & 0x1f) << 16 |
+-                   (value.charAt(offset) & 0x1f) << 24;
++            return (((value.charAt(offset + 3) & 0x1f)) |
++                   ((value.charAt(offset + 2) & 0x1f) << 8) |
++                   ((value.charAt(offset + 1) & 0x1f) << 16) |
++                   ((value.charAt(offset) & 0x1f) << 24));
+         }
+-        return (value.charAt(offset + 3) & 0x1f) << 24 |
+-               (value.charAt(offset + 2) & 0x1f) << 16 |
+-               (value.charAt(offset + 1) & 0x1f) << 8 |
+-               (value.charAt(offset) & 0x1f);
++        return (((value.charAt(offset + 3) & 0x1f) << 24) |
++               ((value.charAt(offset + 2) & 0x1f) << 16) |
++               ((value.charAt(offset + 1) & 0x1f) << 8) |
++               (value.charAt(offset) & 0x1f));
+     }
+ 
+     /**
+@@ -527,11 +524,11 @@ public final class PlatformDependent {
+     private static int hashCodeAsciiSanitizeShort(CharSequence value, int offset) {
+         if (BIG_ENDIAN_NATIVE_ORDER) {
+             // mimic a unsafe.getShort call on a big endian machine
+-            return (value.charAt(offset + 1) & 0x1f) |
+-                    (value.charAt(offset) & 0x1f) << 8;
++            return ((value.charAt(offset + 1) & 0x1f) |
++                    ((value.charAt(offset) & 0x1f) << 8));
+         }
+-        return (value.charAt(offset + 1) & 0x1f) << 8 |
+-                (value.charAt(offset) & 0x1f);
++        return (((value.charAt(offset + 1) & 0x1f) << 8) |
++                (value.charAt(offset) & 0x1f));
+     }
+ 
+     /**

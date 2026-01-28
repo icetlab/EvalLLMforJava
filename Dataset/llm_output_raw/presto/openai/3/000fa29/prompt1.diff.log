@@ -1,0 +1,41 @@
+I’ve added local copies of the `partitionBuffers` and `decodedBlocks` arrays in key methods to avoid repeated field dereferences in tight loops, which should reduce overhead in hot code paths.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java",
+    "search": "int positionCount = page.getPositionCount();",
+    "replace": "int positionCount = page.getPositionCount();\n            PartitionBuffer[] buffers = partitionBuffers;"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java",
+    "search": "for (int i = 0; i < partitionBuffers.length; i++) {\n                partitionBuffers[i].resetPositions(positionCount);\n            }",
+    "replace": "for (int i = 0; i < buffers.length; i++) {\n                buffers[i].resetPositions(positionCount);\n            }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java",
+    "search": "for (int i = 0; i < partitionBuffers.length; i++) {\n                        partitionBuffers[i].addPosition(position);\n                    }",
+    "replace": "for (int i = 0; i < buffers.length; i++) {\n                        buffers[i].addPosition(position);\n                    }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java",
+    "search": "for (int i = 0; i < partitionBuffers.length; i++) {\n                partitionBuffers[i].appendData(decodedBlocks, fixedWidthRowSize, variableWidthChannels, outputBuffer);\n            }",
+    "replace": "for (int i = 0; i < buffers.length; i++) {\n                buffers[i].appendData(decodedBlocks, fixedWidthRowSize, variableWidthChannels, outputBuffer);\n            }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java",
+    "search": "for (int i = 0; i < partitionBuffers.length; i++) {\n                partitionBuffers[i].flush(outputBuffer);\n            }",
+    "replace": "PartitionBuffer[] buffers = partitionBuffers;\n            for (int i = 0; i < buffers.length; i++) {\n                buffers[i].flush(outputBuffer);\n            }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java",
+    "search": "for (int i = 0; i < partitionBuffers.length; i++) {\n                size += partitionBuffers[i].getRetainedSizeInBytes();\n            }",
+    "replace": "PartitionBuffer[] buffers = partitionBuffers;\n            for (int i = 0; i < buffers.length; i++) {\n                size += buffers[i].getRetainedSizeInBytes();\n            }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java",
+    "search": "for (int i = 0; i < decodedBlocks.length; i++) {\n                size += decodedBlocks[i] == null ? 0 : decodedBlocks[i].getRetainedSizeInBytes();\n            }",
+    "replace": "DecodedBlockNode[] nodes = decodedBlocks;\n            for (int i = 0; i < nodes.length; i++) {\n                size += nodes[i] == null ? 0 : nodes[i].getRetainedSizeInBytes();\n            }"
+  }
+]
+```

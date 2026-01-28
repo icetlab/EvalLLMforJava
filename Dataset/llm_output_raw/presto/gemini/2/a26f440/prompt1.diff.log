@@ -1,0 +1,13 @@
+My analysis of the `TDigest` implementation identified a significant performance bottleneck in the `merge(TDigest other)` method. The original implementation materializes all centroids from the `other` digest into a `List<Centroid>`, which causes substantial object allocation and garbage collection pressure, particularly in scenarios involving frequent merges of many digests.
+
+To address this, I've rewritten the `merge` method to operate directly on the primitive array fields (`mean`, `weight`) of the `other` digest. This is permissible in Java as a method can access private members of other instances of the same class. The new implementation avoids creating any `Centroid` objects. To maintain the original algorithm's shuffling behavior, which is crucial for avoiding bias, I've implemented an in-place Fisher-Yates shuffle on an array of indices. This approach drastically reduces object churn and improves overall performance while preserving the correctness of the merge operation.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "    public void merge(TDigest other)\n    {\n        checkArgument(other != null, \"Cannot merge with a null t-digest\");\n        checkArgument(this.publicCompression == other.getCompressionFactor(), \"TDigests must have the same compression, found (%s, %s)\", this.publicCompression,\n                other.getCompressionFactor());\n        List<Centroid> tmp = new ArrayList<>();\n        for (Centroid centroid : other.centroids()) {\n            tmp.add(centroid);\n        }\n\n        shuffle(tmp, gen);\n        for (Centroid centroid : tmp) {\n            add(centroid.getMean(), centroid.getWeight());\n        }\n    }",
+    "replace": "    public void merge(TDigest other)\n    {\n        checkArgument(other != null, \"Cannot merge with a null t-digest\");\n        checkArgument(this.publicCompression == other.getCompressionFactor(), \"TDigests must have the same compression, found (%s, %s)\", this.publicCompression,\n                other.getCompressionFactor());\n\n        other.compress();\n\n        if (other.activeCentroids == 0) {\n            return;\n        }\n\n        int[] indices = new int[other.activeCentroids];\n        for (int i = 0; i < other.activeCentroids; i++) {\n            indices[i] = i;\n        }\n\n        // Fisher-Yates shuffle\n        for (int i = indices.length - 1; i > 0; i--) {\n            int index = gen.nextInt(i + 1);\n            int temp = indices[index];\n            indices[index] = indices[i];\n            indices[i] = temp;\n        }\n\n        for (int index : indices) {\n            add(other.mean[index], (long) other.weight[index]);\n        }\n    }"
+  }
+]
+```

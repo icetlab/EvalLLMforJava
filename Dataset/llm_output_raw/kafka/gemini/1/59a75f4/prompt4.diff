@@ -1,0 +1,45 @@
+diff --git a/core/src/main/scala/kafka/server/AbstractFetcherThread.scala b/core/src/main/scala/kafka/server/AbstractFetcherThread.scala
+index 0f3b06952a..98909e1a1e 100755
+--- a/core/src/main/scala/kafka/server/AbstractFetcherThread.scala
++++ b/core/src/main/scala/kafka/server/AbstractFetcherThread.scala
+@@ -435,18 +435,16 @@ abstract class AbstractFetcherThread(name: String,
+     * @param fetchOffsets the partitions to update fetch offset and maybe mark truncation complete
+     */
+   private def updateFetchOffsetAndMaybeMarkTruncationComplete(fetchOffsets: Map[TopicPartition, OffsetTruncationState]): Unit = {
+-    val newStates: Map[TopicPartition, PartitionFetchState] = partitionStates.partitionStates.asScala
+-      .map { state =>
+-        val currentFetchState = state.value
+-        val maybeTruncationComplete = fetchOffsets.get(state.topicPartition) match {
++    val newStates = partitionStates.partitionStateMap.asScala.map { case (tp, currentFetchState) =>
++      val newState = fetchOffsets.get(tp) match {
+         case Some(offsetTruncationState) =>
+           val state = if (offsetTruncationState.truncationCompleted) Fetching else Truncating
+           PartitionFetchState(offsetTruncationState.offset, currentFetchState.lag,
+             currentFetchState.currentLeaderEpoch, currentFetchState.delay, state)
+         case None => currentFetchState
+       }
+-        (state.topicPartition, maybeTruncationComplete)
+-      }.toMap
++      tp -> newState
++    }
+     partitionStates.set(newStates.asJava)
+   }
+ 
+@@ -648,12 +646,11 @@ abstract class AbstractFetcherThread(name: String,
+   }
+ 
+   private[server] def partitionsAndOffsets: Map[TopicPartition, InitialFetchState] = inLock(partitionMapLock) {
+-    partitionStates.partitionStates.asScala.map { state =>
+-      val initialFetchState = InitialFetchState(sourceBroker,
+-        currentLeaderEpoch = state.value.currentLeaderEpoch,
+-        initOffset = state.value.fetchOffset)
+-      state.topicPartition -> initialFetchState
+-    }.toMap
++    partitionStates.partitionStateMap.asScala.map { case (tp, state) =>
++      tp -> InitialFetchState(sourceBroker,
++        currentLeaderEpoch = state.currentLeaderEpoch,
++        initOffset = state.fetchOffset)
++    }
+   }
+ 
+   protected def toMemoryRecords(records: Records): MemoryRecords = {

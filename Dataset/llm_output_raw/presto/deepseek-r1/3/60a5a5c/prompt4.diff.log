@@ -1,0 +1,29 @@
+Explanation: The performance issue indicates that we should reuse the compression buffer when serializing pages. Currently, each call to `serialize` creates a new ByteBuffer for compression, which causes unnecessary allocations. We should add instance-level buffers that can be reused across serialization calls. Since `PagesSerde` is annotated with `@NotThreadSafe`, we can safely reuse buffers at the instance level.
+
+We'll make the following changes:
+1. Add a `compressionBuffer` field that is lazily allocated and resized as needed.
+2. Similarly, for symmetry and potential performance improvement, also add a `decompressionBuffer` field for the deserialization path.
+3. Update the serialization method to reuse the compression buffer.
+4. Update the deserialization method to reuse the decompression buffer.
+
+Note: We must ensure buffers are cleared/reset appropriately before reuse.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java",
+    "search": "    private final BlockEncodingSerde blockEncodingSerde;\n    private final Optional<Compressor> compressor;\n    private final Optional<Decompressor> decompressor;\n    private final Optional<SpillCipher> spillCipher;",
+    "replace": "    private final BlockEncodingSerde blockEncodingSerde;\n    private final Optional<Compressor> compressor;\n    private final Optional<Decompressor> decompressor;\n    private final Optional<SpillCipher> spillCipher;\n    private ByteBuffer compressionBuffer;\n    private ByteBuffer decompressionBuffer;"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java",
+    "search": "        if (compressor.isPresent()) {\n            ByteBuffer compressionBuffer = ByteBuffer.allocate(compressor.get().maxCompressedLength(uncompressedSize));\n            compressor.get().compress(slice.toByteBuffer(), compressionBuffer);\n            compressionBuffer.flip();\n            if ((((double) compressionBuffer.remaining()) / uncompressedSize) <= MINIMUM_COMPRESSION_RATIO) {\n                slice = Slices.wrappedBuffer(compressionBuffer);\n                markers = COMPRESSED.set(markers);\n            }\n        }",
+    "replace": "        if (compressor.isPresent()) {\n            int maxCompressedLength = compressor.get().maxCompressedLength(uncompressedSize);\n            if (compressionBuffer == null || compressionBuffer.capacity() < maxCompressedLength) {\n                compressionBuffer = ByteBuffer.allocate(maxCompressedLength);\n            }\n            compressionBuffer.clear();\n            compressor.get().compress(slice.toByteBuffer(), compressionBuffer);\n            compressionBuffer.flip();\n            if ((((double) compressionBuffer.remaining()) / uncompressedSize) <= MINIMUM_COMPRESSION_RATIO) {\n                slice = Slices.wrappedBuffer(compressionBuffer);\n                markers = COMPRESSED.set(markers);\n            }\n        }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java",
+    "search": "        if (COMPRESSED.isSet(serializedPage.getPageCodecMarkers())) {\n            checkState(decompressor.isPresent(), \"Page is compressed, but decompressor is missing\");\n\n            int uncompressedSize = serializedPage.getUncompressedSizeInBytes();\n            ByteBuffer decompressionBuffer = ByteBuffer.allocate(uncompressedSize);\n\n            decompressor.get().decompress(slice.toByteBuffer(), decompressionBuffer);\n            decompressionBuffer.flip();\n            checkState(decompressionBuffer.remaining() == uncompressedSize);\n\n            slice = Slices.wrappedBuffer(decompressionBuffer);\n        }",
+    "replace": "        if (COMPRESSED.isSet(serializedPage.getPageCodecMarkers())) {\n            checkState(decompressor.isPresent(), \"Page is compressed, but decompressor is missing\");\n\n            int uncompressedSize = serializedPage.getUncompressedSizeInBytes();\n            if (decompressionBuffer == null || decompressionBuffer.capacity() < uncompressedSize) {\n                decompressionBuffer = ByteBuffer.allocate(uncompressedSize);\n            }\n            decompressionBuffer.clear();\n            decompressor.get().decompress(slice.toByteBuffer(), decompressionBuffer);\n            decompressionBuffer.flip();\n            checkState(decompressionBuffer.remaining() == uncompressedSize);\n\n            slice = Slices.wrappedBuffer(decompressionBuffer);\n        }"
+  }
+]
+```

@@ -1,0 +1,48 @@
+My overall improvement strategy is to enhance the performance of `HpackStaticTable` lookups by replacing the `List<HpackHeaderField>` with a native `HpackHeaderField[]` array. This change aims to improve access times by eliminating the overhead associated with `List.get()` virtual method calls and enabling better optimizations by the JIT compiler, such as potential bounds-check elimination within loops.
+
+This refactoring involves several steps:
+1.  Modifying the `STATIC_TABLE` definition from a `List` created by `Arrays.asList()` to a direct array initialization.
+2.  Updating all usages of `STATIC_TABLE.size()` to `STATIC_TABLE.length`.
+3.  Changing `STATIC_TABLE.get(index)` calls to direct array access `STATIC_TABLE[index]`.
+
+These changes are broken down into atomic, independent steps to ensure clarity and correctness.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "import java.util.Arrays;\nimport java.util.List;",
+    "replace": "import java.util.List;"
+  },
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "    // Appendix A: Static Table\n    // https://tools.ietf.org/html/rfc7541#appendix-A\n    private static final List<HpackHeaderField> STATIC_TABLE = Arrays.asList(\n    /*  1 */ newEmptyHeaderField(\":authority\"),",
+    "replace": "    // Appendix A: Static Table\n    // https://tools.ietf.org/html/rfc7541#appendix-A\n    private static final HpackHeaderField[] STATIC_TABLE = {\n    /*  1 */ newEmptyHeaderField(\":authority\"),"
+  },
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "    /* 60 */ newEmptyHeaderField(\"via\"),\n    /* 61 */ newEmptyHeaderField(\"www-authenticate\")\n    );",
+    "replace": "    /* 60 */ newEmptyHeaderField(\"via\"),\n    /* 61 */ newEmptyHeaderField(\"www-authenticate\")\n    };"
+  },
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "    /**\n     * The number of header fields in the static table.\n     */\n    static final int length = STATIC_TABLE.size();",
+    "replace": "    /**\n     * The number of header fields in the static table.\n     */\n    static final int length = STATIC_TABLE.length;"
+  },
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "    /**\n     * Return the header field at the given index value.\n     */\n    static HpackHeaderField getEntry(int index) {\n        return STATIC_TABLE.get(index - 1);\n    }",
+    "replace": "    /**\n     * Return the header field at the given index value.\n     */\n    static HpackHeaderField getEntry(int index) {\n        return STATIC_TABLE[index - 1];\n    }"
+  },
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "    private static CharSequenceMap<Integer> createMap() {\n        int length = STATIC_TABLE.size();",
+    "replace": "    private static CharSequenceMap<Integer> createMap() {\n        int length = STATIC_TABLE.length;"
+  },
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "    private static int maxSameNameFieldIndex() {\n        final int length = STATIC_TABLE.size();",
+    "replace": "    private static int maxSameNameFieldIndex() {\n        final int length = STATIC_TABLE.length;"
+  }
+]
+```

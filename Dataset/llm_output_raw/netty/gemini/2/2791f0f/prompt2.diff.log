@@ -1,0 +1,54 @@
+The overall improvement is to reduce contention on task ID generation for scheduled tasks. The original implementation used a single static `AtomicLong` to generate unique IDs for all `ScheduledFutureTask` instances across all event loops. This global counter can become a bottleneck under high scheduling frequency.
+
+To address this, I will replace the static `AtomicLong` with a per-instance `AtomicLong` in `AbstractScheduledEventExecutor`. Each event executor will now have its own task ID counter. This confines contention to within a single executor, significantly improving performance in multi-threaded environments where multiple event loops are active.
+
+The changes involve:
+1.  In `AbstractScheduledEventExecutor`, adding a non-static `AtomicLong` field for task ID generation and a package-private method to retrieve the next ID.
+2.  In `ScheduledFutureTask`, removing the static `AtomicLong` and modifying its constructors to receive the ID from the `AbstractScheduledEventExecutor` instance it is associated with. This ensures each task gets a unique ID from its parent executor upon creation.
+
+This approach preserves the `final` nature of the task ID field, maintaining thread safety and correctness, while effectively mitigating the performance bottleneck.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "import java.util.concurrent.Executors;\nimport java.util.concurrent.TimeUnit;",
+    "replace": "import java.util.concurrent.Executors;\nimport java.util.concurrent.TimeUnit;\nimport java.util.concurrent.atomic.AtomicLong;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "public abstract class AbstractScheduledEventExecutor extends AbstractEventExecutor {",
+    "replace": "public abstract class AbstractScheduledEventExecutor extends AbstractEventExecutor {\n    private final AtomicLong nextTaskId = new AtomicLong();"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "    protected static long initialNanoTime() {\n        return ScheduledFutureTask.initialNanoTime();\n    }",
+    "replace": "    protected static long initialNanoTime() {\n        return ScheduledFutureTask.initialNanoTime();\n    }\n\n    long nextScheduledTaskId() {\n        return nextTaskId.getAndIncrement();\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "import java.util.concurrent.Delayed;\nimport java.util.concurrent.TimeUnit;\nimport java.util.concurrent.atomic.AtomicLong;",
+    "replace": "import java.util.concurrent.Delayed;\nimport java.util.concurrent.TimeUnit;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFuture<V>, PriorityQueueNode {\n    private static final AtomicLong nextTaskId = new AtomicLong();",
+    "replace": "final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFuture<V>, PriorityQueueNode {"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    private final long id = nextTaskId.getAndIncrement();",
+    "replace": "    private final long id;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    ScheduledFutureTask(\n            AbstractScheduledEventExecutor executor,\n            Callable<V> callable, long nanoTime, long period) {\n\n        super(executor, callable);\n        if (period == 0) {\n            throw new IllegalArgumentException(\"period: 0 (expected: != 0)\");\n        }\n        deadlineNanos = nanoTime;\n        periodNanos = period;\n    }",
+    "replace": "    ScheduledFutureTask(\n            AbstractScheduledEventExecutor executor,\n            Callable<V> callable, long nanoTime, long period) {\n\n        super(executor, callable);\n        if (period == 0) {\n            throw new IllegalArgumentException(\"period: 0 (expected: != 0)\");\n        }\n        deadlineNanos = nanoTime;\n        periodNanos = period;\n        id = executor.nextScheduledTaskId();\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    ScheduledFutureTask(\n            AbstractScheduledEventExecutor executor,\n            Callable<V> callable, long nanoTime) {\n\n        super(executor, callable);\n        deadlineNanos = nanoTime;\n        periodNanos = 0;\n    }",
+    "replace": "    ScheduledFutureTask(\n            AbstractScheduledEventExecutor executor,\n            Callable<V> callable, long nanoTime) {\n\n        super(executor, callable);\n        deadlineNanos = nanoTime;\n        periodNanos = 0;\n        id = executor.nextScheduledTaskId();\n    }"
+  }
+]
+```

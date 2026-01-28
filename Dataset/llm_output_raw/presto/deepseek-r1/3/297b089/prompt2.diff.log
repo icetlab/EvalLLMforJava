@@ -1,0 +1,23 @@
+Looking at the performance issue description and the `SliceDirectSelectiveStreamReader` code, I need to improve reading the `lengthVector`. The main issue is in the `prepareForNextRead` method where the length vector is processed inefficiently for non-batch mode.
+
+The current code in non-batch mode reads the entire length vector but then processes only selected positions, which is inefficient. We can optimize this by only processing lengths for positions we actually need.
+
+Here are the improvements:
+
+1. In non-batch mode, we should only read and process lengths for the positions we're actually reading, not all positions.
+2. We can avoid unnecessary loops by directly tracking which positions we need.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java",
+    "search": "            if (useBatchMode(positionCount, totalPositions)) {\n                for (int i = 0; i < nonNullCount; i++) {\n                    totalLength += lengthVector[i];\n                    maxLength = Math.max(maxLength, lengthVector[i]);\n                }\n            }\n            else {\n                int positionIndex = 0;\n                int lengthIndex = 0;\n                for (int i = 0; i < totalPositions; i++) {\n                    boolean isNotNull = nullCount == 0 || !isNullVector[i];\n                    if (i == positions[positionIndex]) {\n                        if (isNotNull) {\n                            totalLength += lengthVector[lengthIndex];\n                            maxLength = Math.max(maxLength, lengthVector[lengthIndex]);\n                            lengthIndex++;\n                        }\n                        positionIndex++;\n                    }\n                    else if (isNotNull) {\n                        lengthIndex++;\n                    }\n                }\n            }",
+    "replace": "            if (useBatchMode(positionCount, totalPositions)) {\n                for (int i = 0; i < nonNullCount; i++) {\n                    totalLength += lengthVector[i];\n                    maxLength = Math.max(maxLength, lengthVector[i]);\n                }\n            }\n            else {\n                // Optimized: Only process lengths for positions we actually need\n                int positionIndex = 0;\n                int lengthIndex = 0;\n                int i = 0;\n                \n                while (positionIndex < positionCount) {\n                    int currentPosition = positions[positionIndex];\n                    \n                    // Skip positions before the current one we need\n                    while (i < currentPosition) {\n                        if (nullCount == 0 || !isNullVector[i]) {\n                            lengthIndex++;\n                        }\n                        i++;\n                    }\n                    \n                    // Now we're at a position we need\n                    if (nullCount == 0 || !isNullVector[currentPosition]) {\n                        totalLength += lengthVector[lengthIndex];\n                        maxLength = Math.max(maxLength, lengthVector[lengthIndex]);\n                        lengthIndex++;\n                    }\n                    \n                    positionIndex++;\n                    i++;\n                }\n            }"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java",
+    "search": "    private int prepareForNextRead(int positionCount, int[] positions)\n            throws IOException\n    {\n        lengthIndex = 0;\n        outputPositionCount = 0;\n\n        int totalLength = 0;\n        int maxLength = 0;\n        int dataLength = 0;\n\n        int totalPositions = positions[positionCount - 1] + 1;",
+    "replace": "    private int prepareForNextRead(int positionCount, int[] positions)\n            throws IOException\n    {\n        lengthIndex = 0;\n        outputPositionCount = 0;\n\n        int totalLength = 0;\n        int maxLength = 0;\n        int dataLength = 0;\n\n        int totalPositions = positions[positionCount - 1] + 1;"
+  }
+]
+```

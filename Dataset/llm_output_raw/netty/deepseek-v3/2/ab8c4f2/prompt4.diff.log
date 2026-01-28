@@ -1,0 +1,43 @@
+The performance issue indicates that the HPACK static table is organized such that fields with the same name are sequential. Currently, `getIndexInsensitive` performs a linear scan from the found index to the end of the table, comparing both name and value for each entry. However, when scanning sequentially, if we encounter a name mismatch, we can short-circuit the scan because entries with the same name are grouped together. This can improve performance, especially for lookups where the name is not in the static table or when the value doesn't match any entry.
+
+We need to modify `HpackStaticTable.getIndexInsensitive` to break early when the name no longer matches. Currently, it increments the index and continues until the end of the table. Instead, we should stop when `equalsVariableTime(name, entry.name)` returns false.
+
+Let's examine the current implementation:
+
+```java
+static int getIndexInsensitive(CharSequence name, CharSequence value) {
+    int index = getIndex(name);
+    if (index == -1) {
+        return -1;
+    }
+
+    // Note this assumes all entries for a given header field are sequential.
+    while (index <= length) {
+        HpackHeaderField entry = getEntry(index);
+        if (equalsVariableTime(name, entry.name) && equalsVariableTime(value, entry.value)) {
+            return index;
+        }
+        index++;
+    }
+
+    return -1;
+}
+```
+
+We can improve by breaking the loop when the name does not match. Since entries are sequential per name, once the name differs, no further entries will match.
+
+We'll change the loop condition to continue only while the name matches. We'll also avoid calling `getEntry` twice per iteration (once for name and once for value) by storing the entry.
+
+Additionally, we can optimize by moving the name equality check outside the loop condition to avoid duplicate checks.
+
+Let's produce the change.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "    static int getIndexInsensitive(CharSequence name, CharSequence value) {\n        int index = getIndex(name);\n        if (index == -1) {\n            return -1;\n        }\n\n        // Note this assumes all entries for a given header field are sequential.\n        while (index <= length) {\n            HpackHeaderField entry = getEntry(index);\n            if (equalsVariableTime(name, entry.name) && equalsVariableTime(value, entry.value)) {\n                return index;\n            }\n            index++;\n        }\n\n        return -1;\n    }",
+    "replace": "    static int getIndexInsensitive(CharSequence name, CharSequence value) {\n        int index = getIndex(name);\n        if (index == -1) {\n            return -1;\n        }\n\n        // Note this assumes all entries for a given header field are sequential.\n        while (index <= length) {\n            HpackHeaderField entry = getEntry(index);\n            if (!equalsVariableTime(name, entry.name)) {\n                // Since entries with the same name are sequential, stop scanning on name mismatch.\n                break;\n            }\n            if (equalsVariableTime(value, entry.value)) {\n                return index;\n            }\n            index++;\n        }\n\n        return -1;\n    }"
+  }
+]
+```

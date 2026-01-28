@@ -1,0 +1,11 @@
+I’ve added a fast path for small arrays (<=16 elements) that uses a simple linear scan instead of allocating and hashing in a TypedSet, which should significantly reduce overhead for common small-array use cases. The behavior remains identical.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java",
+    "search": "        if (array.getPositionCount() == 0) {\n            return array;\n        }\n\n        TypedSet typedSet = new TypedSet(type, array.getPositionCount());\n        BlockBuilder distinctElementBlockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), array.getPositionCount());\n        for (int i = 0; i < array.getPositionCount(); i++) {\n            if (!typedSet.contains(array, i)) {\n                typedSet.add(array, i);\n                type.appendTo(array, i, distinctElementBlockBuilder);\n            }\n        }\n\n        return distinctElementBlockBuilder.build();",
+    "replace": "        if (array.getPositionCount() == 0) {\n            return array;\n        }\n\n        int count = array.getPositionCount();\n        BlockBuilder distinctElementBlockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), count);\n        // fast path for small arrays\n        if (count <= 16) {\n            for (int i = 0; i < count; i++) {\n                boolean found = false;\n                for (int j = 0; j < i; j++) {\n                    if (type.equalTo(array, i, array, j)) {\n                        found = true;\n                        break;\n                    }\n                }\n                if (!found) {\n                    type.appendTo(array, i, distinctElementBlockBuilder);\n                }\n            }\n            return distinctElementBlockBuilder.build();\n        }\n\n        // fallback to hash-based deduplication\n        TypedSet typedSet = new TypedSet(type, count);\n        for (int i = 0; i < count; i++) {\n            if (!typedSet.contains(array, i)) {\n                typedSet.add(array, i);\n                type.appendTo(array, i, distinctElementBlockBuilder);\n            }\n        }\n\n        return distinctElementBlockBuilder.build();"
+  }
+]
+```

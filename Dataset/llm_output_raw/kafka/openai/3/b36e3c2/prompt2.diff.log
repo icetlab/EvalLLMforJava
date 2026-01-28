@@ -1,0 +1,16 @@
+I’ve corrected the loop transformations by replacing `zipWithIndex` with an index-managed `while` loop and added explicit type annotations to the `recordErrors` declarations to avoid recursive value inference errors.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogValidator.scala",
+    "search": "val recordErrors = new ArrayBuffer[ApiRecordError](0)\n      for ((record, batchIndex) <- batch.asScala.view.zipWithIndex) {\n        validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,\n          timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)\n        // we fail the batch if any record fails, so we stop appending if any record fails\n        if (recordErrors.isEmpty)\n          builder.appendWithOffset(offsetCounter.getAndIncrement(), record)\n      }",
+    "replace": "val recordErrors: ArrayBuffer[ApiRecordError] = new ArrayBuffer[ApiRecordError](0)\n      var batchIndex = 0\n      val viewIt = batch.asScala.view.iterator\n      while (viewIt.hasNext) {\n        val record = viewIt.next()\n        validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,\n          timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)\n        // we fail the batch if any record fails, so we stop appending if any record fails\n        if (recordErrors.isEmpty)\n          builder.appendWithOffset(offsetCounter.getAndIncrement(), record)\n        batchIndex += 1\n      }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogValidator.scala",
+    "search": "val recordErrors = new ArrayBuffer[ApiRecordError](0)\n      for ((record, batchIndex) <- batch.asScala.view.zipWithIndex) {\n        validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,\n          timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)\n\n        val offset = offsetCounter.getAndIncrement()\n        if (batch.magic > RecordBatch.MAGIC_VALUE_V0 && record.timestamp > maxBatchTimestamp) {\n          maxBatchTimestamp = record.timestamp\n          offsetOfMaxBatchTimestamp = offset\n        }\n      }",
+    "replace": "val recordErrors: ArrayBuffer[ApiRecordError] = new ArrayBuffer[ApiRecordError](0)\n      var batchIndex = 0\n      val viewIt = batch.asScala.view.iterator\n      while (viewIt.hasNext) {\n        val record = viewIt.next()\n        validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,\n          timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)\n\n        val offset = offsetCounter.getAndIncrement()\n        if (batch.magic > RecordBatch.MAGIC_VALUE_V0 && record.timestamp > maxBatchTimestamp) {\n          maxBatchTimestamp = record.timestamp\n          offsetOfMaxBatchTimestamp = offset\n        }\n        batchIndex += 1\n      }"
+  }
+]
+```

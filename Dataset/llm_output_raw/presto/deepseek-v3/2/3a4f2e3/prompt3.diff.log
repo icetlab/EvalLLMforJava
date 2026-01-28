@@ -1,0 +1,55 @@
+Looking at the provided `BooleanSelectiveStreamReader.java`, I can identify several performance improvement opportunities:
+
+1. **Loop optimization in `read()` method**: The main filtering loop has complex branching and could be optimized.
+2. **Memory allocation patterns**: The `ensureValuesCapacity` method could be optimized for common cases.
+3. **Branch prediction improvements**: Some condition checks could be reordered for better branch prediction.
+4. **Redundant operations**: Some operations might be repeated unnecessarily.
+
+Here are the specific changes I'll make:
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java",
+    "search": "    private void ensureValuesCapacity(int capacity, boolean recordNulls)\n    {\n        values = ensureCapacity(values, capacity);\n\n        if (recordNulls) {\n            nulls = ensureCapacity(nulls, capacity);\n        }\n    }",
+    "replace": "    private void ensureValuesCapacity(int capacity, boolean recordNulls)\n    {\n        if (values == null || values.length < capacity) {\n            values = ensureCapacity(values, capacity);\n        }\n\n        if (recordNulls && (nulls == null || nulls.length < capacity)) {\n            nulls = ensureCapacity(nulls, capacity);\n        }\n    }"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java",
+    "search": "                if (presentStream != null && !presentStream.nextBit()) {\n                    if ((nonDeterministicFilter && filter.testNull()) || nullsAllowed) {\n                        if (outputRequired) {\n                            nulls[outputPositionCount] = true;\n                        }\n                        outputPositions[outputPositionCount] = position;\n                        outputPositionCount++;\n                    }\n                }\n                else {\n                    boolean value = dataStream.nextBit();\n                    if (filter.testBoolean(value)) {\n                        if (outputRequired) {\n                            values[outputPositionCount] = (byte) (value ? 1 : 0);\n                            if (nullsAllowed && presentStream != null) {\n                                nulls[outputPositionCount] = false;\n                            }\n                        }\n                        outputPositions[outputPositionCount] = position;\n                        outputPositionCount++;\n                    }\n                }",
+    "replace": "                if (presentStream != null && !presentStream.nextBit()) {\n                    if (nullsAllowed || (nonDeterministicFilter && filter.testNull())) {\n                        if (outputRequired) {\n                            nulls[outputPositionCount] = true;\n                        }\n                        outputPositions[outputPositionCount] = position;\n                        outputPositionCount++;\n                    }\n                }\n                else {\n                    boolean value = dataStream.nextBit();\n                    if (filter.testBoolean(value)) {\n                        if (outputRequired) {\n                            values[outputPositionCount] = (byte) (value ? 1 : 0);\n                            if (nullsAllowed && presentStream != null) {\n                                nulls[outputPositionCount] = false;\n                            }\n                        }\n                        outputPositions[outputPositionCount] = position;\n                        outputPositionCount++;\n                    }\n                }"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java",
+    "search": "        int streamPosition = 0;\n        for (int i = 0; i < positionCount; i++) {\n            int position = positions[i];\n            if (position > streamPosition) {\n                skip(position - streamPosition);\n                streamPosition = position;\n            }\n\n            if (presentStream != null && !presentStream.nextBit()) {\n                nulls[i] = true;\n            }\n            else {\n                values[i] = (byte) (dataStream.nextBit() ? 1 : 0);\n                if (presentStream != null) {\n                    nulls[i] = false;\n                }\n            }\n            streamPosition++;\n        }",
+    "replace": "        int streamPosition = 0;\n        int i = 0;\n        while (i < positionCount) {\n            int position = positions[i];\n            if (position > streamPosition) {\n                skip(position - streamPosition);\n                streamPosition = position;\n            }\n\n            if (presentStream != null && !presentStream.nextBit()) {\n                nulls[i] = true;\n            }\n            else {\n                values[i] = (byte) (dataStream.nextBit() ? 1 : 0);\n                if (presentStream != null) {\n                    nulls[i] = false;\n                }\n            }\n            streamPosition++;\n            i++;\n        }"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java",
+    "search": "        if (allNulls) {\n            return new RunLengthEncodedBlock(NULL_BLOCK, positionCount);\n        }\n\n        boolean includeNulls = nullsAllowed && presentStream != null;\n        if (positionCount == outputPositionCount) {\n            Block block = new ByteArrayBlock(positionCount, Optional.ofNullable(includeNulls ? nulls : null), values);\n            nulls = null;\n            values = null;\n            return block;\n        }",
+    "replace": "        if (allNulls) {\n            return new RunLengthEncodedBlock(NULL_BLOCK, positionCount);\n        }\n\n        boolean includeNulls = nullsAllowed && presentStream != null;\n        if (positionCount == outputPositionCount) {\n            Block block = new ByteArrayBlock(positionCount, Optional.ofNullable(includeNulls ? nulls : null), values);\n            nulls = null;\n            values = null;\n            return block;\n        }"
+  }
+]
+```
+
+**Explanation of changes:**
+
+1. **Optimized `ensureValuesCapacity`**: Added checks to avoid unnecessary array reallocations when the existing arrays are already large enough.
+
+2. **Reordered condition in filter branch**: Changed `(nonDeterministicFilter && filter.testNull()) || nullsAllowed` to `nullsAllowed || (nonDeterministicFilter && filter.testNull())`. Since `nullsAllowed` is true more often (when filter is null or allows nulls), this improves branch prediction.
+
+3. **Changed for-loop to while-loop in `readNoFilter`**: While this might seem like a minor change, it can help with JIT optimization in some cases by making the loop structure simpler.
+
+4. **Note on the last change**: I initially considered optimizing the `getBlock` method, but upon closer inspection, the current implementation is already quite efficient. The search/replace pair for this section is identical, meaning no change is actually made - this was an error in my analysis. Let me provide a proper optimization instead:
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java",
+    "search": "    private void skip(int items)\n            throws IOException\n    {\n        if (dataStream == null) {\n            presentStream.skip(items);\n        }\n        else if (presentStream != null) {\n            int dataToSkip = presentStream.countBitsSet(items);\n            dataStream.skip(dataToSkip);\n        }\n        else {\n            dataStream.skip(items);\n        }\n    }",
+    "replace": "    private void skip(int items)\n            throws IOException\n    {\n        if (items <= 0) {\n            return;\n        }\n        \n        if (dataStream == null) {\n            presentStream.skip(items);\n        }\n        else if (presentStream != null) {\n            int dataToSkip = presentStream.countBitsSet(items);\n            dataStream.skip(dataToSkip);\n        }\n        else {\n            dataStream.skip(items);\n        }\n    }"
+  }
+]
+```
+
+This adds an early return for non-positive skip counts, which can happen in edge cases and avoids unnecessary method calls.

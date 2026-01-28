@@ -1,0 +1,33 @@
+diff --git a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java
+index 8db29fd7bd..90dcb9b22c 100644
+--- a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java
++++ b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java
+@@ -190,7 +190,8 @@ final class HpackEncoder {
+                 encodeInteger(out, 0x80, 7, staticTableIndex);
+             } else {
+                 ensureCapacity(headerSize);
+-                encodeLiteral(out, name, value, IndexType.INCREMENTAL, getNameIndex(name));
++                int nameIndex = getNameIndex(name);
++                encodeLiteral(out, name, value, IndexType.INCREMENTAL, nameIndex);
+                 add(name, value, headerSize);
+             }
+         }
+@@ -368,7 +369,8 @@ final class HpackEncoder {
+         for (HeaderEntry e = headerFields[i]; e != null; e = e.next) {
+             // Check the value before then name, as it is more likely the value will be different incase there is no
+             // match.
+-            if (e.hash == h && equalsVariableTime(value, e.value) && equalsVariableTime(name, e.name)) {
++            if (e.hash == h && (value == e.value || equalsVariableTime(value, e.value)) 
++                && (name == e.name || equalsVariableTime(name, e.name))) {
+                 return e;
+             }
+         }
+@@ -386,7 +388,7 @@ final class HpackEncoder {
+         int h = AsciiString.hashCode(name);
+         int i = index(h);
+         for (HeaderEntry e = headerFields[i]; e != null; e = e.next) {
+-            if (e.hash == h && equalsConstantTime(name, e.name) != 0) {
++            if (e.hash == h && (name == e.name || equalsConstantTime(name, e.name) != 0)) {
+                 return getIndex(e.index);
+             }
+         }

@@ -1,0 +1,20 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
+index 30e0088e35..37ad906df8 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
+@@ -368,6 +368,7 @@ public class OptimizedPartitionedOutputOperator
+         private final List<Integer> variableWidthChannels;
+         private final int fixedWidthRowSize;
+         private final DecodedBlockNode[] decodedBlocks;
++        private final Block[] partitionFunctionArgsBlocks;
+ 
+         private boolean hasAnyRowBeenReplicated;
+ 
+@@ -404,6 +405,7 @@ public class OptimizedPartitionedOutputOperator
+ 
+             this.sourceTypes = sourceTypes;
+             decodedBlocks = new DecodedBlockNode[sourceTypes.size()];
++            this.partitionFunctionArgsBlocks = new Block[partitionChannels.size()];
+ 
+             ImmutableList.Builder<Integer> variableWidthChannels = ImmutableList.builder();
+             int fixedWidthRowSize = 0;

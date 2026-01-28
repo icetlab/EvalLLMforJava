@@ -1,0 +1,24 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java b/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java
+index 979fc2cb80..f0cc41e317 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java
+@@ -259,7 +259,8 @@ public class PageProcessor
+             ReferenceCountMap referenceCountMap = new ReferenceCountMap();
+             for (int channel = 0; channel < page.getChannelCount(); channel++) {
+                 Block block = page.getBlock(channel);
+-                if (!isNotLoadedLazyBlock(block)) {
++                // inline lazy block check to avoid method call
++                if (!(block instanceof LazyBlock) || ((LazyBlock) block).isLoaded()) {
+                     block.retainedBytesForEachPart((object, size) -> {
+                         if (referenceCountMap.incrementAndGet(object) == 1) {
+                             retainedSizeInBytes += size;
+@@ -342,7 +343,8 @@ public class PageProcessor
+     private static class DictionarySourceIdFunction
+             implements Function<DictionaryBlock, DictionaryId>
+     {
+-        private final Map<DictionaryId, DictionaryId> dictionarySourceIds = new HashMap<>();
++        // pre-size to reduce rehashing
++        private final Map<DictionaryId, DictionaryId> dictionarySourceIds = new HashMap<>(16);
+ 
+         @Override
+         public DictionaryId apply(DictionaryBlock block)

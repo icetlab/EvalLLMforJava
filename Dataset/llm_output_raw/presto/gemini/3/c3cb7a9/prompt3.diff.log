@@ -1,0 +1,22 @@
+My overall improvement strategy focuses on micro-optimizations in performance-critical sections of the `WindowOperator`.
+
+First, I'm improving the `hashCode()` implementation for the `FrameBoundKey` inner class. The original version using `Objects.hash()` can introduce overhead due to array allocation and boxing of primitive types. By switching to a manual calculation (`31 * functionIndex + type.hashCode()`), I'm creating a more direct and efficient hash code generation that avoids these overheads. This is beneficial because `FrameBoundKey` is used as a key in a `Map` that can be accessed frequently during window function processing.
+
+Second, I'm refining the binary search algorithm within the `findEndPosition` method. This method is crucial for locating partition boundaries. The existing implementation is correct, but I'm replacing it with a more conventional and potentially faster `upper_bound`-style binary search. This alternative structure can sometimes be better optimized by the JIT compiler and may exhibit more favorable performance characteristics.
+
+These changes are targeted, functionality-preserving optimizations aimed at reducing CPU cycles and object allocation in hot paths of the operator's execution.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java",
+    "search": "        @Override\n        public int hashCode()\n        {\n            return Objects.hash(functionIndex, type);\n        }",
+    "replace": "        @Override\n        public int hashCode()\n        {\n            return 31 * functionIndex + type.hashCode();\n        }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java",
+    "search": "    static int findEndPosition(int startPosition, int endPosition, BiPredicate<Integer, Integer> comparator)\n    {\n        checkArgument(startPosition >= 0, \"startPosition must be greater or equal than zero: %s\", startPosition);\n        checkArgument(startPosition < endPosition, \"startPosition (%s) must be less than endPosition (%s)\", startPosition, endPosition);\n\n        int left = startPosition;\n        int right = endPosition;\n\n        while (left + 1 < right) {\n            int middle = (left + right) >>> 1;\n\n            if (comparator.test(startPosition, middle)) {\n                left = middle;\n            }\n            else {\n                right = middle;\n            }\n        }\n\n        return right;\n    }",
+    "replace": "    static int findEndPosition(int startPosition, int endPosition, BiPredicate<Integer, Integer> comparator)\n    {\n        checkArgument(startPosition >= 0, \"startPosition must be greater or equal than zero: %s\", startPosition);\n        checkArgument(startPosition < endPosition, \"startPosition (%s) must be less than endPosition (%s)\", startPosition, endPosition);\n\n        int low = startPosition;\n        int high = endPosition;\n\n        while (low < high) {\n            int middle = (low + high) >>> 1;\n            if (comparator.test(startPosition, middle)) {\n                low = middle + 1;\n            }\n            else {\n                high = middle;\n            }\n        }\n\n        return low;\n    }"
+  }
+]
+```

@@ -1,0 +1,30 @@
+Explanation: The performance issue is that ZstdInputStream and ZstdOutputStream from zstd-jni 1.4.5-6 allocate large internal buffers and do not buffer reads/writes, causing excessive allocation/GC and inefficient JNI calls for small byte operations. To improve performance, we should wrap these streams with BufferedInputStream and BufferedOutputStream (similar to GZIP) to reduce JNI overhead and improve I/O efficiency.
+
+Changes:
+1. For ZSTD output, wrap ZstdOutputStream with a BufferedOutputStream.
+2. For ZSTD input, wrap ZstdInputStream with a BufferedInputStream.
+3. Use appropriate buffer sizes (16 KB for uncompressed side, 8 KB for compressed side) as done for GZIP.
+
+Note: We need to modify the ZSTD enum constant's wrapForOutput and wrapForInput methods to add buffering. However, the current implementation uses MethodHandle to dynamically load the class. We'll need to adjust the invocation to wrap the constructed stream with buffering.
+
+We'll create a new MethodHandle for the constructor that takes an OutputStream and then wrap it with BufferedOutputStream. Similarly for input, we'll wrap the ZstdInputStream with BufferedInputStream.
+
+But note: The ZstdConstructors.OUTPUT currently invokes with a ByteBufferOutputStream argument. We need to wrap the result. However, we cannot directly change the MethodHandle invocation because it returns an OutputStream. Instead, we can change the wrapForOutput method to wrap the result of the invocation.
+
+Similarly for wrapForInput.
+
+We'll update the ZSTD enum constant methods to wrap the streams with buffering.
+
+Important: We must ensure that the buffering does not break the existing functionality. The buffer sizes are chosen to match GZIP's buffering strategy.
+
+Let's implement the changes.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "    ZSTD(4, \"zstd\", 1.0f) {\n        @Override\n        public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {\n            try {\n                return (OutputStream) ZstdConstructors.OUTPUT.invoke(buffer);\n            } catch (Throwable e) {\n                throw new KafkaException(e);\n            }\n        }\n\n        @Override\n        public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {\n            try {\n                return (InputStream) ZstdConstructors.INPUT.invoke(new ByteBufferInputStream(buffer));\n            } catch (Throwable e) {\n                throw new KafkaException(e);\n            }\n        }\n    };",
+    "replace": "    ZSTD(4, \"zstd\", 1.0f) {\n        @Override\n        public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {\n            try {\n                // Wrap ZstdOutputStream with buffering to improve performance for small writes\n                OutputStream zstdOut = (OutputStream) ZstdConstructors.OUTPUT.invoke(buffer);\n                return new BufferedOutputStream(zstdOut, 16 * 1024);\n            } catch (Throwable e) {\n                throw new KafkaException(e);\n            }\n        }\n\n        @Override\n        public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {\n            try {\n                // Wrap ZstdInputStream with buffering to improve performance for small reads\n                InputStream zstdIn = (InputStream) ZstdConstructors.INPUT.invoke(new ByteBufferInputStream(buffer));\n                return new BufferedInputStream(zstdIn, 16 * 1024);\n            } catch (Throwable e) {\n                throw new KafkaException(e);\n            }\n        }\n    };"
+  }
+]
+```

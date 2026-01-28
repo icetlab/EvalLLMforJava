@@ -1,0 +1,51 @@
+diff --git a/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java b/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
+index d624d855f4..f78e745517 100644
+--- a/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
++++ b/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
+@@ -17,6 +17,7 @@
+ package io.netty.buffer;
+ 
+ import io.netty.util.IllegalReferenceCountException;
++import io.netty.util.internal.PlatformDependent;
+ 
+ import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
+ 
+@@ -27,8 +28,22 @@ import static io.netty.util.internal.ObjectUtil.checkPositive;
+  */
+ public abstract class AbstractReferenceCountedByteBuf extends AbstractByteBuf {
+ 
+-    private static final AtomicIntegerFieldUpdater<AbstractReferenceCountedByteBuf> refCntUpdater =
+-            AtomicIntegerFieldUpdater.newUpdater(AbstractReferenceCountedByteBuf.class, "refCnt");
++    private static final long REFCNT_FIELD_OFFSET;
++    private static final AtomicIntegerFieldUpdater<AbstractReferenceCountedByteBuf> refCntUpdater;
++
++    static {
++        refCntUpdater = AtomicIntegerFieldUpdater.newUpdater(AbstractReferenceCountedByteBuf.class, "refCnt");
++        long refCntFieldOffset = -1;
++        if (PlatformDependent.hasUnsafe()) {
++            try {
++                refCntFieldOffset = PlatformDependent.objectFieldOffset(
++                        AbstractReferenceCountedByteBuf.class.getDeclaredField("refCnt"));
++            } catch (Throwable ignore) {
++                refCntFieldOffset = -1;
++            }
++        }
++        REFCNT_FIELD_OFFSET = refCntFieldOffset;
++    }
+ 
+     private volatile int refCnt;
+ 
+@@ -39,8 +54,13 @@ public abstract class AbstractReferenceCountedByteBuf extends AbstractByteBuf {
+ 
+     @Override
+     public int refCnt() {
++        // With Unsafe, we can do a non-volatile read of the refCnt field.
++        if (REFCNT_FIELD_OFFSET != -1) {
++            return PlatformDependent.getInt(this, REFCNT_FIELD_OFFSET);
++        } else {
+             return refCnt;
+         }
++    }
+ 
+     /**
+      * An unsafe operation intended for use by a subclass that sets the reference count of the buffer directly

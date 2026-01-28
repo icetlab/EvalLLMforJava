@@ -1,0 +1,21 @@
+I’ve replaced stream-based BlockBuilder list creation with explicit ArrayList loops to reduce overhead and avoid creating intermediate stream objects. I’ve also added the necessary import for ArrayList.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java",
+    "search": "import java.util.List;",
+    "replace": "import java.util.List;\nimport java.util.ArrayList;"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java",
+    "search": "        this.blockBuilders = projections.stream().map(RowExpression::getType).map(type -> type.createBlockBuilder(null, 1)).collect(toImmutableList());",
+    "replace": "        List<BlockBuilder> initialBlockBuilders = new ArrayList<>(projections.size());\n        for (RowExpression expr : projections) {\n            initialBlockBuilders.add(expr.getType().createBlockBuilder(null, 1));\n        }\n        this.blockBuilders = initialBlockBuilders;"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java",
+    "search": "        blockBuilders = blockBuilders.stream().map(blockBuilder -> blockBuilder.newBlockBuilderLike(null)).collect(toImmutableList());",
+    "replace": "        List<BlockBuilder> newBlockBuilders = new ArrayList<>(blockBuilders.size());\n        for (BlockBuilder builder : blockBuilders) {\n            newBlockBuilders.add(builder.newBlockBuilderLike(null));\n        }\n        blockBuilders = newBlockBuilders;"
+  }
+]
+```

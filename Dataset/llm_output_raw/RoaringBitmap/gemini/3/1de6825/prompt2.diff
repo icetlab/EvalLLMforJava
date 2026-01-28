@@ -1,0 +1,148 @@
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java b/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java
+index de6dddea..7472cd10 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java
+@@ -19,80 +19,67 @@ public class Node16 extends Node {
+ 
+   @Override
+   public int getChildPos(byte k) {
+-    byte[] firstBytes = LongUtils.toBDBytes(firstV);
+-    if (count <= 8) {
+-      return Node.binarySearch(firstBytes, 0, count, k);
++    int unsignedKey = Byte.toUnsignedInt(k);
++    int low = 0;
++    int high = count - 1;
++
++    while (low <= high) {
++      int mid = (low + high) >>> 1;
++      byte midVal;
++      if (mid < 8) {
++        midVal = (byte) (firstV >> (8 * (7 - mid)));
+       } else {
+-      int pos = Node.binarySearch(firstBytes, 0, 8, k);
+-      if (pos != ILLEGAL_IDX) {
+-        return pos;
+-      } else {
+-        byte[] secondBytes = LongUtils.toBDBytes(secondV);
+-        pos = Node.binarySearch(secondBytes, 0, (count - 8), k);
+-        if (pos != ILLEGAL_IDX) {
+-          return 8 + pos;
+-        } else {
+-          return ILLEGAL_IDX;
++        midVal = (byte) (secondV >> (8 * (7 - (mid - 8))));
+       }
++      int unsignedMidVal = Byte.toUnsignedInt(midVal);
++
++      if (unsignedMidVal < unsignedKey) {
++        low = mid + 1;
++      } else if (unsignedMidVal > unsignedKey) {
++        high = mid - 1;
++      } else {
++        return mid;
+       }
+     }
++    return ILLEGAL_IDX;
+   }
+ 
+   @Override
+   public SearchResult getNearestChildPos(byte k) {
+-    byte[] firstBytes = LongUtils.toBDBytes(firstV);
+-    if (count <= 8) {
+-      return Node.binarySearchWithResult(firstBytes, 0, count, k);
++    int unsignedKey = Byte.toUnsignedInt(k);
++    int low = 0;
++    int high = count - 1;
++
++    while (low <= high) {
++      int mid = (low + high) >>> 1;
++      byte midVal;
++      if (mid < 8) {
++        midVal = (byte) (firstV >> (8 * (7 - mid)));
+       } else {
+-      SearchResult firstResult = Node.binarySearchWithResult(
+-              firstBytes, 0, 8, k);
+-      // given the values are "in order" if we found a match or a value larger than
+-      // the target we are done.
+-      if (firstResult.outcome == SearchResult.Outcome.FOUND
+-              || firstResult.hasNextLargerPos()) {
+-        return firstResult;
+-      } else {
+-        byte[] secondBytes = LongUtils.toBDBytes(secondV);
+-        SearchResult secondResult = Node.binarySearchWithResult(
+-                secondBytes, 0, (count - 8), k);
+-
+-        switch(secondResult.outcome) {
+-          case FOUND:
+-            return SearchResult.found(8 + secondResult.getKeyPos());
+-          case NOT_FOUND:
+-            int lowPos = secondResult.getNextSmallerPos();
+-            int highPos = secondResult.getNextLargerPos();
+-            // don't map -1 into the legal range by adding 8!
+-            if (lowPos>=0){ lowPos += 8;}
+-            if (highPos>=0){ highPos += 8;}
+-
+-            if(firstResult.hasNextLargerPos() == false && secondResult.hasNextSmallerPos() == false)
+-            {
+-              // this happens when the result is in the gap of the two ranges, the correct
+-              // "smaller value" is that of first result.
+-              lowPos = firstResult.getNextSmallerPos();
++        midVal = (byte) (secondV >> (8 * (7 - (mid - 8))));
+       }
++      int unsignedMidVal = Byte.toUnsignedInt(midVal);
+ 
+-            return SearchResult.notFound( lowPos, highPos);
+-
+-          default:
+-            throw new IllegalStateException("There only two possible search outcomes");
+-        }
++      if (unsignedMidVal < unsignedKey) {
++        low = mid + 1;
++      } else if (unsignedMidVal > unsignedKey) {
++        high = mid - 1;
++      } else {
++        return SearchResult.found(mid);
+       }
+     }
++    // key not found
++    int nextSmallerPos = high;
++    int nextLargerPos = low < count ? low : ILLEGAL_IDX;
++    return SearchResult.notFound(nextSmallerPos, nextLargerPos);
+   }
+ 
+   @Override
+   public byte getChildKey(int pos) {
+-    int posInLong;
+-    if (pos <= 7) {
+-      posInLong = pos;
+-      byte[] firstBytes = LongUtils.toBDBytes(firstV);
+-      return firstBytes[posInLong];
++    if (pos < 8) {
++      return (byte) (firstV >> (8 * (7 - pos)));
+     } else {
+-      posInLong = pos - 8;
+-      byte[] secondBytes = LongUtils.toBDBytes(secondV);
+-      return secondBytes[posInLong];
++      return (byte) (secondV >> (8 * (7 - (pos - 8))));
+     }
+   }
+ 
+@@ -168,17 +155,15 @@ public class Node16 extends Node {
+       return currentNode16;
+     } else {
+       Node48 node48 = new Node48(currentNode16.prefixLength);
+-      byte[] firtBytes = LongUtils.toBDBytes(currentNode16.firstV);
+       for (int i = 0; i < 8; i++) {
+-        byte v = firtBytes[i];
++        byte v = (byte) (currentNode16.firstV >> (8 * (7 - i)));
+         int unsignedIdx = Byte.toUnsignedInt(v);
+         //i won't be beyond 48
+         Node48.setOneByte(unsignedIdx, (byte) i, node48.childIndex);
+         node48.children[i] = currentNode16.children[i];
+       }
+-      byte[] secondBytes = LongUtils.toBDBytes(currentNode16.secondV);
+       for (int i = 8; i < currentNode16.count; i++) {
+-        byte v = secondBytes[i - 8];
++        byte v = (byte) (currentNode16.secondV >> (8 * (7 - (i - 8))));
+         int unsignedIdx = Byte.toUnsignedInt(v);
+         //i won't be beyond 48
+         Node48.setOneByte(unsignedIdx, (byte) i, node48.childIndex);

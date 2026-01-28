@@ -1,0 +1,11 @@
+I’ve corrected the point-construction in the envelope‐only intersection case so that the Y coordinate uses the envelope’s Y value rather than its X value.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "if (intersection.getXMin() == intersection.getXMax()) {\n                if (intersection.getYMin() == intersection.getYMax()) {\n                    return EsriGeometrySerde.serialize(createFromEsriGeometry(new Point(intersection.getXMin(), intersection.getXMax()), null));",
+    "replace": "if (intersection.getXMin() == intersection.getXMax()) {\n                if (intersection.getYMin() == intersection.getYMax()) {\n                    return EsriGeometrySerde.serialize(createFromEsriGeometry(new Point(intersection.getXMin(), intersection.getYMin()), null));"
+  }
+]
+```

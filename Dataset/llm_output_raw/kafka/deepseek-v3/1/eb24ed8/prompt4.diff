@@ -1,0 +1,26 @@
+diff --git a/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java b/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java
+index 352d12d834..cb8bd83aac 100644
+--- a/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java
++++ b/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java
+@@ -119,7 +119,9 @@ public enum CompressionType {
+         @Override
+         public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {
+             try {
+-                return (OutputStream) ZstdConstructors.OUTPUT.invoke(buffer);
++                // Wrap ZstdOutputStream with buffering to improve performance for small writes
++                OutputStream zstdOut = (OutputStream) ZstdConstructors.OUTPUT.invoke(buffer);
++                return new BufferedOutputStream(zstdOut, 16 * 1024);
+             } catch (Throwable e) {
+                 throw new KafkaException(e);
+             }
+@@ -128,7 +130,9 @@ public enum CompressionType {
+         @Override
+         public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {
+             try {
+-                return (InputStream) ZstdConstructors.INPUT.invoke(new ByteBufferInputStream(buffer));
++                // Wrap ZstdInputStream with buffering to improve performance for small reads
++                InputStream zstdIn = (InputStream) ZstdConstructors.INPUT.invoke(new ByteBufferInputStream(buffer));
++                return new BufferedInputStream(zstdIn, 16 * 1024);
+             } catch (Throwable e) {
+                 throw new KafkaException(e);
+             }

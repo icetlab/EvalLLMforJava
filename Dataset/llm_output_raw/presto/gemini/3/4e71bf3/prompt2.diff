@@ -1,0 +1,53 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+index da887a9ba3..a1e2ec0cd4 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+@@ -257,6 +257,22 @@ public class ByteSelectiveStreamReader
+             throws IOException
+     {
+         // filter == null implies outputRequired == true
++
++        // fast path for contiguous reads without nulls
++        if (presentStream == null && positionCount > 0 && positions[positionCount - 1] - positions[0] == positionCount - 1) {
++            int streamPosition = 0;
++            int startPosition = positions[0];
++            if (startPosition > streamPosition) {
++                skip(startPosition - streamPosition);
++                streamPosition = startPosition;
++            }
++
++            dataStream.next(values, 0, positionCount);
++
++            outputPositionCount = positionCount;
++            return streamPosition + positionCount;
++        }
++
+         int streamPosition = 0;
+         for (int i = 0; i < positionCount; i++) {
+             int position = positions[i];
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java b/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java
+index 21edc123eb..13a59e262d 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java
+@@ -119,6 +119,21 @@ public class ByteInputStream
+         return buffer[offset++];
+     }
+ 
++    public void next(byte[] data, int start, int len)
++            throws IOException
++    {
++        int bytesRead = 0;
++        while (bytesRead < len) {
++            if (offset == length) {
++                readNextBlock();
++            }
++            int chunkSize = Math.min(length - offset, len - bytesRead);
++            System.arraycopy(buffer, offset, data, start + bytesRead, chunkSize);
++            offset += chunkSize;
++            bytesRead += chunkSize;
++        }
++    }
++
+     public void nextVector(Type type, long items, BlockBuilder builder)
+             throws IOException
+     {

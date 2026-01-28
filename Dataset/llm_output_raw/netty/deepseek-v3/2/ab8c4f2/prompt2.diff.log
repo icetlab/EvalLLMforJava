@@ -1,0 +1,41 @@
+The performance issue indicates that the HPACK static table groups entries with the same name sequentially. The method `getIndexInsensitive` currently continues scanning even after a name mismatch, which is unnecessary because once the name differs, all subsequent entries in that group will also have different names. By breaking early on name mismatch, we can reduce the number of comparisons and improve performance.
+
+Additionally, we can apply a similar optimization in `HpackEncoder.getEntryInsensitive` by checking the name equality before the value equality when scanning the dynamic table's hash bucket. Since the name comparison is likely to fail earlier (as values vary more), swapping the order of checks can reduce the number of value comparisons, which are more expensive due to longer lengths. However, note that the comment in the original code suggests checking value first because it's more likely to differ. This is contradictory to typical header patterns where names are fewer and values vary more. But to align with the static table optimization and potentially improve performance, we'll also adjust the dynamic table scanning to break early on name mismatch within the same hash bucket? Actually, we cannot break early because hash collisions may cause different names to share the same bucket. However, we can still reorder the checks to compare name before value, as name comparison is cheaper (often cached hash) and may fail faster. But the existing comment claims value is more likely different. Let's analyze: In HTTP/2, headers often have the same name (e.g., multiple "cookie" lines) but different values. So value may indeed differ more often. However, the performance issue is about static table, but we can also consider dynamic table. Since the issue description only mentions static table, we'll focus on that. However, we can also apply a micro-optimization in `getEntryInsensitive` by comparing hash first (already done), then name, then value. This may reduce value comparisons when name mismatches. But note that the method uses `equalsVariableTime` for both name and value, which are similar in cost. However, if the name matches but value differs, we still need to compare values. The original order compares value first, which might be more expensive if values are long. Swapping might not guarantee improvement. Given the uncertainty, we'll only change the static table method as per the issue.
+
+But the previous search block was not found because the exact indentation might differ. Let's examine the provided source file for `HpackStaticTable.java`. The method `getIndexInsensitive` is:
+
+```java
+    static int getIndexInsensitive(CharSequence name, CharSequence value) {
+        int index = getIndex(name);
+        if (index == -1) {
+            return -1;
+        }
+
+        // Note this assumes all entries for a given header field are sequential.
+        while (index <= length) {
+            HpackHeaderField entry = getEntry(index);
+            if (equalsVariableTime(name, entry.name) && equalsVariableTime(value, entry.value)) {
+                return index;
+            }
+            index++;
+        }
+
+        return -1;
+    }
+```
+
+We need to capture the exact lines with correct indentation (4 spaces for the method body, 8 spaces for the while block). Let's construct the search string accordingly.
+
+We'll also consider that there might be a blank line before the while. We'll include the comment line and the while block up to the closing brace.
+
+Now, we'll output the JSON with the change.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "        // Note this assumes all entries for a given header field are sequential.\n        while (index <= length) {\n            HpackHeaderField entry = getEntry(index);\n            if (equalsVariableTime(name, entry.name) && equalsVariableTime(value, entry.value)) {\n                return index;\n            }\n            index++;\n        }",
+    "replace": "        // Note this assumes all entries for a given header field are sequential.\n        while (index <= length) {\n            HpackHeaderField entry = getEntry(index);\n            if (!equalsVariableTime(name, entry.name)) {\n                break;\n            }\n            if (equalsVariableTime(value, entry.value)) {\n                return index;\n            }\n            index++;\n        }"
+  }
+]
+```

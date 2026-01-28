@@ -1,0 +1,12 @@
+**Overall Improvement Intent:**
+The previous search pattern was too specific. I'll now break the change into smaller, more focused chunks that match exactly what's in the file to ensure they can be reliably applied.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java",
+    "search": "    public static Block distinct(Type type, Block array)\n    {\n        if (array.getPositionCount() == 0) {\n            return array;\n        }\n\n        TypedSet typedSet = new TypedSet(type, array.getPositionCount());\n        BlockBuilder distinctElementBlockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), array.getPositionCount());\n        for (int i = 0; i < array.getPositionCount(); i++) {\n            if (!typedSet.contains(array, i)) {\n                typedSet.add(array, i);\n                type.appendTo(array, i, distinctElementBlockBuilder);\n            }\n        }\n\n        return distinctElementBlockBuilder.build();\n    }",
+    "replace": "    public static Block distinct(Type type, Block array)\n    {\n        int positionCount = array.getPositionCount();\n        if (positionCount == 0) {\n            return array;\n        }\n\n        TypedSet typedSet = new TypedSet(type, positionCount);\n        BlockBuilder distinctElementBlockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), Math.min(positionCount, 1024));\n        for (int i = 0; i < positionCount; i++) {\n            if (!typedSet.contains(array, i)) {\n                typedSet.add(array, i);\n                type.appendTo(array, i, distinctElementBlockBuilder);\n            }\n        }\n\n        return distinctElementBlockBuilder.build();\n    }"
+  }
+]
+```

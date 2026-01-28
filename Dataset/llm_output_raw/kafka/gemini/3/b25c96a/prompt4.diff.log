@@ -1,0 +1,18 @@
+The current implementation for expiring producer IDs is inefficient. It iterates through all producer IDs, collects the expired ones into a new list, and then iterates through this new list to remove them from the main map. This process is memory-intensive and slow, especially with a large number of producers.
+
+My improvement refactors the `removeExpiredProducers` method to use `Map.entrySet().removeIf()`. This allows for in-place removal of expired entries in a single iteration over the map, avoiding the creation of intermediate collections and significantly improving performance. As a result of this change, the now-unused private helper method `removeProducerIds` is also removed for code cleanliness.
+
+```json
+[
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "    public void removeExpiredProducers(long currentTimeMs) {\n        List<Long> keys = producers.entrySet().stream()\n                .filter(entry -> isProducerExpired(currentTimeMs, entry.getValue()))\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        removeProducerIds(keys);\n\n        List<Long> verificationKeys = verificationStates.entrySet().stream()\n                .filter(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs())\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        verificationKeys.forEach(verificationStates::remove);\n    }",
+    "replace": "    public void removeExpiredProducers(long currentTimeMs) {\n        producers.entrySet().removeIf(entry -> isProducerExpired(currentTimeMs, entry.getValue()));\n        producerIdCount = producers.size();\n\n        verificationStates.entrySet().removeIf(entry ->\n            currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs());\n    }"
+  },
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "    private void removeProducerIds(List<Long> keys) {\n        producers.keySet().removeAll(keys);\n        producerIdCount = producers.size();\n    }\n",
+    "replace": ""
+  }
+]
+```

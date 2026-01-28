@@ -1,0 +1,13 @@
+Looking at the build error, the issue is a Checkstyle violation in GeometrySerde.java at line 285: "RightCurly: '}' at column 9 should be alone on a line." This means there's a formatting issue with a closing brace not being on its own line. The error occurs in the `merge` method where I previously made changes that introduced an `else` statement without proper formatting.
+
+Let me examine the current code and fix the formatting issue. The problem is that the `else` block should have its opening brace on the same line as `else`, and the closing brace should be on its own line.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java",
+    "search": "    @Nullable\n    private static Envelope merge(@Nullable Envelope left, @Nullable Envelope right)\n    {\n        if (left == null) {\n            return right;\n        }\n        else if (right == null) {\n            return left;\n        }\n        else {\n            right.merge(left);\n        }\n        return right;\n    }",
+    "replace": "    @Nullable\n    private static Envelope merge(@Nullable Envelope left, @Nullable Envelope right)\n    {\n        if (left == null) {\n            return right;\n        }\n        if (right == null) {\n            return left;\n        }\n        right.merge(left);\n        return right;\n    }"
+  }
+]
+```

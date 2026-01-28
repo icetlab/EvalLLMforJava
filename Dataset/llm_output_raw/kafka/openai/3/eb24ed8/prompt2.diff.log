@@ -1,0 +1,16 @@
+Here we wrap the ZSTD input and output streams in 16 KB Java buffered streams to batch JNI calls and reduce allocations.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "return (OutputStream) ZstdConstructors.OUTPUT.invoke(buffer);",
+    "replace": "OutputStream zstdOut = (OutputStream) ZstdConstructors.OUTPUT.invoke(buffer);\n                return new BufferedOutputStream(zstdOut, 16 * 1024);"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "return (InputStream) ZstdConstructors.INPUT.invoke(new ByteBufferInputStream(buffer));",
+    "replace": "InputStream zstdIn = (InputStream) ZstdConstructors.INPUT.invoke(new ByteBufferInputStream(buffer));\n                return new BufferedInputStream(zstdIn, 16 * 1024);"
+  }
+]
+```

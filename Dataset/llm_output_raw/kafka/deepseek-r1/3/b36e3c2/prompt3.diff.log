@@ -1,0 +1,16 @@
+I need to provide more precise search blocks that exactly match the code in the file. Let me break down the changes into smaller, more targeted modifications and ensure the search strings match exactly what's in the source file.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogValidator.scala",
+    "search": "    for (batch <- records.batches.asScala) {\n      validateBatch(topicPartition, firstBatch, batch, origin, toMagicValue, brokerTopicStats)",
+    "replace": "    val batchIter = records.batches.iterator()\n    while (batchIter.hasNext) {\n      val batch = batchIter.next()\n      validateBatch(topicPartition, firstBatch, batch, origin, toMagicValue, brokerTopicStats)"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/log/LogValidator.scala",
+    "search": "      val recordErrors = new ArrayBuffer[ApiRecordError](0)\n      for ((record, batchIndex) <- batch.asScala.view.zipWithIndex) {\n        validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,\n          timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)\n        // we fail the batch if any record fails, so we stop appending if any record fails\n        if (recordErrors.isEmpty)\n          builder.appendWithOffset(offsetCounter.getAndIncrement(), record)\n      }",
+    "replace": "      val recordErrors = new ArrayBuffer[ApiRecordError]\n      val recordIter = batch.iterator()\n      var batchIndex = 0\n      while (recordIter.hasNext && recordErrors.isEmpty) {\n        val record = recordIter.next()\n        validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,\n          timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)\n        // we fail the batch if any record fails, so we stop appending if any record fails\n        if (recordErrors.isEmpty)\n          builder.appendWithOffset(offsetCounter.getAndIncrement(), record)\n        batchIndex += 1\n      }"
+  }
+]
+```

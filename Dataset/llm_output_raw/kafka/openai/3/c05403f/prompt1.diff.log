@@ -1,0 +1,16 @@
+I’ve optimized the sizeOfUnsignedVarint and sizeOfVarlong methods to use bit‐width calculations instead of loops, reducing branches and shifts for faster execution.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "public static int sizeOfUnsignedVarint(int value) {\n        int bytes = 1;\n        while ((value & 0xffffff80) != 0L) {\n            bytes += 1;\n            value >>>= 7;\n        }\n        return bytes;\n    }",
+    "replace": "public static int sizeOfUnsignedVarint(int value) {\n        // Compute number of 7-bit groups needed\n        int bits = value == 0 ? 1 : 32 - Integer.numberOfLeadingZeros(value);\n        return (bits + 6) / 7;\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "public static int sizeOfVarlong(long value) {\n        long v = (value << 1) ^ (value >> 63);\n        int bytes = 1;\n        while ((v & 0xffffffffffffff80L) != 0L) {\n            bytes += 1;\n            v >>>= 7;\n        }\n        return bytes;\n    }",
+    "replace": "public static int sizeOfVarlong(long value) {\n        // Compute number of 7-bit groups needed for zig-zag value\n        long v = (value << 1) ^ (value >> 63);\n        int bits = v == 0L ? 1 : 64 - Long.numberOfLeadingZeros(v);\n        return (bits + 6) / 7;\n    }"
+  }
+]
+```

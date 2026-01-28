@@ -1,0 +1,11 @@
+I replaced the use of Java streams in removeExpiredProducers with manual iterator-based removal to avoid unnecessary allocations and improve performance, while preserving functionality and correctly updating the producer count.
+
+```json
+[
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "public void removeExpiredProducers(long currentTimeMs) {\n        List<Long> keys = producers.entrySet().stream()\n                .filter(entry -> isProducerExpired(currentTimeMs, entry.getValue()))\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        removeProducerIds(keys);\n\n        List<Long> verificationKeys = verificationStates.entrySet().stream()\n                .filter(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs())\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        verificationKeys.forEach(verificationStates::remove);\n    }",
+    "replace": "public void removeExpiredProducers(long currentTimeMs) {\n        // Remove expired producer entries efficiently using iterator\n        Iterator<Map.Entry<Long, ProducerStateEntry>> prodIt = producers.entrySet().iterator();\n        while (prodIt.hasNext()) {\n            Map.Entry<Long, ProducerStateEntry> entry = prodIt.next();\n            if (isProducerExpired(currentTimeMs, entry.getValue())) {\n                prodIt.remove();\n            }\n        }\n        // Update count after removal\n        producerIdCount = producers.size();\n\n        // Remove expired verification state entries\n        long expirationMs = producerStateManagerConfig.producerIdExpirationMs();\n        Iterator<Map.Entry<Long, VerificationStateEntry>> verIt = verificationStates.entrySet().iterator();\n        while (verIt.hasNext()) {\n            Map.Entry<Long, VerificationStateEntry> entry = verIt.next();\n            if (currentTimeMs - entry.getValue().timestamp() >= expirationMs) {\n                verIt.remove();\n            }\n        }\n    }"
+  }
+]
+```

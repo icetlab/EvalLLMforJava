@@ -1,0 +1,156 @@
+diff --git a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
+index da5080ff85..93b4a3d3e1 100644
+--- a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
++++ b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
+@@ -120,28 +120,29 @@ public class QueryStringEncoder {
+      * @param s The String to encode
+      */
+     private void encodeNonUtf8Component(CharSequence s) {
+-        //Don't allocate memory until needed
+-        char[] buf = null;
+-
+-        for (int i = 0, len = s.length(); i < len;) {
++        final int len = s.length();
++        int i = 0;
++        // Process safe characters in batches
++        while (i < len) {
+             char c = s.charAt(i);
+             if (dontNeedEncoding(c)) {
+-                uriBuilder.append(c);
+-                i++;
+-            } else {
+-                int index = 0;
+-                if (buf == null) {
+-                    buf = new char[s.length() - i];
++                int safeStart = i;
++                while (i < len && dontNeedEncoding(c = s.charAt(i))) {
++                    i++;
+                 }
+-
+-                do {
+-                    buf[index] = c;
+-                    index++;
++                uriBuilder.append(s, safeStart, i);
++            } else {
++                // Encode a single character or a batch of characters that need encoding
++                int encodeStart = i;
++                while (i < len && !dontNeedEncoding(c = s.charAt(i))) {
+                     i++;
+-                } while (i < s.length() && !dontNeedEncoding(c = s.charAt(i)));
+-
+-                byte[] bytes = new String(buf, 0, index).getBytes(charset);
+-
++                }
++                // Use a StringBuilder to accumulate characters for encoding
++                StringBuilder encodeBuf = new StringBuilder(i - encodeStart);
++                for (int j = encodeStart; j < i; j++) {
++                    encodeBuf.append(s.charAt(j));
++                }
++                byte[] bytes = encodeBuf.toString().getBytes(charset);
+                 for (byte b : bytes) {
+                     appendEncoded(b);
+                 }
+@@ -153,33 +154,51 @@ public class QueryStringEncoder {
+      * @see ByteBufUtil#writeUtf8(io.netty.buffer.ByteBuf, CharSequence, int, int)
+      */
+     private void encodeUtf8Component(CharSequence s) {
+-        for (int i = 0, len = s.length(); i < len; i++) {
++        final int len = s.length();
++        int i = 0;
++        // Process ASCII characters in batches when possible
++        while (i < len) {
+             char c = s.charAt(i);
+             if (c < 0x80) {
+-                if (dontNeedEncoding(c)) {
+-                    uriBuilder.append(c);
+-                } else {
+-                    appendEncoded(c);
++                // Fast path for ASCII characters
++                int asciiStart = i;
++                while (i < len && (c = s.charAt(i)) < 0x80 && dontNeedEncoding(c)) {
++                    i++;
+                 }
+-            } else if (c < 0x800) {
+-                appendEncoded(0xc0 | (c >> 6));
+-                appendEncoded(0x80 | (c & 0x3f));
+-            } else if (StringUtil.isSurrogate(c)) {
+-                if (!Character.isHighSurrogate(c)) {
+-                    appendEncoded(WRITE_UTF_UNKNOWN);
+-                    continue;
++                if (i > asciiStart) {
++                    uriBuilder.append(s, asciiStart, i);
+                 }
+-                // Surrogate Pair consumes 2 characters.
+-                if (++i == s.length()) {
+-                    appendEncoded(WRITE_UTF_UNKNOWN);
+-                    break;
++                if (i < len && (c = s.charAt(i)) < 0x80) {
++                    // Single ASCII character that needs encoding
++                    appendEncoded(c);
++                    i++;
+                 }
+-                // Extra method to allow inlining the rest of writeUtf8 which is the most likely code path.
+-                writeUtf8Surrogate(c, s.charAt(i));
+             } else {
+-                appendEncoded(0xe0 | (c >> 12));
+-                appendEncoded(0x80 | ((c >> 6) & 0x3f));
+-                appendEncoded(0x80 | (c & 0x3f));
++                // Non-ASCII path
++                if (c < 0x800) {
++                    appendEncoded(0xc0 | (c >> 6));
++                    appendEncoded(0x80 | (c & 0x3f));
++                    i++;
++                } else if (StringUtil.isSurrogate(c)) {
++                    if (!Character.isHighSurrogate(c)) {
++                        appendEncoded(WRITE_UTF_UNKNOWN);
++                        i++;
++                        continue;
++                    }
++                    // Surrogate Pair consumes 2 characters.
++                    if (++i == len) {
++                        appendEncoded(WRITE_UTF_UNKNOWN);
++                        break;
++                    }
++                    // Extra method to allow inlining the rest of writeUtf8 which is the most likely code path.
++                    writeUtf8Surrogate(c, s.charAt(i));
++                    i++;
++                } else {
++                    appendEncoded(0xe0 | (c >> 12));
++                    appendEncoded(0x80 | ((c >> 6) & 0x3f));
++                    appendEncoded(0x80 | (c & 0x3f));
++                    i++;
++                }
+             }
+         }
+     }
+@@ -199,7 +218,8 @@ public class QueryStringEncoder {
+     }
+ 
+     private void appendEncoded(int b) {
+-        uriBuilder.append('%').append(forDigit(b >> 4)).append(forDigit(b));
++        // Inline the hex digit conversion to avoid method call overhead
++        uriBuilder.append('%').append(CHAR_MAP[(b >> 4) & 0xF]).append(CHAR_MAP[b & 0xF]);
+     }
+ 
+     /**
+@@ -225,7 +245,20 @@ public class QueryStringEncoder {
+      * @return true or false
+      */
+     private static boolean dontNeedEncoding(char ch) {
++        // Fast path for ASCII: use a precomputed lookup table for 0-127
++        if (ch < 128) {
++            return ASCII_DONT_NEED_ENCODING[ch];
++        }
+         return ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9'
+                 || ch == '-' || ch == '_' || ch == '.' || ch == '*';
+     }
++
++    private static final boolean[] ASCII_DONT_NEED_ENCODING = new boolean[128];
++    static {
++        for (int i = 0; i < 128; i++) {
++            char ch = (char) i;
++            ASCII_DONT_NEED_ENCODING[i] = ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9'
++                    || ch == '-' || ch == '_' || ch == '.' || ch == '*';
++        }
++    }
+ }

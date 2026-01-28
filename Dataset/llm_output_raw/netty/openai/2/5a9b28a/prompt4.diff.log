@@ -1,0 +1,11 @@
+I’ve switched the local batch queue from FIFO to LIFO by replacing `pollFirst()` with `pollLast()`, which reduces contention and improves cache locality without affecting correctness.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "DefaultHandle<T> handle = batch.pollFirst();",
+    "replace": "DefaultHandle<T> handle = batch.pollLast();"
+  }
+]
+```

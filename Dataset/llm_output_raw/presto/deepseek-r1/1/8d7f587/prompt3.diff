@@ -1,0 +1,97 @@
+diff --git a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+index de0d7c23a6..e4bce4d06b 100644
+--- a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
++++ b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+@@ -242,8 +242,10 @@ public final class GeoFunctions
+     @SqlType(DOUBLE)
+     public static double stXMax(@SqlType(GEOMETRY_TYPE_NAME) Slice input)
+     {
+-        OGCGeometry geometry = deserialize(input);
+-        Envelope envelope = getEnvelope(geometry);
++        Envelope envelope = deserializeEnvelope(input);
++        if (envelope == null) {
++            return Double.NaN;
++        }
+         return envelope.getXMax();
+     }
+ 
+@@ -252,8 +254,10 @@ public final class GeoFunctions
+     @SqlType(DOUBLE)
+     public static double stYMax(@SqlType(GEOMETRY_TYPE_NAME) Slice input)
+     {
+-        OGCGeometry geometry = deserialize(input);
+-        Envelope envelope = getEnvelope(geometry);
++        Envelope envelope = deserializeEnvelope(input);
++        if (envelope == null) {
++            return Double.NaN;
++        }
+         return envelope.getYMax();
+     }
+ 
+@@ -262,8 +266,10 @@ public final class GeoFunctions
+     @SqlType(DOUBLE)
+     public static double stXMin(@SqlType(GEOMETRY_TYPE_NAME) Slice input)
+     {
+-        OGCGeometry geometry = deserialize(input);
+-        Envelope envelope = getEnvelope(geometry);
++        Envelope envelope = deserializeEnvelope(input);
++        if (envelope == null) {
++            return Double.NaN;
++        }
+         return envelope.getXMin();
+     }
+ 
+@@ -272,8 +278,10 @@ public final class GeoFunctions
+     @SqlType(DOUBLE)
+     public static double stYMin(@SqlType(GEOMETRY_TYPE_NAME) Slice input)
+     {
+-        OGCGeometry geometry = deserialize(input);
+-        Envelope envelope = getEnvelope(geometry);
++        Envelope envelope = deserializeEnvelope(input);
++        if (envelope == null) {
++            return Double.NaN;
++        }
+         return envelope.getYMin();
+     }
+ 
+@@ -314,6 +322,9 @@ public final class GeoFunctions
+     {
+         OGCGeometry geometry = deserialize(input);
+         validateType("ST_IsRing", geometry, EnumSet.of(LINE_STRING));
++        if (geometry.isEmpty()) {
++            return null;
++        }
+         OGCLineString line = (OGCLineString) geometry;
+         return line.isClosed() && line.isSimple();
+     }
+@@ -392,10 +403,14 @@ public final class GeoFunctions
+     @SqlType(GEOMETRY_TYPE_NAME)
+     public static Slice stEnvelope(@SqlType(GEOMETRY_TYPE_NAME) Slice input)
+     {
+-        OGCGeometry geometry = deserialize(input);
+-        SpatialReference reference = geometry.getEsriSpatialReference();
+-        Envelope envelope = getEnvelope(geometry);
+-        return serialize(createFromEsriGeometry(envelope, reference));
++        Envelope envelope = deserializeEnvelope(input);
++        if (envelope == null) {
++            // Empty geometry case
++            OGCGeometry geometry = deserialize(input);
++            SpatialReference reference = geometry.getEsriSpatialReference();
++            envelope = getEnvelope(geometry);
++        }
++        return serialize(createFromEsriGeometry(envelope, null));
+     }
+ 
+     @Description("Returns the Geometry value that represents the point set difference of two geometries")
+@@ -464,7 +479,10 @@ public final class GeoFunctions
+     {
+         Envelope leftEnvelope = deserializeEnvelope(left);
+         Envelope rightEnvelope = deserializeEnvelope(right);
+-        if (leftEnvelope == null || rightEnvelope == null || !leftEnvelope.contains(rightEnvelope)) {
++        if (leftEnvelope == null || rightEnvelope == null) {
++            return false;
++        }
++        if (!leftEnvelope.contains(rightEnvelope)) {
+             return false;
+         }
+ 

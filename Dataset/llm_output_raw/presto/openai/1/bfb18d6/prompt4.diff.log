@@ -1,0 +1,16 @@
+I’ve added fast-path handling when exactly one input is an envelope to avoid the costly general intersection. This inserts a cheap envelope-vs-envelope intersection even when mixing an envelope with any other geometry.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "public static Slice stIntersection(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)\n    {\n        if (deserializeType(left) == GeometrySerializationType.ENVELOPE && deserializeType(right) == GeometrySerializationType.ENVELOPE) {",
+    "replace": "public static Slice stIntersection(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)\n    {\n        GeometrySerializationType leftType = deserializeType(left);\n        GeometrySerializationType rightType = deserializeType(right);\n        if (leftType == GeometrySerializationType.ENVELOPE && rightType == GeometrySerializationType.ENVELOPE) {"
+  },
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "        }\n\n        OGCGeometry leftGeometry = EsriGeometrySerde.deserialize(left);",
+    "replace": "        }\n        if (leftType == GeometrySerializationType.ENVELOPE || rightType == GeometrySerializationType.ENVELOPE) {\n            // Fast-path: intersect an envelope with any other geometry by envelope clipping\n            Envelope envelopeLeft = deserializeEnvelope(leftType == GeometrySerializationType.ENVELOPE ? left : right);\n            Envelope envelopeRight = deserializeEnvelope(leftType == GeometrySerializationType.ENVELOPE ? right : left);\n            if (!envelopeLeft.intersect(envelopeRight)) {\n                return EMPTY_POLYGON;\n            }\n            return EsriGeometrySerde.serialize(envelopeLeft);\n        }\n\n        OGCGeometry leftGeometry = EsriGeometrySerde.deserialize(left);"
+  }
+]
+```

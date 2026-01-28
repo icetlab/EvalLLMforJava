@@ -1,0 +1,11 @@
+I updated the expensive merge(TDigest) method to avoid creating Centroid objects and temporary lists. Now it directly shuffles an index array and merges centroids by accessing the primitive arrays, greatly reducing object churn and GC overhead.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "List<Centroid> tmp = new ArrayList<>();\n        for (Centroid centroid : other.centroids()) {\n            tmp.add(centroid);\n        }\n\n        shuffle(tmp, gen);\n        for (Centroid centroid : tmp) {\n            add(centroid.getMean(), centroid.getWeight());\n        }",
+    "replace": "// Efficient merge without temporary Centroid objects\n        other.compress();\n        int n = other.activeCentroids;\n        int[] indices = new int[n];\n        for (int i = 0; i < n; i++) {\n            indices[i] = i;\n        }\n        // Fisher-Yates shuffle\n        for (int i = n - 1; i > 0; i--) {\n            int j = gen.nextInt(i + 1);\n            int tmpIdx = indices[i];\n            indices[i] = indices[j];\n            indices[j] = tmpIdx;\n        }\n        double[] otherMean = other.mean;\n        double[] otherWeight = other.weight;\n        for (int idx : indices) {\n            add(otherMean[idx], (long) otherWeight[idx]);\n        }"
+  }
+]
+```

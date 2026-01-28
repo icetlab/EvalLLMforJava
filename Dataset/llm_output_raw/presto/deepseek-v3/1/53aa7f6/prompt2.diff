@@ -1,0 +1,17 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java b/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java
+index bc8850802d..a195d6054c 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java
+@@ -63,7 +63,11 @@ public class GeneratedPageProjection
+     @Override
+     public Work<List<Block>> project(SqlFunctionProperties properties, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions)
+     {
+-        blockBuilders = blockBuilders.stream().map(blockBuilder -> blockBuilder.newBlockBuilderLike(null)).collect(toImmutableList());
++        int expectedPositions = selectedPositions.size();
++        blockBuilders = projections.stream()
++                .map(RowExpression::getType)
++                .map(type -> type.createBlockBuilder(null, Math.max(expectedPositions, 1)))
++                .collect(toImmutableList());
+         try {
+             return (Work<List<Block>>) pageProjectionWorkFactory.invoke(blockBuilders, properties, page, selectedPositions);
+         }

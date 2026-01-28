@@ -1,0 +1,23 @@
+The overall improvement is to optimize T-Digest for small distributions. When quantile or CDF queries are made on a T-Digest that contains a small number of points (all fitting within the unmerged buffer), the original implementation would trigger a full data compression and centroid creation process. This is inefficient for small N.
+
+The changes introduce a fast path for this scenario. A new private helper method, `mergeForQuery`, is introduced. When called from `getQuantile` or `getCdf`, it checks if any centroids have been created yet (`totalWeight == 0`). If not, it performs a lightweight process: it sorts the unmerged points and treats them as temporary, uncompressed centroids. This avoids the expensive compression step. If centroids already exist, it falls back to the original `compress()` behavior to ensure correctness. This change significantly improves performance for workloads involving many small T-Digests without affecting the logic for larger distributions.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "    public void compress()\n    {\n        mergeNewValues(true, publicCompression);\n    }\n\n    public double getSize()",
+    "replace": "    public void compress()\n    {\n        mergeNewValues(true, publicCompression);\n    }\n\n    private void mergeForQuery()\n    {\n        if (unmergedWeight > 0) {\n            if (totalWeight == 0) {\n                // all points are in the temporary buffer, and no centroids have been formed.\n                // for this case, we can compute the quantile/cdf directly from the raw data\n                // without creating centroids, which is faster for small N.\n                // We do this by treating the unmerged points as centroids without compression.\n                sort(order, tempMean, tempUsed);\n\n                activeCentroids = tempUsed;\n                totalWeight = unmergedWeight;\n\n                // copy sorted temp data to main arrays\n                for (int i = 0; i < tempUsed; i++) {\n                    int ix = order[i];\n                    mean[i] = tempMean[ix];\n                    weight[i] = tempWeight[ix];\n                }\n\n                tempUsed = 0;\n                unmergedWeight = 0;\n            }\n            else {\n                compress();\n            }\n        }\n    }\n\n    public double getSize()"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "    public double getCdf(double x)\n    {\n        if (unmergedWeight > 0) {\n            compress();\n        }",
+    "replace": "    public double getCdf(double x)\n    {\n        mergeForQuery();"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "    public double getQuantile(double q)\n    {\n        checkArgument(q >= 0 && q <= 1, \"q should be in [0,1], got %s\", q);\n        if (unmergedWeight > 0) {\n            compress();\n        }",
+    "replace": "    public double getQuantile(double q)\n    {\n        checkArgument(q >= 0 && q <= 1, \"q should be in [0,1], got %s\", q);\n        mergeForQuery();"
+  }
+]
+```

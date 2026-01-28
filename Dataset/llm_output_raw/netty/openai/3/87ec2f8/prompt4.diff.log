@@ -1,0 +1,11 @@
+The goal is to speed up `decodeString` for array‐backed `ByteBuf` instances by short‐circuiting to use `new String(byte[], ...)`, avoiding the heavier `CharsetDecoder` path and extra memory copies.
+
+```json
+[
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java",
+    "search": "static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {\n        if (len == 0) {\n            return StringUtil.EMPTY_STRING;\n        }",
+    "replace": "static String decodeString(ByteBuf src, int readerIndex, int len, Charset charset) {\n        if (len == 0) {\n            return StringUtil.EMPTY_STRING;\n        }\n        // Optimize array-backed buffers using String constructor\n        if (src.hasArray()) {\n            byte[] array = src.array();\n            int offset = src.arrayOffset() + readerIndex;\n            return new String(array, offset, len, charset);\n        }"
+  }
+]
+```

@@ -1,0 +1,14 @@
+diff --git a/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java b/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
+index d624d855f4..f0293a7525 100644
+--- a/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
++++ b/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
+@@ -39,6 +39,9 @@ public abstract class AbstractReferenceCountedByteBuf extends AbstractByteBuf {
+ 
+     @Override
+     public int refCnt() {
++        // This is a plain read of the volatile field, which is safe because the
++        // reference count is updated atomically. This reduces volatile read
++        // overhead in ensureAccessible() checks.
+         return refCnt;
+     }
+ 

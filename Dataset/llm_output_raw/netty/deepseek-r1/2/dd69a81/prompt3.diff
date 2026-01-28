@@ -1,0 +1,66 @@
+diff --git a/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java b/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java
+index 0db8a4ce34..e1d7a681b4 100644
+--- a/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java
++++ b/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java
+@@ -44,33 +44,42 @@ public class HttpRequestEncoder extends HttpObjectEncoder<HttpRequest> {
+         String uri = request.uri();
+ 
+         if (uri.isEmpty()) {
+-            uri += SLASH;
++            buf.writeByte(SLASH);
+         } else {
+             int start = uri.indexOf("://");
+-            if (start != -1 && uri.charAt(0) != SLASH) {
++            if (start == -1 || uri.charAt(0) == SLASH) {
++                // No protocol or already absolute path, write as-is
++                buf.writeCharSequence(uri, CharsetUtil.UTF_8);
++            } else {
+                 int startIndex = start + 3;
+-                // Correctly handle query params.
+-                // See https://github.com/netty/netty/issues/2732
+-                int index = uri.indexOf(QUESTION_MARK, startIndex);
+-                if (index == -1) {
+-                    if (uri.lastIndexOf(SLASH) <= startIndex) {
+-                        uri += SLASH;
+-                    }
++                int queryIndex = uri.indexOf(QUESTION_MARK, startIndex);
++                
++                // Check if we need to insert a slash
++                boolean needsSlash = false;
++                if (queryIndex == -1) {
++                    // No query string
++                    needsSlash = uri.lastIndexOf(SLASH) <= startIndex;
+                 } else {
+-                    if (uri.lastIndexOf(SLASH, index) <= startIndex) {
+-                        int len = uri.length();
+-                        StringBuilder sb = new StringBuilder(len + 1);
+-                        sb.append(uri, 0, index)
+-                          .append(SLASH)
+-                          .append(uri, index, len);
+-                        uri = sb.toString();
+-                    }
++                    // Has query string
++                    needsSlash = uri.lastIndexOf(SLASH, queryIndex) <= startIndex;
++                }
++
++                if (!needsSlash) {
++                    // No slash needed, write as-is
++                    buf.writeCharSequence(uri, CharsetUtil.UTF_8);
++                } else if (queryIndex == -1) {
++                    // No query string, write whole URI then slash
++                    buf.writeCharSequence(uri, CharsetUtil.UTF_8);
++                    buf.writeByte(SLASH);
++                } else {
++                    // Has query string, write parts separately
++                    buf.writeCharSequence(uri, 0, queryIndex, CharsetUtil.UTF_8);
++                    buf.writeByte(SLASH);
++                    buf.writeCharSequence(uri, queryIndex, uri.length(), CharsetUtil.UTF_8);
+                 }
+             }
+         }
+ 
+-        buf.writeCharSequence(uri, CharsetUtil.UTF_8);
+-
+         buf.writeByte(SP);
+         request.protocolVersion().encode(buf);
+         buf.writeBytes(CRLF);

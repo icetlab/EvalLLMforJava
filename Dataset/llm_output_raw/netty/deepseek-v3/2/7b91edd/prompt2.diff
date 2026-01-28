@@ -1,0 +1,32 @@
+diff --git a/common/src/main/java/io/netty/util/NetUtil.java b/common/src/main/java/io/netty/util/NetUtil.java
+index fbe09ea676..643981ac5b 100644
+--- a/common/src/main/java/io/netty/util/NetUtil.java
++++ b/common/src/main/java/io/netty/util/NetUtil.java
+@@ -21,6 +21,7 @@ import io.netty.util.internal.StringUtil;
+ import io.netty.util.internal.SystemPropertyUtil;
+ import io.netty.util.internal.logging.InternalLogger;
+ import io.netty.util.internal.logging.InternalLoggerFactory;
++import java.util.Arrays;
+ 
+ import java.io.BufferedReader;
+ import java.io.File;
+@@ -874,14 +875,11 @@ public final class NetUtil {
+             }
+         } else {
+             // Selectively move elements
+-            for (i = 0; i < compressLength; ++i) {
+-                begin = i + compressBegin;
+-                currentIndex = begin + compressLength;
+-                if (currentIndex < bytes.length) {
+-                    bytes[currentIndex] = bytes[begin];
+-                    bytes[begin] = 0;
+-                } else {
+-                    break;
++            if (compressLength > 0) {
++                int copyLength = Math.min(compressLength, bytes.length - compressBegin - compressLength);
++                if (copyLength > 0) {
++                    System.arraycopy(bytes, compressBegin, bytes, compressBegin + compressLength, copyLength);
++                    Arrays.fill(bytes, compressBegin, compressBegin + copyLength, (byte)0);
+                 }
+             }
+         }

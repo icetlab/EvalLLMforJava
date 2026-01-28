@@ -1,0 +1,14 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
+index aab2765889..5fabc03d1e 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
+@@ -273,6 +273,9 @@ public class BooleanSelectiveStreamReader
+     {
+         // filter == null implies outputRequired == true
+         int streamPosition = 0;
++        BooleanInputStream present = presentStream;
++        BooleanInputStream data = dataStream;
++        boolean hasPresent = present != null;
+         for (int i = 0; i < positionCount; i++) {
+             int position = positions[i];
+             if (position > streamPosition) {

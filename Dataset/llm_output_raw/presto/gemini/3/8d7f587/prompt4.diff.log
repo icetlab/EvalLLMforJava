@@ -1,0 +1,39 @@
+The performance issue is that `ST_Envelope` and related functions deserialize the entire geometry, which is inefficient when only the envelope is needed.
+
+My plan is to optimize `ST_Envelope` and a family of related functions (`ST_XMax`, `ST_YMax`, `ST_XMin`, `ST_YMin`) that compute properties of a geometry's bounding box.
+
+For `ST_XMax`, `ST_YMax`, `ST_XMin`, and `ST_YMin`, which return a `double`, the optimization is straightforward. I will replace the full geometry deserialization (`deserialize`) with a specialized `deserializeEnvelope` function. This function is much faster as it only parses the envelope from the serialized geometry representation. For empty geometries, `deserializeEnvelope` returns `null`, and in these cases, the functions will return `NaN`, which is consistent with the original behavior.
+
+For `ST_Envelope`, the situation is more complex. This function must return a new `Geometry` object representing the envelope, which requires preserving the spatial reference system of the original geometry. The `deserializeEnvelope` function does not provide the spatial reference. To avoid a dependency on the internal serialization format, I will instead refactor `ST_Envelope` to use the `OGCGeometry.envelope()` method. This simplifies the implementation by replacing a multi-step process (getting an `Envelope` object, then creating a new geometry) with a single, direct method call. This is cleaner and likely more performant as it leverages the underlying geospatial library's own optimizations.
+
+These changes will improve performance by reducing unnecessary deserialization work and object allocations, while maintaining correctness and adhering to the available public API.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "@Description(\"Returns X maxima of a bounding box of a Geometry\")\n    @ScalarFunction(\"ST_XMax\")\n    @SqlType(DOUBLE)\n    public static double stXMax(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        OGCGeometry geometry = deserialize(input);\n        Envelope envelope = getEnvelope(geometry);\n        return envelope.getXMax();\n    }",
+    "replace": "@Description(\"Returns X maxima of a bounding box of a Geometry\")\n    @ScalarFunction(\"ST_XMax\")\n    @SqlType(DOUBLE)\n    public static double stXMax(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        Envelope envelope = deserializeEnvelope(input);\n        if (envelope == null) {\n            return Double.NaN;\n        }\n        return envelope.getXMax();\n    }"
+  },
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "@Description(\"Returns Y maxima of a bounding box of a Geometry\")\n    @ScalarFunction(\"ST_YMax\")\n    @SqlType(DOUBLE)\n    public static double stYMax(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        OGCGeometry geometry = deserialize(input);\n        Envelope envelope = getEnvelope(geometry);\n        return envelope.getYMax();\n    }",
+    "replace": "@Description(\"Returns Y maxima of a bounding box of a Geometry\")\n    @ScalarFunction(\"ST_YMax\")\n    @SqlType(DOUBLE)\n    public static double stYMax(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        Envelope envelope = deserializeEnvelope(input);\n        if (envelope == null) {\n            return Double.NaN;\n        }\n        return envelope.getYMax();\n    }"
+  },
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "@Description(\"Returns X minima of a bounding box of a Geometry\")\n    @ScalarFunction(\"ST_XMin\")\n    @SqlType(DOUBLE)\n    public static double stXMin(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        OGCGeometry geometry = deserialize(input);\n        Envelope envelope = getEnvelope(geometry);\n        return envelope.getXMin();\n    }",
+    "replace": "@Description(\"Returns X minima of a bounding box of a Geometry\")\n    @ScalarFunction(\"ST_XMin\")\n    @SqlType(DOUBLE)\n    public static double stXMin(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        Envelope envelope = deserializeEnvelope(input);\n        if (envelope == null) {\n            return Double.NaN;\n        }\n        return envelope.getXMin();\n    }"
+  },
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "@Description(\"Returns Y minima of a bounding box of a Geometry\")\n    @ScalarFunction(\"ST_YMin\")\n    @SqlType(DOUBLE)\n    public static double stYMin(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        OGCGeometry geometry = deserialize(input);\n        Envelope envelope = getEnvelope(geometry);\n        return envelope.getYMin();\n    }",
+    "replace": "@Description(\"Returns Y minima of a bounding box of a Geometry\")\n    @ScalarFunction(\"ST_YMin\")\n    @SqlType(DOUBLE)\n    public static double stYMin(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        Envelope envelope = deserializeEnvelope(input);\n        if (envelope == null) {\n            return Double.NaN;\n        }\n        return envelope.getYMin();\n    }"
+  },
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "@Description(\"Returns the bounding rectangular polygon of a Geometry\")\n    @ScalarFunction(\"ST_Envelope\")\n    @SqlType(GEOMETRY_TYPE_NAME)\n    public static Slice stEnvelope(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        OGCGeometry geometry = deserialize(input);\n        SpatialReference reference = geometry.getEsriSpatialReference();\n        Envelope envelope = getEnvelope(geometry);\n        return serialize(createFromEsriGeometry(envelope, reference));\n    }",
+    "replace": "@Description(\"Returns the bounding rectangular polygon of a Geometry\")\n    @ScalarFunction(\"ST_Envelope\")\n    @SqlType(GEOMETRY_TYPE_NAME)\n    public static Slice stEnvelope(@SqlType(GEOMETRY_TYPE_NAME) Slice input)\n    {\n        OGCGeometry geometry = deserialize(input);\n        return serialize(geometry.envelope());\n    }"
+  }
+]
+```

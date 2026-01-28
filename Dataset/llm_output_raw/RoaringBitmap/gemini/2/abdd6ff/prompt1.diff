@@ -1,0 +1,99 @@
+diff --git a/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java b/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
+index c40c836b..b9e483fb 100644
+--- a/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
++++ b/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
+@@ -114,24 +114,17 @@ public class BitSliceIndexBase {
+       int[] buffer = new int[batchSize];
+       int cardinality = batchIterator.nextBatch(buffer);
+       if (cardinality > 0) {
+-        if (cardinality == batchSize) {
+-          batches.add(buffer);
++        if (cardinality < batchSize) {
++          batches.add(java.util.Arrays.copyOf(buffer, cardinality));
+         } else {
+-          int[] buff = new int[cardinality];
+-          System.arraycopy(buffer, 0, buff, 0, cardinality);
+-          batches.add(buff);
++          batches.add(buffer);
+         }
+       }
+     }
+ 
+-    List<CompletableFuture<R>> futures = new ArrayList<>();
+-    for (int[] batch : batches) {
+-      CompletableFuture<R> future = invokeAsync(() -> {
+-        return func.apply(batch);
+-      }, null, pool);
+-      futures.add(future);
+-    }
+-    return futures;
++    return batches.stream()
++        .map(batch -> invokeAsync(() -> func.apply(batch), null, pool))
++        .collect(Collectors.toList());
+   }
+ 
+   protected <T> CompletableFuture<List<T>> allOf(List<CompletableFuture<T>> futuresList) {
+@@ -152,14 +145,8 @@ public class BitSliceIndexBase {
+ 
+     List<CompletableFuture<ImmutableRoaringBitmap>> futures = parallelExec(func, parallelism, foundSet, pool);
+ 
+-    allOf(futures);
+-
+-    ImmutableRoaringBitmap[] rbs = new ImmutableRoaringBitmap[futures.size()];
+-    for (int i = 0; i < futures.size(); i++) {
+-      rbs[i] = futures.get(i).get();
+-    }
+-
+-    return MutableRoaringBitmap.or(rbs);
++    List<ImmutableRoaringBitmap> results = allOf(futures).get();
++    return MutableRoaringBitmap.or(results.toArray(new ImmutableRoaringBitmap[0]));
+   }
+ 
+   protected <T> CompletableFuture<T> invokeAsync(Supplier<T> supplier,
+@@ -199,10 +186,10 @@ public class BitSliceIndexBase {
+     for (int i = this.bitCount() - 1; i >= 0; i--) {
+       int bit = (predicate >> i) & 1;
+       if (bit == 1) {
+-        LT = ImmutableRoaringBitmap.or(LT, ImmutableRoaringBitmap.andNot(EQ, this.bA[i]));
++        LT.or(ImmutableRoaringBitmap.andNot(EQ, this.bA[i]));
+         EQ = ImmutableRoaringBitmap.and(EQ, this.bA[i]);
+       } else {
+-        GT = ImmutableRoaringBitmap.or(GT, ImmutableRoaringBitmap.and(EQ, this.bA[i]));
++        GT.or(ImmutableRoaringBitmap.and(EQ, this.bA[i]));
+         EQ = ImmutableRoaringBitmap.andNot(EQ, this.bA[i]);
+       }
+ 
+@@ -343,26 +330,24 @@ public class BitSliceIndexBase {
+    * @return the computed immutable bitmap
+    */
+   public ImmutableRoaringBitmap rangeEQ(ImmutableRoaringBitmap foundSet, int predicate) {
+-    // Start with set of columns with values set.
+-    ImmutableRoaringBitmap eqBitmap = this.ebM;
+-
+-    if (foundSet != null) {
+-      eqBitmap = ImmutableRoaringBitmap.and(eqBitmap, foundSet);
+-    }
+-
+     // https://github.com/RoaringBitmap/RoaringBitmap/issues/549
+     ImmutableRoaringBitmap result = compareUsingMinMax(BitmapSliceIndex.Operation.EQ, predicate, 0, foundSet);
+     if (result != null) {
+       return result;
+     }
+ 
++    MutableRoaringBitmap eqBitmap = this.ebM.toMutableRoaringBitmap();
++    if (foundSet != null) {
++      eqBitmap.and(foundSet);
++    }
++
+     for (int i = this.bA.length - 1; i >= 0; i--) {
+       ImmutableRoaringBitmap slice = this.bA[i];
+       int bit = (predicate >> i) & 1;
+       if (bit == 1) {
+-        eqBitmap = ImmutableRoaringBitmap.and(eqBitmap, slice);
++        eqBitmap.and(slice);
+       } else {
+-        eqBitmap = ImmutableRoaringBitmap.andNot(eqBitmap, slice);
++        eqBitmap.andNot(slice);
+       }
+     }
+     return eqBitmap;

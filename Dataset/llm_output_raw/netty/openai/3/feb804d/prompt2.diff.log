@@ -1,0 +1,41 @@
+I’ve refactored scheduling so that when tasks are submitted from non-event-loop threads, we no longer allocate a separate Runnable wrapper; instead, we mark the ScheduledFutureTask itself to perform queue insertion on its next run invocation.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "private int queueIndex = INDEX_NOT_IN_QUEUE;",
+    "replace": "private int queueIndex = INDEX_NOT_IN_QUEUE;\n    // Flag: next run() is for queue insertion rather than actual task execution\n    private boolean inQueueInsertion;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    ScheduledFutureTask<V> setId(long id) {\n        this.id = id;\n        return this;\n    }",
+    "replace": "    ScheduledFutureTask<V> setId(long id) {\n        this.id = id;\n        return this;\n    }\n\n    /**\n     * Mark this task so its next run() invocation will insert it into the scheduled queue.\n     */\n    void setInQueueInsertion(boolean inQueueInsertion) {\n        this.inQueueInsertion = inQueueInsertion;\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    public void run() {\n        assert executor().inEventLoop();\n        try {",
+    "replace": "    public void run() {\n        assert executor().inEventLoop();\n        if (inQueueInsertion) {\n            inQueueInsertion = false;\n            ((AbstractScheduledEventExecutor) executor()).scheduledTaskQueue().add(this);\n            return;\n        }\n        try {"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "            final Runnable addToQueue = new Runnable() {\n                @Override\n                public void run() {\n                    scheduledTaskQueue().add(task.setId(nextTaskId++));\n                }\n            };",
+    "replace": ""
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "            final long deadlineNanos = task.deadlineNanos();",
+    "replace": "            final long deadlineNanos = task.deadlineNanos();\n            // Reuse the task itself for queue insertion to avoid a separate allocation\n            task.setId(nextTaskId++);\n            task.setInQueueInsertion(true);"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "                execute(addToQueue);",
+    "replace": "                execute(task);"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "                lazyExecute(addToQueue);",
+    "replace": "                lazyExecute(task);"
+  }
+]
+```

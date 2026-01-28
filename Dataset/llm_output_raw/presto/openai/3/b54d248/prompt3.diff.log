@@ -1,0 +1,11 @@
+I’ve optimized the default partition calculation to avoid the expensive modulo operation when the partition count is a power of two, using a bitmask instead. This retains exact behavior while improving performance for the common case of power-of-two partition counts.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java",
+    "search": "long rawHash = hashPosition(position, page);\n\n        // clear the sign bit\n        rawHash &= 0x7fff_ffff_ffff_ffffL;\n\n        int partition = (int) (rawHash % partitionCount);",
+    "replace": "long rawHash = hashPosition(position, page);\n\n        // clear the sign bit\n        rawHash &= 0x7fff_ffff_ffff_ffffL;\n\n        int partition;\n        // use bitmask instead of modulo when partitionCount is a power of two\n        if ((partitionCount & (partitionCount - 1)) == 0) {\n            partition = (int) (rawHash & (partitionCount - 1));\n        }\n        else {\n            partition = (int) (rawHash % partitionCount);\n        }"
+  }
+]
+```

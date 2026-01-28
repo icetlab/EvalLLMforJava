@@ -1,0 +1,95 @@
+diff --git a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
+index 389d8ef150..2f1835cf8d 100644
+--- a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
++++ b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
+@@ -119,13 +119,14 @@ final class HpackStaticTable {
+ 
+     private static final CharSequenceMap<Integer> STATIC_INDEX_BY_NAME = createMap();
+ 
+-    private static final int MAX_SAME_NAME_FIELD_INDEX = maxSameNameFieldIndex();
+-
+     /**
+      * The number of header fields in the static table.
+      */
+     static final int length = STATIC_TABLE.size();
+ 
++    // Perfect hash map for (name, value) pairs to static table indices
++    private static final CharSequenceMap<Integer> PERFECT_HASH_MAP = createPerfectHashMap();
++
+     /**
+      * Return the header field at the given index value.
+      */
+@@ -150,34 +151,9 @@ final class HpackStaticTable {
+      * header field is not in the static table.
+      */
+     static int getIndexInsensitive(CharSequence name, CharSequence value) {
+-        int index = getIndex(name);
+-        if (index == NOT_FOUND) {
+-            return NOT_FOUND;
+-        }
+-
+-        // Compare values for the first name match
+-        HpackHeaderField entry = getEntry(index);
+-        if (equalsVariableTime(value, entry.value)) {
+-            return index;
+-        }
+-
+-        // Note this assumes all entries for a given header field are sequential.
+-        index++;
+-        while (index <= MAX_SAME_NAME_FIELD_INDEX) {
+-            entry = getEntry(index);
+-            if (!equalsVariableTime(name, entry.name)) {
+-                // As far as fields with the same name are placed in the table sequentially
+-                // and INDEX_BY_NAME returns index of the fist position, - it's safe to
+-                // exit immediately.
+-                return NOT_FOUND;
+-            }
+-            if (equalsVariableTime(value, entry.value)) {
+-                return index;
+-            }
+-            index++;
+-        }
+-
+-        return NOT_FOUND;
++        // Use perfect hash map for direct (name, value) lookup
++        Integer index = PERFECT_HASH_MAP.get(name, value);
++        return index == null ? NOT_FOUND : index;
+     }
+ 
+     // create a map CharSequenceMap header name to index value to allow quick lookup
+@@ -196,24 +172,19 @@ final class HpackStaticTable {
+         return ret;
+     }
+ 
+-    /**
+-     * Returns the last position in the array that contains multiple
+-     * fields with the same name. Starting from this position, all
+-     * names are unique. Similar to {@link #getIndexInsensitive(CharSequence, CharSequence)} method
+-     * assumes all entries for a given header field are sequential
+-     */
+-    private static int maxSameNameFieldIndex() {
+-        final int length = STATIC_TABLE.size();
+-        HpackHeaderField cursor = getEntry(length);
+-        for (int index = length - 1; index > 0; index--) {
++    // create a perfect hash map for (name, value) pairs
++    private static CharSequenceMap<Integer> createPerfectHashMap() {
++        int length = STATIC_TABLE.size();
++        @SuppressWarnings("unchecked")
++        CharSequenceMap<Integer> map = new CharSequenceMap<Integer>(true,
++                UnsupportedValueConverter.<Integer>instance(), length);
++        
++        // Add all (name, value) pairs to the map
++        for (int index = 1; index <= length; index++) {
+             HpackHeaderField entry = getEntry(index);
+-            if (equalsVariableTime(entry.name, cursor.name)) {
+-                return index + 1;
+-            } else {
+-                cursor = entry;
+-            }
++            map.set(entry.name, entry.value, index);
+         }
+-        return length;
++        return map;
+     }
+ 
+     // singleton

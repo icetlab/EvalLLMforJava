@@ -1,0 +1,29 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java b/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java
+index f9e7ee73b4..71805f9c59 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java
+@@ -25,11 +25,20 @@ public interface HashGenerator
+     {
+         long rawHash = hashPosition(position, page);
+ 
+-        // clear the sign bit
++        // Fast path: when partitionCount is a power of two, use bitwise AND
++        if ((partitionCount & (partitionCount - 1)) == 0) {
++            // clear the sign bit and use bitwise AND for faster modulo
++            rawHash &= 0x7fff_ffff_ffff_ffffL;
++            return (int) (rawHash & (partitionCount - 1));
++        }
++        
++        // General case: use faster modulo arithmetic
+         rawHash &= 0x7fff_ffff_ffff_ffffL;
+-
+-        int partition = (int) (rawHash % partitionCount);
+-
++        
++        // Fast modulo using multiplication and shift - works well for any divisor
++        // This avoids expensive division operation
++        int partition = (int) ((rawHash & 0xffffffffL) * partitionCount >>> 32);
++        
+         checkState(partition >= 0 && partition < partitionCount);
+         return partition;
+     }

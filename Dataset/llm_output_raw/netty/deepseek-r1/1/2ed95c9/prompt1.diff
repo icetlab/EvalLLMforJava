@@ -1,0 +1,133 @@
+diff --git a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
+index 389d8ef150..008f307771 100644
+--- a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
++++ b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
+@@ -118,8 +118,7 @@ final class HpackStaticTable {
+     }
+ 
+     private static final CharSequenceMap<Integer> STATIC_INDEX_BY_NAME = createMap();
+-
+-    private static final int MAX_SAME_NAME_FIELD_INDEX = maxSameNameFieldIndex();
++    private static final CharSequenceMap<Integer> STATIC_INDEX_BY_NAME_AND_VALUE = createNameValueMap();
+ 
+     /**
+      * The number of header fields in the static table.
+@@ -150,33 +149,42 @@ final class HpackStaticTable {
+      * header field is not in the static table.
+      */
+     static int getIndexInsensitive(CharSequence name, CharSequence value) {
+-        int index = getIndex(name);
+-        if (index == NOT_FOUND) {
++        // Try direct lookup first for O(1) performance in most cases
++        Integer index = STATIC_INDEX_BY_NAME_AND_VALUE.get(name);
++        if (index != null) {
++            // Single entry for this name, check if value matches
++            HpackHeaderField entry = getEntry(index);
++            if (equalsVariableTime(value, entry.value)) {
++                return index;
++            }
+             return NOT_FOUND;
+         }
+-
+-        // Compare values for the first name match
+-        HpackHeaderField entry = getEntry(index);
++        
++        // Multiple entries for this name, need to check each one
++        Integer firstIndex = STATIC_INDEX_BY_NAME.get(name);
++        if (firstIndex == null) {
++            return NOT_FOUND;
++        }
++        
++        // Check the first entry
++        HpackHeaderField entry = getEntry(firstIndex);
+         if (equalsVariableTime(value, entry.value)) {
+-            return index;
++            return firstIndex;
+         }
+-
+-        // Note this assumes all entries for a given header field are sequential.
+-        index++;
+-        while (index <= MAX_SAME_NAME_FIELD_INDEX) {
+-            entry = getEntry(index);
++        
++        // Check subsequent entries with same name
++        int nextIndex = firstIndex + 1;
++        while (nextIndex <= length) {
++            entry = getEntry(nextIndex);
+             if (!equalsVariableTime(name, entry.name)) {
+-                // As far as fields with the same name are placed in the table sequentially
+-                // and INDEX_BY_NAME returns index of the fist position, - it's safe to
+-                // exit immediately.
+-                return NOT_FOUND;
++                break;
+             }
+             if (equalsVariableTime(value, entry.value)) {
+-                return index;
++                return nextIndex;
+             }
+-            index++;
++            nextIndex++;
+         }
+-
++        
+         return NOT_FOUND;
+     }
+ 
+@@ -196,24 +204,43 @@ final class HpackStaticTable {
+         return ret;
+     }
+ 
+-    /**
+-     * Returns the last position in the array that contains multiple
+-     * fields with the same name. Starting from this position, all
+-     * names are unique. Similar to {@link #getIndexInsensitive(CharSequence, CharSequence)} method
+-     * assumes all entries for a given header field are sequential
+-     */
+-    private static int maxSameNameFieldIndex() {
+-        final int length = STATIC_TABLE.size();
+-        HpackHeaderField cursor = getEntry(length);
+-        for (int index = length - 1; index > 0; index--) {
++    // create a map for names that have only one entry in the static table
++    private static CharSequenceMap<Integer> createNameValueMap() {
++        int length = STATIC_TABLE.size();
++        @SuppressWarnings("unchecked")
++        CharSequenceMap<Integer> ret = new CharSequenceMap<Integer>(true,
++                UnsupportedValueConverter.<Integer>instance(), length);
++        
++        // Track names that appear multiple times
++        CharSequence lastName = null;
++        boolean lastWasDuplicate = false;
++        
++        for (int index = 1; index <= length; index++) {
+             HpackHeaderField entry = getEntry(index);
+-            if (equalsVariableTime(entry.name, cursor.name)) {
+-                return index + 1;
++            CharSequence name = entry.name;
++            
++            if (lastName != null && equalsVariableTime(name, lastName)) {
++                // This name appears multiple times, mark the previous one as duplicate
++                if (!lastWasDuplicate) {
++                    ret.remove(lastName);
++                    lastWasDuplicate = true;
++                }
+             } else {
+-                cursor = entry;
++                // New name, check if previous single entry name should be added
++                if (lastName != null && !lastWasDuplicate) {
++                    ret.set(lastName, index - 1);
++                }
++                lastName = name;
++                lastWasDuplicate = false;
+             }
+         }
+-        return length;
++        
++        // Handle the last entry
++        if (lastName != null && !lastWasDuplicate) {
++            ret.set(lastName, length);
++        }
++        
++        return ret;
+     }
+ 
+     // singleton

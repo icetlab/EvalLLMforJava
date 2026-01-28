@@ -1,0 +1,36 @@
+The performance issue is that the Recycler's `LocalPool` uses a thread-safe MPSC queue for releasing objects, which incurs unnecessary overhead when objects are released by the same thread that claimed them (the common case). We optimize this by adding a fast-path for same-thread releases using a non-thread-safe `ArrayDeque`, while retaining the MPSC queue for cross-thread releases.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "    private static final class LocalPool<T> {\n        private final int ratioInterval;\n        private volatile MessagePassingQueue<DefaultHandle<T>> pooledHandles;\n        private int ratioCounter;\n\n        @SuppressWarnings(\"unchecked\")\n        LocalPool(int maxCapacity, int ratioInterval, int chunkSize) {\n            this.ratioInterval = ratioInterval;\n            if (BLOCKING_POOL) {\n                pooledHandles = new BlockingMessageQueue<DefaultHandle<T>>(maxCapacity);\n            } else {\n                pooledHandles = (MessagePassingQueue<DefaultHandle<T>>) newMpscQueue(chunkSize, maxCapacity);\n            }\n            ratioCounter = ratioInterval; // Start at interval so the first one will be recycled.\n        }",
+    "replace": "    private static final class LocalPool<T> {\n        private final int ratioInterval;\n        private final int maxCapacity;\n        private final Thread ownerThread;\n        private final ArrayDeque<DefaultHandle<T>> fastPathDeque;\n        private volatile MessagePassingQueue<DefaultHandle<T>> pooledHandles;\n        private int ratioCounter;\n\n        @SuppressWarnings(\"unchecked\")\n        LocalPool(int maxCapacity, int ratioInterval, int chunkSize) {\n            this.ratioInterval = ratioInterval;\n            this.maxCapacity = maxCapacity;\n            this.ownerThread = Thread.currentThread();\n            this.fastPathDeque = new ArrayDeque<DefaultHandle<T>>(maxCapacity);\n            if (BLOCKING_POOL) {\n                pooledHandles = new BlockingMessageQueue<DefaultHandle<T>>(maxCapacity);\n            } else {\n                pooledHandles = (MessagePassingQueue<DefaultHandle<T>>) newMpscQueue(chunkSize, maxCapacity);\n            }\n            ratioCounter = ratioInterval; // Start at interval so the first one will be recycled.\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "        DefaultHandle<T> claim() {\n            MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n            if (handles == null) {\n                return null;\n            }\n            DefaultHandle<T> handle = handles.relaxedPoll();\n            if (null != handle) {\n                handle.toClaimed();\n            }\n            return handle;\n        }",
+    "replace": "        DefaultHandle<T> claim() {\n            DefaultHandle<T> handle = fastPathDeque.poll();\n            if (handle != null) {\n                handle.toClaimed();\n                return handle;\n            }\n            MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n            if (handles == null) {\n                return null;\n            }\n            handle = handles.relaxedPoll();\n            if (null != handle) {\n                handle.toClaimed();\n            }\n            return handle;\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "        void release(DefaultHandle<T> handle) {\n            handle.toAvailable();\n            MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n            if (handles != null) {\n                handles.relaxedOffer(handle);\n            }\n        }",
+    "replace": "        void release(DefaultHandle<T> handle) {\n            handle.toAvailable();\n            if (Thread.currentThread() == ownerThread) {\n                // If the fastPathDeque is not full, then add to it.\n                if (fastPathDeque.size() < maxCapacity) {\n                    fastPathDeque.offer(handle);\n                    return;\n                }\n                // Fall back to the MPSC queue if the fastPathDeque is full.\n            }\n            MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n            if (handles != null) {\n                handles.relaxedOffer(handle);\n            }\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "        @Override\n        protected void onRemoval(LocalPool<T> value) throws Exception {\n            super.onRemoval(value);\n            MessagePassingQueue<DefaultHandle<T>> handles = value.pooledHandles;\n            value.pooledHandles = null;\n            handles.clear();\n        }",
+    "replace": "        @Override\n        protected void onRemoval(LocalPool<T> value) throws Exception {\n            super.onRemoval(value);\n            MessagePassingQueue<DefaultHandle<T>> handles = value.pooledHandles;\n            value.pooledHandles = null;\n            handles.clear();\n            value.fastPathDeque.clear();\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "        DefaultHandle<T> newHandle() {\n            if (++ratioCounter >= ratioInterval) {\n                ratioCounter = 0;\n                return new DefaultHandle<T>(this);\n            }\n            return null;\n        }\n    }",
+    "replace": "        DefaultHandle<T> newHandle() {\n            if (++ratioCounter >= ratioInterval) {\n                ratioCounter = 0;\n                return new DefaultHandle<T>(this);\n            }\n            return null;\n        }\n\n        int totalSize() {\n            int size = fastPathDeque.size();\n            MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n            if (handles != null) {\n                size += handles.size();\n            }\n            return size;\n        }\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "    final int threadLocalSize() {\n        LocalPool<T> localPool = threadLocal.getIfExists();\n        return localPool == null ? 0 : localPool.pooledHandles.size();\n    }",
+    "replace": "    final int threadLocalSize() {\n        LocalPool<T> localPool = threadLocal.getIfExists();\n        return localPool == null ? 0 : localPool.totalSize();\n    }"
+  }
+]
+```

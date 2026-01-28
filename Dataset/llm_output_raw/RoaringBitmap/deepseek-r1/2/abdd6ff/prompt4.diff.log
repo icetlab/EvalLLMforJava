@@ -1,0 +1,23 @@
+Looking at the compilation error, the issue is that `MutableRoaringBitmap.add(int[], int, int)` doesn't exist. The `add` method for `MutableRoaringBitmap` doesn't support adding a range from an array. We need to use the correct API.
+
+The compilation error shows:
+```
+error: no suitable method found for add(int[],int,int)
+        turnoff.add(buffer, 0, toAdd);
+```
+
+Looking at RoaringBitmap's API, `MutableRoaringBitmap` has `add(int...)` for varargs and `add(int)` for single values. We need to adjust our approach to use the correct method.
+
+Better approach: Use `RoaringBitmap`'s `limit` method or iterate through the batch and add individually. Since we want to improve performance, we should use batch operations where possible.
+
+Let me fix the code:
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "    MutableRoaringBitmap F = ImmutableRoaringBitmap.or(G, E);\n    long n = F.getLongCardinality() - k;\n    if (n > 0) {\n      // TODO: make faster\n      IntIterator i = F.getIntIterator();\n      MutableRoaringBitmap turnoff = new MutableRoaringBitmap();\n      while (i.hasNext() && n > 0) {\n        turnoff.add(i.next());\n        --n;\n      }\n      F.andNot(turnoff);\n    }",
+    "replace": "    MutableRoaringBitmap F = ImmutableRoaringBitmap.or(G, E);\n    long n = F.getLongCardinality() - k;\n    if (n > 0) {\n      // Use batch iterator for faster removal\n      BatchIterator batchIterator = F.getBatchIterator();\n      MutableRoaringBitmap turnoff = new MutableRoaringBitmap();\n      long remaining = n;\n      int[] buffer = new int[256]; // Batch size\n      while (batchIterator.hasNext() && remaining > 0) {\n        int batchSize = batchIterator.nextBatch(buffer);\n        int toAdd = (int) Math.min(batchSize, remaining);\n        // Add values individually using the correct API\n        for (int j = 0; j < toAdd; j++) {\n          turnoff.add(buffer[j]);\n        }\n        remaining -= toAdd;\n      }\n      F.andNot(turnoff);\n    }"
+  }
+]
+```

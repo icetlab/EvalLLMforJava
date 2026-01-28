@@ -1,0 +1,16 @@
+I’ve added guards around debug log calls to avoid expensive string interpolation when debug logging is disabled, reducing overhead in the hot authorization path.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "authorizerLogger.debug(s\"No acl found for resource $resource, authorized = $shouldAllowEveryoneIfNoAclIsFound\")",
+    "replace": "if (authorizerLogger.underlying.isDebugEnabled)\n  authorizerLogger.debug(s\"No acl found for resource $resource, authorized = $shouldAllowEveryoneIfNoAclIsFound\")"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "authorizerLogger.debug(s\"operation = $operation on resource = $resource from host = $host is $permissionType based on acl = $acl\")",
+    "replace": "if (authorizerLogger.underlying.isDebugEnabled)\n  authorizerLogger.debug(s\"operation = $operation on resource = $resource from host = $host is $permissionType based on acl = $acl\")"
+  }
+]
+```

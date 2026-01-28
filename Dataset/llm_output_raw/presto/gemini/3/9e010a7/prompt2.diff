@@ -1,0 +1,85 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java b/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java
+index c586b38f12..bb07a0fdd2 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java
+@@ -63,6 +63,14 @@ public final class MapToMapCast
+             SqlFunctionProperties.class,
+             Block.class);
+ 
++    private static final MethodHandle MAP_CAST_NO_KEY_CHANGE_METHOD_HANDLE = methodHandle(
++            MapToMapCast.class,
++            "mapCastNoKeyChange",
++            MethodHandle.class,
++            Type.class,
++            SqlFunctionProperties.class,
++            Block.class);
++
+     private static final MethodHandle CHECK_LONG_IS_NOT_NULL = methodHandle(MapToMapCast.class, "checkLongIsNotNull", Long.class);
+     private static final MethodHandle CHECK_DOUBLE_IS_NOT_NULL = methodHandle(MapToMapCast.class, "checkDoubleIsNotNull", Double.class);
+     private static final MethodHandle CHECK_BOOLEAN_IS_NOT_NULL = methodHandle(MapToMapCast.class, "checkBooleanIsNotNull", Boolean.class);
+@@ -92,9 +100,15 @@ public final class MapToMapCast
+                         TypeSignatureParameter.of(toKeyType.getTypeSignature()),
+                         TypeSignatureParameter.of(toValueType.getTypeSignature())));
+ 
+-        MethodHandle keyProcessor = buildProcessor(functionAndTypeManager, fromKeyType, toKeyType, true);
+         MethodHandle valueProcessor = buildProcessor(functionAndTypeManager, fromValueType, toValueType, false);
+-        MethodHandle target = MethodHandles.insertArguments(METHOD_HANDLE, 0, keyProcessor, valueProcessor, toMapType);
++        MethodHandle target;
++        if (fromKeyType.equals(toKeyType)) {
++            target = MethodHandles.insertArguments(MAP_CAST_NO_KEY_CHANGE_METHOD_HANDLE, 0, valueProcessor, toMapType);
++        }
++        else {
++            MethodHandle keyProcessor = buildProcessor(functionAndTypeManager, fromKeyType, toKeyType, true);
++            target = MethodHandles.insertArguments(METHOD_HANDLE, 0, keyProcessor, valueProcessor, toMapType);
++        }
+         return new BuiltInScalarFunctionImplementation(true, ImmutableList.of(valueTypeArgumentProperty(RETURN_NULL_ON_NULL)), target);
+     }
+ 
+@@ -205,6 +219,47 @@ public final class MapToMapCast
+         return value;
+     }
+ 
++    @UsedByGeneratedCode
++    public static Block mapCastNoKeyChange(
++            MethodHandle valueProcessFunction,
++            Type toMapType,
++            SqlFunctionProperties properties,
++            Block fromMap)
++    {
++        checkState(toMapType.getTypeParameters().size() == 2, "Expect two type parameters for toMapType");
++        Type toKeyType = toMapType.getTypeParameters().get(0);
++        TypedSet typedSet = new TypedSet(toKeyType, fromMap.getPositionCount() / 2, "map-to-map cast");
++
++        BlockBuilder mapBlockBuilder = toMapType.createBlockBuilder(null, 1);
++        BlockBuilder blockBuilder = mapBlockBuilder.beginBlockEntry();
++        for (int i = 0; i < fromMap.getPositionCount(); i += 2) {
++            if (fromMap.isNull(i)) {
++                throw new PrestoException(INVALID_CAST_ARGUMENT, "map key is null");
++            }
++            if (typedSet.add(fromMap, i)) {
++                toKeyType.appendTo(fromMap, i, blockBuilder);
++                if (fromMap.isNull(i + 1)) {
++                    blockBuilder.appendNull();
++                    continue;
++                }
++
++                try {
++                    valueProcessFunction.invokeExact(fromMap, i + 1, properties, blockBuilder);
++                }
++                catch (Throwable t) {
++                    throw internalError(t);
++                }
++            }
++            else {
++                // if there are duplicated keys, fail it!
++                throw new PrestoException(INVALID_CAST_ARGUMENT, "duplicate keys");
++            }
++        }
++
++        mapBlockBuilder.closeEntry();
++        return (Block) toMapType.getObject(mapBlockBuilder, mapBlockBuilder.getPositionCount() - 1);
++    }
++
+     @UsedByGeneratedCode
+     public static Block mapCast(
+             MethodHandle keyProcessFunction,

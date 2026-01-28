@@ -1,0 +1,26 @@
+I have optimized `PartitionStates` by enabling `accessOrder` in the backing `LinkedHashMap` to reduce the cost of moving entries to the end, simplified `moveToEnd` and `updateAndMoveToEnd`, and streamlined the `update` method to avoid extra lookups.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/internals/PartitionStates.java",
+    "search": "private final LinkedHashMap<TopicPartition, S> map = new LinkedHashMap<>();",
+    "replace": "private final LinkedHashMap<TopicPartition, S> map = new LinkedHashMap<>(16, 0.75f, true);"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/internals/PartitionStates.java",
+    "search": "public void moveToEnd(TopicPartition topicPartition) {\n        S state = map.remove(topicPartition);\n        if (state != null)\n            map.put(topicPartition, state);\n    }",
+    "replace": "public void moveToEnd(TopicPartition topicPartition) {\n        // Accessing the entry moves it to the end in accessOrder mode\n        map.get(topicPartition);\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/internals/PartitionStates.java",
+    "search": "public void updateAndMoveToEnd(TopicPartition topicPartition, S state) {\n        map.remove(topicPartition);\n        map.put(topicPartition, state);\n        updateSize();\n    }",
+    "replace": "public void updateAndMoveToEnd(TopicPartition topicPartition, S state) {\n        // put in accessOrder map moves existing entries to end or inserts new ones at end\n        map.put(topicPartition, state);\n        updateSize();\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/internals/PartitionStates.java",
+    "search": "private void update(Map<TopicPartition, S> partitionToState) {\n        LinkedHashMap<String, List<TopicPartition>> topicToPartitions = new LinkedHashMap<>();\n        for (TopicPartition tp : partitionToState.keySet()) {\n            List<TopicPartition> partitions = topicToPartitions.computeIfAbsent(tp.topic(), k -> new ArrayList<>());\n            partitions.add(tp);\n        }\n        for (Map.Entry<String, List<TopicPartition>> entry : topicToPartitions.entrySet()) {\n            for (TopicPartition tp : entry.getValue()) {\n                S state = partitionToState.get(tp);\n                map.put(tp, state);\n            }\n        }\n    }",
+    "replace": "private void update(Map<TopicPartition, S> partitionToState) {\n        LinkedHashMap<String, List<Map.Entry<TopicPartition, S>>> topicToEntries = new LinkedHashMap<>();\n        for (Map.Entry<TopicPartition, S> e : partitionToState.entrySet()) {\n            TopicPartition tp = e.getKey();\n            S state = e.getValue();\n            List<Map.Entry<TopicPartition, S>> entries = topicToEntries.computeIfAbsent(tp.topic(), k -> new ArrayList<>());\n            entries.add(e);\n        }\n        for (List<Map.Entry<TopicPartition, S>> entries : topicToEntries.values()) {\n            for (Map.Entry<TopicPartition, S> e : entries) {\n                map.put(e.getKey(), e.getValue());\n            }\n        }\n    }"
+  }
+]
+```

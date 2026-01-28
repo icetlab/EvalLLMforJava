@@ -1,0 +1,17 @@
+My analysis of the `Recycler` class indicates that performance can be improved in scenarios involving cross-thread object recycling.
+
+The `LocalPool.isTerminated(Thread)` method is called during cross-thread recycling to check if the owner thread of a `LocalPool` has terminated. This is crucial for preventing memory leaks by cleaning up resources associated with dead threads.
+
+The current implementation of `isTerminated` uses `Thread.getState()`, which can be a relatively expensive operation on some JVMs like J9. While it uses the faster `Thread.isAlive()` on J9, it relies on `getState()` for other JVMs. However, `!owner.isAlive()` is functionally equivalent to `owner.getState() == Thread.State.TERMINATED` for a thread that has already been started, which is always the case for a `LocalPool`'s owner. The `isAlive()` check is known to be very fast across all major JVMs.
+
+By changing `isTerminated` to use `!owner.isAlive()` unconditionally, we can avoid the potentially costly `getState()` call, thereby improving performance for cross-thread recycling operations. This change also simplifies the code by removing the JVM-specific conditional logic.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "        private static boolean isTerminated(Thread owner) {\n            // Do not use `Thread.getState()` in J9 JVM because it's known to have a performance issue.\n            // See: https://github.com/netty/netty/issues/13347#issuecomment-1518537895\n            return PlatformDependent.isJ9Jvm() ? !owner.isAlive() : owner.getState() == Thread.State.TERMINATED;\n        }",
+    "replace": "        private static boolean isTerminated(Thread owner) {\n            // `isAlive()` is faster than `getState()`. In this context, `!isAlive()` is equivalent to\n            // `getState() == TERMINATED` for a started thread, which is what we have here.\n            // See: https://github.com/netty/netty/issues/13347#issuecomment-1518537895\n            return !owner.isAlive();\n        }"
+  }
+]
+```

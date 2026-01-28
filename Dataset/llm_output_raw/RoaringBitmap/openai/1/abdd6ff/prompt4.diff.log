@@ -1,0 +1,11 @@
+I’ve corrected the `topK` method to use the optimized `limit(int)` call by casting the computed long difference to int, replacing the manual iteration and removal. This fixes the type mismatch and leverages the faster built-in limit operation.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "long n = F.getLongCardinality() - k;\n    if (n > 0) {\n      // TODO: make faster\n      IntIterator i = F.getIntIterator();\n      MutableRoaringBitmap turnoff = new MutableRoaringBitmap();\n      while (i.hasNext() && n > 0) {\n        turnoff.add(i.next());\n        --n;\n      }\n      F.andNot(turnoff);\n    }",
+    "replace": "long n = F.getLongCardinality() - k;\n    if (n > 0) {\n      int toRemove = (int) n;\n      MutableRoaringBitmap turnoff = F.limit(toRemove);\n      F.andNot(turnoff);\n    }"
+  }
+]
+```

@@ -1,0 +1,15 @@
+## Fixing Checkstyle Violation
+
+The build failed due to a checkstyle violation in Node16.java at line 88:63. The error indicates that the `&&` operator should be on a new line when breaking a condition across multiple lines, according to the OperatorWrap rule. This is a formatting issue that needs to be fixed while preserving all functionality.
+
+The specific issue is in the `getNearestChildPos` method where the condition spans multiple lines. According to checkstyle rules, when breaking a condition across multiple lines, the operator should start the new line rather than end the previous line.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java",
+    "search": "            if(firstResult.hasNextLargerPos() == false && secondResult.hasNextSmallerPos() == false)\n            {\n              // this happens when the result is in the gap of the two ranges, the correct\n              // \"smaller value\" is that of first result.\n              lowPos = firstResult.getNextSmallerPos();\n            }",
+    "replace": "            if(firstResult.hasNextLargerPos() == false \n                && secondResult.hasNextSmallerPos() == false)\n            {\n              // this happens when the result is in the gap of the two ranges, the correct\n              // \"smaller value\" is that of first result.\n              lowPos = firstResult.getNextSmallerPos();\n            }"
+  }
+]
+```

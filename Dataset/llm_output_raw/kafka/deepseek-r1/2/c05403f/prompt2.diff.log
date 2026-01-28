@@ -1,0 +1,16 @@
+The performance issue is in the `sizeOfUnsignedVarint` and `sizeOfVarlong` methods which use iterative while loops to count the number of bytes needed for variable-length encoding. These loops can be replaced with branch-free operations using integer logarithms and bit manipulation, which will be more efficient especially for small values (which are common in Kafka).
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "    /**\n     * Number of bytes needed to encode an integer in unsigned variable-length format.\n     *\n     * @param value The signed value\n     */\n    public static int sizeOfUnsignedVarint(int value) {\n        int bytes = 1;\n        while ((value & 0xffffff80) != 0L) {\n            bytes += 1;\n            value >>>= 7;\n        }\n        return bytes;\n    }",
+    "replace": "    /**\n     * Number of bytes needed to encode an integer in unsigned variable-length format.\n     *\n     * @param value The signed value\n     */\n    public static int sizeOfUnsignedVarint(int value) {\n        // Count the number of leading zero bits, add 1 to get the bit position (1-indexed)\n        // 31 - numberOfLeadingZeros gives the highest set bit position (0-indexed)\n        int leadingZeros = Integer.numberOfLeadingZeros(value);\n        // For value 0, we need 1 byte\n        if (value == 0) {\n            return 1;\n        }\n        // Calculate bits needed: 32 - leadingZeros\n        int bits = 32 - leadingZeros;\n        // Each varint byte stores 7 bits, so compute ceil(bits / 7)\n        // Using (bits + 6) / 7 avoids floating point and division\n        return (bits + 6) / 7;\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java",
+    "search": "    /**\n     * Number of bytes needed to encode a long in variable-length format.\n     *\n     * @param value The signed value\n     */\n    public static int sizeOfVarlong(long value) {\n        long v = (value << 1) ^ (value >> 63);\n        int bytes = 1;\n        while ((v & 0xffffffffffffff80L) != 0L) {\n            bytes += 1;\n            v >>>= 7;\n        }\n        return bytes;\n    }",
+    "replace": "    /**\n     * Number of bytes needed to encode a long in variable-length format.\n     *\n     * @param value The signed value\n     */\n    public static int sizeOfVarlong(long value) {\n        long v = (value << 1) ^ (value >> 63);\n        // Count the number of leading zero bits\n        int leadingZeros = Long.numberOfLeadingZeros(v);\n        // For value 0 (which becomes v=0), we need 1 byte\n        if (v == 0) {\n            return 1;\n        }\n        // Calculate bits needed: 64 - leadingZeros\n        int bits = 64 - leadingZeros;\n        // Each varint byte stores 7 bits, so compute ceil(bits / 7)\n        return (bits + 6) / 7;\n    }"
+  }
+]
+```

@@ -1,0 +1,26 @@
+diff --git a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+index 679b59249d..4b597f6e61 100644
+--- a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
++++ b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+@@ -41,7 +41,20 @@ public final class Checksums {
+         if (buffer.hasArray()) {
+             checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);
+         } else {
+-            int start = buffer.position() + offset;
++            int position = buffer.position();
++            try {
++                java.lang.reflect.Method updateBuffer = checksum.getClass().getMethod("update", java.nio.ByteBuffer.class);
++                if (updateBuffer.getDeclaringClass() != java.util.zip.Checksum.class) {
++                    java.nio.ByteBuffer slice = buffer.duplicate();
++                    slice.position(position + offset).limit(position + offset + length);
++                    updateBuffer.invoke(checksum, slice);
++                    buffer.position(position);
++                    return;
++                }
++            } catch (NoSuchMethodException | IllegalAccessException | java.lang.reflect.InvocationTargetException | SecurityException e) {
++                // fallback to byte-by-byte
++            }
++            int start = position + offset;
+             for (int i = start; i < start + length; i++)
+                 checksum.update(buffer.get(i));
+         }

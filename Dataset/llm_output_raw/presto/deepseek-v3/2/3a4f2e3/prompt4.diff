@@ -1,0 +1,40 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
+index aab2765889..9830194e12 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
+@@ -273,6 +273,35 @@ public class BooleanSelectiveStreamReader
+     {
+         // filter == null implies outputRequired == true
+         int streamPosition = 0;
++
++        // Fast path for contiguous positions and no present stream (no nulls)
++        if (presentStream == null && positionCount > 0) {
++            // Check if positions are contiguous
++            boolean contiguous = true;
++            for (int i = 1; i < positionCount; i++) {
++                if (positions[i] != positions[i - 1] + 1) {
++                    contiguous = false;
++                    break;
++                }
++            }
++            if (contiguous) {
++                // Skip to the first position
++                int firstPosition = positions[0];
++                if (firstPosition > streamPosition) {
++                    skip(firstPosition - streamPosition);
++                    streamPosition = firstPosition;
++                }
++                // Read bits directly
++                for (int i = 0; i < positionCount; i++) {
++                    values[i] = (byte) (dataStream.nextBit() ? 1 : 0);
++                }
++                streamPosition += positionCount;
++                outputPositionCount = positionCount;
++                return streamPosition;
++            }
++        }
++
++        // Original logic for non-contiguous or with present stream
+         for (int i = 0; i < positionCount; i++) {
+             int position = positions[i];
+             if (position > streamPosition) {

@@ -1,0 +1,65 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+index da887a9ba3..1befba7464 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+@@ -258,6 +258,33 @@ public class ByteSelectiveStreamReader
+     {
+         // filter == null implies outputRequired == true
+         int streamPosition = 0;
++        
++        // Optimize for contiguous rows with no nulls
++        if (presentStream == null && positionCount > 0) {
++            // Check if positions are contiguous
++            boolean isContiguous = true;
++            for (int i = 1; i < positionCount; i++) {
++                if (positions[i] != positions[i-1] + 1) {
++                    isContiguous = false;
++                    break;
++                }
++            }
++            
++            if (isContiguous) {
++                // We need to skip to the first position if we're not already there
++                if (positions[0] > streamPosition) {
++                    skip(positions[0] - streamPosition);
++                    streamPosition = positions[0];
++                }
++                
++                // Bulk read all values at once
++                dataStream.nextBytes(values, 0, positionCount);
++                outputPositionCount = positionCount;
++                return streamPosition + positionCount;
++            }
++        }
++        
++        // Fall back to original per-value reading for non-contiguous or with nulls
+         for (int i = 0; i < positionCount; i++) {
+             int position = positions[i];
+             if (position > streamPosition) {
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java b/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java
+index 21edc123eb..ad79f7b337 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java
+@@ -119,6 +119,22 @@ public class ByteInputStream
+         return buffer[offset++];
+     }
+ 
++    public void nextBytes(byte[] output, int outputOffset, int length)
++            throws IOException
++    {
++        int remaining = length;
++        while (remaining > 0) {
++            if (offset == length) {
++                readNextBlock();
++            }
++            int chunk = Math.min(remaining, length - offset);
++            System.arraycopy(buffer, offset, output, outputOffset, chunk);
++            offset += chunk;
++            outputOffset += chunk;
++            remaining -= chunk;
++        }
++    }
++
+     public void nextVector(Type type, long items, BlockBuilder builder)
+             throws IOException
+     {

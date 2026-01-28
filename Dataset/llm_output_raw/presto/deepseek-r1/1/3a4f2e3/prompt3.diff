@@ -1,0 +1,79 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
+index aab2765889..ae28588468 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
+@@ -273,6 +273,8 @@ public class BooleanSelectiveStreamReader
+     {
+         // filter == null implies outputRequired == true
+         int streamPosition = 0;
++        boolean checkNulls = presentStream != null;
++        
+         for (int i = 0; i < positionCount; i++) {
+             int position = positions[i];
+             if (position > streamPosition) {
+@@ -280,12 +282,13 @@ public class BooleanSelectiveStreamReader
+                 streamPosition = position;
+             }
+ 
+-            if (presentStream != null && !presentStream.nextBit()) {
++            if (checkNulls && !presentStream.nextBit()) {
+                 nulls[i] = true;
+             }
+             else {
+-                values[i] = (byte) (dataStream.nextBit() ? 1 : 0);
+-                if (presentStream != null) {
++                boolean value = dataStream.nextBit();
++                values[i] = (byte) (value ? 1 : 0);
++                if (checkNulls) {
+                     nulls[i] = false;
+                 }
+             }
+@@ -298,12 +301,18 @@ public class BooleanSelectiveStreamReader
+     private void skip(int items)
+             throws IOException
+     {
++        if (items <= 0) {
++            return;
++        }
++        
+         if (dataStream == null) {
+             presentStream.skip(items);
+         }
+         else if (presentStream != null) {
+             int dataToSkip = presentStream.countBitsSet(items);
+-            dataStream.skip(dataToSkip);
++            if (dataToSkip > 0) {
++                dataStream.skip(dataToSkip);
++            }
+         }
+         else {
+             dataStream.skip(items);
+@@ -409,9 +418,14 @@ public class BooleanSelectiveStreamReader
+ 
+     private void compactValues(int[] positions, int positionCount, boolean compactNulls)
+     {
++        if (positionCount == outputPositionCount) {
++            // Nothing to compact
++            return;
++        }
++        
+         int positionIndex = 0;
+         int nextPosition = positions[positionIndex];
+-        for (int i = 0; i < outputPositionCount; i++) {
++        for (int i = 0; i < outputPositionCount && positionIndex < positionCount; i++) {
+             if (outputPositions[i] < nextPosition) {
+                 continue;
+             }
+@@ -425,10 +439,9 @@ public class BooleanSelectiveStreamReader
+             outputPositions[positionIndex] = nextPosition;
+ 
+             positionIndex++;
+-            if (positionIndex >= positionCount) {
+-                break;
++            if (positionIndex < positionCount) {
++                nextPosition = positions[positionIndex];
+             }
+-            nextPosition = positions[positionIndex];
+         }
+ 
+         outputPositionCount = positionCount;

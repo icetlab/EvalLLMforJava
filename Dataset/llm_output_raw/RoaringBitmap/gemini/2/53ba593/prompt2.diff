@@ -1,0 +1,35 @@
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java b/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java
+index 9ae064da..beb35785 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java
+@@ -906,7 +906,7 @@ public class RoaringBitmap implements Cloneable, Serializable, Iterable<Integer>
+       if (s1 == s2) {
+         final Container c1 = x1.highLowContainer.getContainerAtIndex(pos1);
+         final Container c2 = x2.highLowContainer.getContainerAtIndex(pos2);
+-        cardinality += c1.getCardinality() - c1.andCardinality(c2);
++        cardinality += c1.andNot(c2).getCardinality();
+         ++pos1;
+         ++pos2;
+       } else if (s1 < s2) {
+@@ -1673,7 +1673,7 @@ public class RoaringBitmap implements Cloneable, Serializable, Iterable<Integer>
+       return false;
+     }
+     for (int i = begin + 1; i < end; ++i) {
+-      if (highLowContainer.getContainerAtIndex(i).getCardinality() != 1 << 16) {
++      if (!highLowContainer.getContainerAtIndex(i).isFull()) {
+         return false;
+       }
+     }
+@@ -2718,10 +2718,10 @@ public class RoaringBitmap implements Cloneable, Serializable, Iterable<Integer>
+         }
+         ++pos1;
+         ++pos2;
+-      } else if (s1 - s2 > 0) {
++      } else if (s1 > s2) {
+         return false;
+       } else {
+-        pos1 = subset.highLowContainer.advanceUntil(s2, pos1);
++        pos1 = this.highLowContainer.advanceUntil(s2, pos1);
+       }
+     }
+     return pos2 == length2;

@@ -1,0 +1,18 @@
+I see the issue. The build failed due to checkstyle violations (lines longer than 100 characters) that were introduced by my previous changes. The performance improvements I suggested created lines that were too long. Let me fix this by breaking down the long lines while keeping the performance improvements.
+
+The key is to maintain the performance benefits of loop unrolling while ensuring the code stays within the 100-character line limit.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/RunContainer.java",
+    "search": "  @Override\n  public int getCardinality() {\n    int sum = nbrruns;// lengths are returned -1\n    for (int k = 0; k < nbrruns; ++k) {\n      sum = sum + (getLength(k))/* + 1 */;\n    }\n    return sum;\n  }",
+    "replace": "  @Override\n  public int getCardinality() {\n    int sum = nbrruns;\n    char[] vl = valueslength;\n    int runCount = nbrruns;\n    int k = 0;\n    // Unroll loop for better performance\n    while (k + 3 < runCount) {\n      sum += vl[2 * k + 1];\n      sum += vl[2 * (k + 1) + 1];\n      sum += vl[2 * (k + 2) + 1];\n      sum += vl[2 * (k + 3) + 1];\n      k += 4;\n    }\n    // Handle remaining runs\n    while (k < runCount) {\n      sum += vl[2 * k + 1];\n      ++k;\n    }\n    return sum;\n  }"
+  },
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MappeableRunContainer.java",
+    "search": "  @Override\n  public int getCardinality() {\n    int sum = nbrruns; // lengths are stored -1\n    if (isArrayBacked()) {\n      char[] vl = valueslength.array();\n      for (int k = 0; k < nbrruns; ++k) {\n        sum = sum + (vl[2 * k + 1])/* + 1 */;\n      }\n    } else {\n      for (int k = 0; k < nbrruns; ++k) {\n        sum = sum + (getLength(k))/* + 1 */;\n      }\n    }\n    return sum;\n  }",
+    "replace": "  @Override\n  public int getCardinality() {\n    int sum = nbrruns;\n    int runCount = nbrruns;\n    int k = 0;\n    \n    if (isArrayBacked()) {\n      char[] vl = valueslength.array();\n      // Unroll loop for better performance\n      while (k + 3 < runCount) {\n        sum += vl[2 * k + 1];\n        sum += vl[2 * (k + 1) + 1];\n        sum += vl[2 * (k + 2) + 1];\n        sum += vl[2 * (k + 3) + 1];\n        k += 4;\n      }\n      // Handle remaining runs\n      while (k < runCount) {\n        sum += vl[2 * k + 1];\n        ++k;\n      }\n    } else {\n      CharBuffer vb = valueslength;\n      // Unroll loop for better performance\n      while (k + 3 < runCount) {\n        sum += vb.get(2 * k + 1);\n        sum += vb.get(2 * (k + 1) + 1);\n        sum += vb.get(2 * (k + 2) + 1);\n        sum += vb.get(2 * (k + 3) + 1);\n        k += 4;\n      }\n      // Handle remaining runs\n      while (k < runCount) {\n        sum += vb.get(2 * k + 1);\n        ++k;\n      }\n    }\n    return sum;\n  }"
+  }
+]
+```

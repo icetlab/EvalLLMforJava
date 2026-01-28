@@ -1,0 +1,133 @@
+diff --git a/common/src/main/java/io/netty/util/internal/PlatformDependent.java b/common/src/main/java/io/netty/util/internal/PlatformDependent.java
+index 0a70c36401..ec398af643 100644
+--- a/common/src/main/java/io/netty/util/internal/PlatformDependent.java
++++ b/common/src/main/java/io/netty/util/internal/PlatformDependent.java
+@@ -446,92 +446,76 @@ public final class PlatformDependent {
+     }
+ 
+     private static long getLongSafe(byte[] bytes, int offset) {
++        long result = 0;
+         if (BIG_ENDIAN_NATIVE_ORDER) {
+-            return (long) bytes[offset] << 56 |
+-                    ((long) bytes[offset + 1] & 0xff) << 48 |
+-                    ((long) bytes[offset + 2] & 0xff) << 40 |
+-                    ((long) bytes[offset + 3] & 0xff) << 32 |
+-                    ((long) bytes[offset + 4] & 0xff) << 24 |
+-                    ((long) bytes[offset + 5] & 0xff) << 16 |
+-                    ((long) bytes[offset + 6] & 0xff) <<  8 |
+-                    (long) bytes[offset + 7] & 0xff;
+-        }
+-        return (long) bytes[offset] & 0xff |
+-                ((long) bytes[offset + 1] & 0xff) << 8 |
+-                ((long) bytes[offset + 2] & 0xff) << 16 |
+-                ((long) bytes[offset + 3] & 0xff) << 24 |
+-                ((long) bytes[offset + 4] & 0xff) << 32 |
+-                ((long) bytes[offset + 5] & 0xff) << 40 |
+-                ((long) bytes[offset + 6] & 0xff) << 48 |
+-                (long) bytes[offset + 7] << 56;
++            for (int i = 0; i < 8; i++) {
++                result |= ((long) bytes[offset + i] & 0xffL) << (56 - (i << 3));
++            }
++        } else {
++            for (int i = 0; i < 8; i++) {
++                result |= ((long) bytes[offset + i] & 0xffL) << (i << 3);
++            }
++        }
++        return result;
+     }
+ 
+     private static int getIntSafe(byte[] bytes, int offset) {
++        int result = 0;
+         if (BIG_ENDIAN_NATIVE_ORDER) {
+-            return bytes[offset] << 24 |
+-                    (bytes[offset + 1] & 0xff) << 16 |
+-                    (bytes[offset + 2] & 0xff) << 8 |
+-                    bytes[offset + 3] & 0xff;
++            for (int i = 0; i < 4; i++) {
++                result |= (bytes[offset + i] & 0xff) << (24 - (i << 3));
++            }
++        } else {
++            for (int i = 0; i < 4; i++) {
++                result |= (bytes[offset + i] & 0xff) << (i << 3);
++            }
+         }
+-        return bytes[offset] & 0xff |
+-                (bytes[offset + 1] & 0xff) << 8 |
+-                (bytes[offset + 2] & 0xff) << 16 |
+-                bytes[offset + 3] << 24;
++        return result;
+     }
+ 
+     private static short getShortSafe(byte[] bytes, int offset) {
+         if (BIG_ENDIAN_NATIVE_ORDER) {
+-            return (short) (bytes[offset] << 8 | (bytes[offset + 1] & 0xff));
++            return (short) ((bytes[offset] & 0xff) << 8 | (bytes[offset + 1] & 0xff));
+         }
+-        return (short) (bytes[offset] & 0xff | (bytes[offset + 1] << 8));
++        return (short) ((bytes[offset] & 0xff) | (bytes[offset + 1] & 0xff) << 8);
+     }
+ 
+     /**
+      * Identical to {@link PlatformDependent0#hashCodeAsciiCompute(long, int)} but for {@link CharSequence}.
+      */
+     private static int hashCodeAsciiCompute(CharSequence value, int offset, int hash) {
+-        if (BIG_ENDIAN_NATIVE_ORDER) {
+-            return hash * HASH_CODE_C1 +
+-                    // Low order int
+-                    hashCodeAsciiSanitizeInt(value, offset + 4) * HASH_CODE_C2 +
+-                    // High order int
+-                    hashCodeAsciiSanitizeInt(value, offset);
++        long word = 0;
++        // Build 64-bit word from 8 chars
++        for (int i = 0; i < 8; i++) {
++            word |= ((long) value.charAt(offset + i) & 0xffL) << (i << 3);
+         }
++        // Use same computation as PlatformDependent0.hashCodeAsciiCompute
+         return hash * HASH_CODE_C1 +
+                 // Low order int
+-                hashCodeAsciiSanitizeInt(value, offset) * HASH_CODE_C2 +
++                hashCodeAsciiSanitize((int) word) * HASH_CODE_C2 +
+                 // High order int
+-                hashCodeAsciiSanitizeInt(value, offset + 4);
++                (int) ((word & 0x1f1f1f1f00000000L) >>> 32);
+     }
+ 
+     /**
+      * Identical to {@link PlatformDependent0#hashCodeAsciiSanitize(int)} but for {@link CharSequence}.
+      */
+     private static int hashCodeAsciiSanitizeInt(CharSequence value, int offset) {
+-        if (BIG_ENDIAN_NATIVE_ORDER) {
+-            // mimic a unsafe.getInt call on a big endian machine
+-            return (value.charAt(offset + 3) & 0x1f) |
+-                   (value.charAt(offset + 2) & 0x1f) << 8 |
+-                   (value.charAt(offset + 1) & 0x1f) << 16 |
+-                   (value.charAt(offset) & 0x1f) << 24;
++        int result = 0;
++        for (int i = 0; i < 4; i++) {
++            int shift = BIG_ENDIAN_NATIVE_ORDER ? (24 - (i << 3)) : (i << 3);
++            result |= (value.charAt(offset + i) & 0x1f) << shift;
+         }
+-        return (value.charAt(offset + 3) & 0x1f) << 24 |
+-               (value.charAt(offset + 2) & 0x1f) << 16 |
+-               (value.charAt(offset + 1) & 0x1f) << 8 |
+-               (value.charAt(offset) & 0x1f);
++        return result;
+     }
+ 
+     /**
+      * Identical to {@link PlatformDependent0#hashCodeAsciiSanitize(short)} but for {@link CharSequence}.
+      */
+     private static int hashCodeAsciiSanitizeShort(CharSequence value, int offset) {
+-        if (BIG_ENDIAN_NATIVE_ORDER) {
+-            // mimic a unsafe.getShort call on a big endian machine
+-            return (value.charAt(offset + 1) & 0x1f) |
+-                    (value.charAt(offset) & 0x1f) << 8;
+-        }
+-        return (value.charAt(offset + 1) & 0x1f) << 8 |
+-                (value.charAt(offset) & 0x1f);
++        int c1 = value.charAt(offset) & 0x1f;
++        int c2 = value.charAt(offset + 1) & 0x1f;
++        return BIG_ENDIAN_NATIVE_ORDER ? (c1 << 8 | c2) : (c2 << 8 | c1);
+     }
+ 
+     /**

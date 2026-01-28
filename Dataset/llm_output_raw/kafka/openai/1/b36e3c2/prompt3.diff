@@ -1,0 +1,54 @@
+diff --git a/core/src/main/scala/kafka/log/LogValidator.scala b/core/src/main/scala/kafka/log/LogValidator.scala
+index 48b9f57d9a..9a250edc03 100644
+--- a/core/src/main/scala/kafka/log/LogValidator.scala
++++ b/core/src/main/scala/kafka/log/LogValidator.scala
+@@ -238,13 +238,20 @@ private[log] object LogValidator extends Logging {
+       validateBatch(topicPartition, firstBatch, batch, origin, toMagicValue, brokerTopicStats)
+ 
+       val recordErrors = new ArrayBuffer[ApiRecordError](0)
+-      for ((record, batchIndex) <- batch.asScala.view.zipWithIndex) {
++      val recordIter = batch.asScala.iterator
++      var batchIndex = 0
++      while (recordIter.hasNext) {
++        val record = recordIter.next()
+         validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,
+-          timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)
+-        // we fail the batch if any record fails, so we stop appending if any record fails
+-        if (recordErrors.isEmpty)
++          timestampDiffMaxMs, compactedTopic, brokerTopicStats) match {
++          case Some(recordError) => recordErrors += recordError
++          case None =>
++        }
++        if (recordErrors.isEmpty) {
+           builder.appendWithOffset(offsetCounter.getAndIncrement(), record)
+         }
++        batchIndex += 1
++      }
+ 
+       processRecordErrors(recordErrors)
+     }
+@@ -286,15 +293,21 @@ private[log] object LogValidator extends Logging {
+       var offsetOfMaxBatchTimestamp = -1L
+ 
+       val recordErrors = new ArrayBuffer[ApiRecordError](0)
+-      for ((record, batchIndex) <- batch.asScala.view.zipWithIndex) {
++      val recordIter = batch.asScala.iterator
++      var batchIndex = 0
++      while (recordIter.hasNext) {
++        val record = recordIter.next()
+         validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,
+-          timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)
+-
++          timestampDiffMaxMs, compactedTopic, brokerTopicStats) match {
++          case Some(recordError) => recordErrors += recordError
++          case None =>
++        }
+         val offset = offsetCounter.getAndIncrement()
+         if (batch.magic > RecordBatch.MAGIC_VALUE_V0 && record.timestamp > maxBatchTimestamp) {
+           maxBatchTimestamp = record.timestamp
+           offsetOfMaxBatchTimestamp = offset
+         }
++        batchIndex += 1
+       }
+ 
+       processRecordErrors(recordErrors)

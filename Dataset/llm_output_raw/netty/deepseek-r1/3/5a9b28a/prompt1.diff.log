@@ -1,0 +1,16 @@
+The primary goal is to enhance the performance of the `Recycler` class by reducing synchronization overhead and optimizing thread state checks, while maintaining correctness and thread safety. Key improvements include eliminating expensive `Thread.getState()` calls in the common case, reducing volatile read frequency, and streamlining condition checks in the recycling path.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "        private static boolean isTerminated(Thread owner) {\n            // Do not use `Thread.getState()` in J9 JVM because it's known to have a performance issue.\n            // See: https://github.com/netty/netty/issues/13347#issuecomment-1518537895\n            return PlatformDependent.isJ9Jvm() ? !owner.isAlive() : owner.getState() == Thread.State.TERMINATED;\n        }",
+    "replace": "        private static boolean isTerminated(Thread owner) {\n            // Use isAlive() for all JVMs - equivalent to TERMINATED check but more efficient\n            return !owner.isAlive();\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "        void release(DefaultHandle<T> handle, boolean guarded) {\n            if (guarded) {\n                handle.toAvailable();\n            } else {\n                handle.unguardedToAvailable();\n            }\n            Thread owner = this.owner;\n            if (owner != null && Thread.currentThread() == owner && batch.size() < chunkSize) {\n                accept(handle);\n            } else if (owner != null && isTerminated(owner)) {\n                this.owner = null;\n                pooledHandles = null;\n            } else {\n                MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n                if (handles != null) {\n                    handles.relaxedOffer(handle);\n                }\n            }\n        }",
+    "replace": "        void release(DefaultHandle<T> handle, boolean guarded) {\n            if (guarded) {\n                handle.toAvailable();\n            } else {\n                handle.unguardedToAvailable();\n            }\n            final Thread currentThread = Thread.currentThread();\n            final Thread owner = this.owner;\n            if (owner != null && currentThread == owner) {\n                // Fast path: same thread\n                if (batch.size() < chunkSize) {\n                    accept(handle);\n                } else {\n                    pooledHandles.relaxedOffer(handle);\n                }\n            } else {\n                // Cross-thread path\n                if (owner != null && isTerminated(owner)) {\n                    this.owner = null;\n                    pooledHandles = null;\n                } else {\n                    MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n                    if (handles != null) {\n                        handles.relaxedOffer(handle);\n                    }\n                }\n            }\n        }"
+  }
+]
+```

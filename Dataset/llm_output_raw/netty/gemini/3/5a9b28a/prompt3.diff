@@ -1,0 +1,26 @@
+diff --git a/common/src/main/java/io/netty/util/Recycler.java b/common/src/main/java/io/netty/util/Recycler.java
+index a17a9906c4..ea5658e141 100644
+--- a/common/src/main/java/io/netty/util/Recycler.java
++++ b/common/src/main/java/io/netty/util/Recycler.java
+@@ -279,8 +279,7 @@ public abstract class Recycler<T> {
+         }
+ 
+         void toAvailable() {
+-            int prev = STATE_UPDATER.getAndSet(this, STATE_AVAILABLE);
+-            if (prev == STATE_AVAILABLE) {
++            if (!STATE_UPDATER.compareAndSet(this, STATE_CLAIMED, STATE_AVAILABLE)) {
+                 throw new IllegalStateException("Object has been recycled already.");
+             }
+         }
+@@ -353,9 +352,8 @@ public abstract class Recycler<T> {
+         }
+ 
+         private static boolean isTerminated(Thread owner) {
+-            // Do not use `Thread.getState()` in J9 JVM because it's known to have a performance issue.
+-            // See: https://github.com/netty/netty/issues/13347#issuecomment-1518537895
+-            return PlatformDependent.isJ9Jvm() ? !owner.isAlive() : owner.getState() == Thread.State.TERMINATED;
++            // `isAlive()` is cheaper than `getState()`.
++            return !owner.isAlive();
+         }
+ 
+         DefaultHandle<T> newHandle() {

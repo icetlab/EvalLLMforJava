@@ -1,0 +1,17 @@
+The `map_concat` function in `MapConcatFunction.java` unnecessarily overallocates memory for its internal data structures. Specifically, the `TypedSet` and `InterleavedBlockBuilder` are initialized with capacities based on the `positionCount` of the map blocks, which is twice the actual number of map entries (keys).
+
+My improvement corrects these initial capacity calculations:
+1.  The `TypedSet` is used to store keys from the right map. Its size should be estimated as `rightMap.getPositionCount() / 2`, which is the number of key-value pairs in the right map.
+2.  The `InterleavedBlockBuilder` is used to construct the resulting map. Its capacity should be estimated as the sum of entries from both maps, which is `(leftMap.getPositionCount() + rightMap.getPositionCount()) / 2`.
+
+These changes reduce memory allocation, which can improve performance by lowering garbage collection pressure and avoiding potential reallocations within the builder and set implementations, without altering the function's logic.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapConcatFunction.java",
+    "search": "        TypedSet typedSet = new TypedSet(keyType, rightMap.getPositionCount());\n        BlockBuilder blockBuilder = new InterleavedBlockBuilder(ImmutableList.of(keyType, valueType), new BlockBuilderStatus(), leftMap.getPositionCount() + rightMap.getPositionCount());",
+    "replace": "        TypedSet typedSet = new TypedSet(keyType, rightMap.getPositionCount() / 2);\n        BlockBuilder blockBuilder = new InterleavedBlockBuilder(ImmutableList.of(keyType, valueType), new BlockBuilderStatus(), (leftMap.getPositionCount() + rightMap.getPositionCount()) / 2);"
+  }
+]
+```

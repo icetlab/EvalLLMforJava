@@ -1,0 +1,72 @@
+diff --git a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+index c132aa5b20..7827462284 100644
+--- a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
++++ b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+@@ -31,12 +31,7 @@ import java.util.concurrent.TimeUnit;
+  */
+ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecutor {
+     private static final Comparator<ScheduledFutureTask<?>> SCHEDULED_FUTURE_TASK_COMPARATOR =
+-            new Comparator<ScheduledFutureTask<?>>() {
+-                @Override
+-                public int compare(ScheduledFutureTask<?> o1, ScheduledFutureTask<?> o2) {
+-                    return o1.compareTo(o2);
+-                }
+-            };
++            ScheduledFutureTask::compareTo;
+ 
+    static final Runnable WAKEUP_TASK = new Runnable() {
+        @Override
+@@ -127,8 +122,11 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
+         assert inEventLoop();
+ 
+         Queue<ScheduledFutureTask<?>> scheduledTaskQueue = this.scheduledTaskQueue;
+-        ScheduledFutureTask<?> scheduledTask = scheduledTaskQueue == null ? null : scheduledTaskQueue.peek();
+-        if (scheduledTask == null || scheduledTask.deadlineNanos() - nanoTime > 0) {
++        if (scheduledTaskQueue == null) {
++            return null;
++        }
++        ScheduledFutureTask<?> scheduledTask = scheduledTaskQueue.peek();
++        if (scheduledTask == null || scheduledTask.deadlineNanos - nanoTime > 0) {
+             return null;
+         }
+         scheduledTaskQueue.remove();
+diff --git a/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java b/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
+index 5ffe824119..54262c36bb 100644
+--- a/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
++++ b/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
+@@ -33,9 +33,10 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
+     }
+ 
+     static long deadlineNanos(long delay) {
+-        long deadlineNanos = nanoTime() + delay;
+-        // Guard against overflow
+-        return deadlineNanos < 0 ? Long.MAX_VALUE : deadlineNanos;
++        if (delay <= Long.MAX_VALUE - nanoTime()) {
++            return nanoTime() + delay;
++        }
++        return Long.MAX_VALUE;
+     }
+ 
+     static long initialNanoTime() {
+@@ -128,17 +129,11 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
+         }
+ 
+         ScheduledFutureTask<?> that = (ScheduledFutureTask<?>) o;
+-        long d = deadlineNanos() - that.deadlineNanos();
+-        if (d < 0) {
+-            return -1;
+-        } else if (d > 0) {
+-            return 1;
+-        } else if (id < that.id) {
+-            return -1;
+-        } else {
+-            assert id != that.id;
+-            return 1;
++        int cmp = Long.compare(deadlineNanos, that.deadlineNanos);
++        if (cmp == 0) {
++            cmp = Long.compare(id, that.id);
+         }
++        return cmp;
+     }
+ 
+     @Override

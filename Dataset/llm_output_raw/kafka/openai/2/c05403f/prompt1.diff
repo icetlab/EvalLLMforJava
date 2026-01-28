@@ -1,0 +1,71 @@
+diff --git a/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java b/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java
+index 15868721da..1f8e2431b0 100644
+--- a/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java
++++ b/clients/src/main/java/org/apache/kafka/common/utils/ByteUtils.java
+@@ -75,7 +75,7 @@ public final class ByteUtils {
+      * @return The integer read (MUST BE TREATED WITH SPECIAL CARE TO AVOID SIGNEDNESS)
+      */
+     public static int readUnsignedIntLE(byte[] buffer, int offset) {
+-        return (buffer[offset] << 0 & 0xff)
++        return (buffer[offset] & 0xff)
+                 | ((buffer[offset + 1] & 0xff) << 8)
+                 | ((buffer[offset + 2] & 0xff) << 16)
+                 | ((buffer[offset + 3] & 0xff) << 24);
+@@ -282,7 +282,7 @@ public final class ByteUtils {
+      * @param buffer The output to write to
+      */
+     public static void writeUnsignedVarint(int value, ByteBuffer buffer) {
+-        while ((value & 0xffffff80) != 0L) {
++        while ((value & ~0x7f) != 0) {
+             byte b = (byte) ((value & 0x7f) | 0x80);
+             buffer.put(b);
+             value >>>= 7;
+@@ -299,7 +299,7 @@ public final class ByteUtils {
+      * @param out The output to write to
+      */
+     public static void writeUnsignedVarint(int value, DataOutput out) throws IOException {
+-        while ((value & 0xffffff80) != 0L) {
++        while ((value & ~0x7f) != 0) {
+             byte b = (byte) ((value & 0x7f) | 0x80);
+             out.writeByte(b);
+             value >>>= 7;
+@@ -341,7 +341,7 @@ public final class ByteUtils {
+      */
+     public static void writeVarlong(long value, DataOutput out) throws IOException {
+         long v = (value << 1) ^ (value >> 63);
+-        while ((v & 0xffffffffffffff80L) != 0L) {
++        while ((v & ~0x7fL) != 0) {
+             out.writeByte(((int) v & 0x7f) | 0x80);
+             v >>>= 7;
+         }
+@@ -358,7 +358,7 @@ public final class ByteUtils {
+      */
+     public static void writeVarlong(long value, ByteBuffer buffer) {
+         long v = (value << 1) ^ (value >> 63);
+-        while ((v & 0xffffffffffffff80L) != 0L) {
++        while ((v & ~0x7fL) != 0) {
+             byte b = (byte) ((v & 0x7f) | 0x80);
+             buffer.put(b);
+             v >>>= 7;
+@@ -393,8 +393,8 @@ public final class ByteUtils {
+      */
+     public static int sizeOfUnsignedVarint(int value) {
+         int bytes = 1;
+-        while ((value & 0xffffff80) != 0L) {
+-            bytes += 1;
++        while ((value & ~0x7f) != 0) {
++            bytes++;
+             value >>>= 7;
+         }
+         return bytes;
+@@ -417,8 +417,8 @@ public final class ByteUtils {
+     public static int sizeOfVarlong(long value) {
+         long v = (value << 1) ^ (value >> 63);
+         int bytes = 1;
+-        while ((v & 0xffffffffffffff80L) != 0L) {
+-            bytes += 1;
++        while ((v & ~0x7fL) != 0) {
++            bytes++;
+             v >>>= 7;
+         }
+         return bytes;

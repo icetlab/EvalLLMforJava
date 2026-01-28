@@ -1,0 +1,101 @@
+diff --git a/common/src/main/java/io/netty/util/Recycler.java b/common/src/main/java/io/netty/util/Recycler.java
+index dd7b2d73be..d3ea2b7d8b 100644
+--- a/common/src/main/java/io/netty/util/Recycler.java
++++ b/common/src/main/java/io/netty/util/Recycler.java
+@@ -248,9 +248,15 @@ public abstract class Recycler<T> {
+         }
+ 
+         void toAvailable() {
+-            int prev = STATE_UPDATER.getAndSet(this, STATE_AVAILABLE);
+-            if (prev == STATE_AVAILABLE) {
+-                throw new IllegalStateException("Object has been recycled already.");
++            // Use CAS to avoid unnecessary full barrier of getAndSet
++            while (true) {
++                int current = state;
++                if (current == STATE_AVAILABLE) {
++                    throw new IllegalStateException("Object has been recycled already.");
++                }
++                if (STATE_UPDATER.compareAndSet(this, current, STATE_AVAILABLE)) {
++                    break;
++                }
+             }
+         }
+     }
+@@ -292,10 +298,13 @@ public abstract class Recycler<T> {
+         }
+ 
+         DefaultHandle<T> newHandle() {
+-            if (++ratioCounter >= ratioInterval) {
++            // Avoid integer overflow and use more efficient increment
++            int current = ratioCounter + 1;
++            if (current >= ratioInterval) {
+                 ratioCounter = 0;
+                 return new DefaultHandle<T>(this);
+             }
++            ratioCounter = current;
+             return null;
+         }
+     }
+@@ -325,36 +334,48 @@ public abstract class Recycler<T> {
+         }
+ 
+         @Override
+-        public synchronized boolean offer(T e) {
+-            if (deque.size() == maxCapacity) {
+-                return false;
++        public boolean offer(T e) {
++            synchronized (this) {
++                if (deque.size() == maxCapacity) {
++                    return false;
++                }
++                return deque.offer(e);
+             }
+-            return deque.offer(e);
+         }
+ 
+         @Override
+-        public synchronized T poll() {
+-            return deque.poll();
++        public T poll() {
++            synchronized (this) {
++                return deque.poll();
++            }
+         }
+ 
+         @Override
+-        public synchronized T peek() {
+-            return deque.peek();
++        public T peek() {
++            synchronized (this) {
++                return deque.peek();
++            }
+         }
+ 
+         @Override
+-        public synchronized int size() {
+-            return deque.size();
++        public int size() {
++            synchronized (this) {
++                return deque.size();
++            }
+         }
+ 
+         @Override
+-        public synchronized void clear() {
+-            deque.clear();
++        public void clear() {
++            synchronized (this) {
++                deque.clear();
++            }
+         }
+ 
+         @Override
+-        public synchronized boolean isEmpty() {
+-            return deque.isEmpty();
++        public boolean isEmpty() {
++            synchronized (this) {
++                return deque.isEmpty();
++            }
+         }
+ 
+         @Override

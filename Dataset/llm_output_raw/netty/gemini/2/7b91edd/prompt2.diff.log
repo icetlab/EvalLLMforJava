@@ -1,0 +1,11 @@
+The overall improvement is to replace an inefficient byte-shifting mechanism within `NetUtil.getIPv6ByName()` with a more performant approach. The original code used nested loops to shift array elements one by one when handling compressed IPv6 addresses. This is replaced by `System.arraycopy` to move a block of bytes at once and `java.util.Arrays.fill` to zero out the appropriate segment of the byte array, which significantly improves performance for parsing compressed IPv6 addresses.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/NetUtil.java",
+    "search": "        i = currentIndex + compressLength;\n        if (needsShift || i >= bytes.length) {\n            // Right shift array\n            if (i >= bytes.length) {\n                ++compressBegin;\n            }\n            for (i = currentIndex; i < bytes.length; ++i) {\n                for (begin = bytes.length - 1; begin >= compressBegin; --begin) {\n                    bytes[begin] = bytes[begin - 1];\n                }\n                bytes[begin] = 0;\n                ++compressBegin;\n            }\n        } else {\n            // Selectively move elements\n            for (i = 0; i < compressLength; ++i) {\n                begin = i + compressBegin;\n                currentIndex = begin + compressLength;\n                if (currentIndex < bytes.length) {\n                    bytes[currentIndex] = bytes[begin];\n                    bytes[begin] = 0;\n                } else {\n                    break;\n                }\n            }\n        }",
+    "replace": "        if (compressLength > 0) {\n            final int bytesToMove = currentIndex - compressBegin;\n            System.arraycopy(bytes, compressBegin, bytes, bytes.length - bytesToMove, bytesToMove);\n            java.util.Arrays.fill(bytes, compressBegin, bytes.length - bytesToMove, (byte) 0);\n        }"
+  }
+]
+```

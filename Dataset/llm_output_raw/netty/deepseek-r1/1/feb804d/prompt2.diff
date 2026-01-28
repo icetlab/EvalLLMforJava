@@ -1,0 +1,63 @@
+diff --git a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+index c132aa5b20..c3a8972aa5 100644
+--- a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
++++ b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+@@ -249,16 +249,11 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
+             scheduledTaskQueue().add(task.setId(nextTaskId++));
+         } else {
+             final long deadlineNanos = task.deadlineNanos();
+-            final Runnable addToQueue = new Runnable() {
+-                @Override
+-                public void run() {
+-                    scheduledTaskQueue().add(task.setId(nextTaskId++));
+-                }
+-            };
++            task.setEnqueueMode(true);
+             if (beforeScheduledTaskSubmitted(deadlineNanos)) {
+-                execute(addToQueue);
++                execute(task);
+             } else {
+-                lazyExecute(addToQueue);
++                lazyExecute(task);
+                 // Second hook after scheduling to facilitate race-avoidance
+                 if (afterScheduledTaskSubmitted(deadlineNanos)) {
+                     execute(WAKEUP_TASK);
+diff --git a/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java b/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
+index 5ffe824119..bdae7d1caa 100644
+--- a/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
++++ b/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
+@@ -50,6 +50,7 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
+     private final long periodNanos;
+ 
+     private int queueIndex = INDEX_NOT_IN_QUEUE;
++    private boolean enqueueMode;
+ 
+     ScheduledFutureTask(AbstractScheduledEventExecutor executor,
+             Runnable runnable, long nanoTime) {
+@@ -95,6 +96,10 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
+         return this;
+     }
+ 
++    void setEnqueueMode(boolean enqueueMode) {
++        this.enqueueMode = enqueueMode;
++    }
++
+     @Override
+     protected EventExecutor executor() {
+         return super.executor();
+@@ -144,6 +149,15 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
+     @Override
+     public void run() {
+         assert executor().inEventLoop();
++        if (enqueueMode) {
++            // This task is being run only to add itself to the scheduled task queue
++            enqueueMode = false;
++            if (!isCancelled()) {
++                AbstractScheduledEventExecutor executor = (AbstractScheduledEventExecutor) executor();
++                executor.scheduledTaskQueue().add(this.setId(executor.nextTaskId++));
++            }
++            return;
++        }
+         try {
+             if (periodNanos == 0) {
+                 if (setUncancellableInternal()) {

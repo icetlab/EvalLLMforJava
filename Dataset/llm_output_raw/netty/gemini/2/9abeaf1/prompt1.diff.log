@@ -1,0 +1,11 @@
+My optimization focuses on the `epollWait` method within the `EpollEventLoop`, which is a critical hot path. The original implementation for calculating the timeout for `epoll_wait` involved several arithmetic operations, including multiple `min` calls, division, multiplication, and subtraction. I've simplified this logic by pre-calculating seconds and nanoseconds from the total delay. This new approach uses a more direct calculation, reducing the number of operations and comparisons. This change maintains the correctness of handling large timeout values (up to `Long.MAX_VALUE`) and negative delays (for overdue tasks) while improving performance by making the timeout calculation more efficient.
+
+```json
+[
+  {
+    "filepath": "../netty/transport-native-epoll/src/main/java/io/netty/channel/epoll/EpollEventLoop.java",
+    "search": "            long totalDelay = delayNanos(System.nanoTime());\n            prevDeadlineNanos = curDeadlineNanos;\n            delaySeconds = (int) min(totalDelay / 1000000000L, Integer.MAX_VALUE);\n            delayNanos = (int) min(totalDelay - delaySeconds * 1000000000L, MAX_SCHEDULED_TIMERFD_NS);",
+    "replace": "            long totalDelay = delayNanos(System.nanoTime());\n            prevDeadlineNanos = curDeadlineNanos;\n            long secs = totalDelay / 1000000000L;\n            if (secs > Integer.MAX_VALUE) {\n                delaySeconds = Integer.MAX_VALUE;\n                delayNanos = (int) MAX_SCHEDULED_TIMERFD_NS;\n            } else {\n                delaySeconds = (int) secs;\n                delayNanos = (int) (totalDelay - secs * 1000000000L);\n            }"
+  }
+]
+```

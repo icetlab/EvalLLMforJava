@@ -1,0 +1,45 @@
+diff --git a/common/src/main/java/io/netty/util/NetUtil.java b/common/src/main/java/io/netty/util/NetUtil.java
+index fbe09ea676..c23c11fe40 100644
+--- a/common/src/main/java/io/netty/util/NetUtil.java
++++ b/common/src/main/java/io/netty/util/NetUtil.java
+@@ -728,6 +728,7 @@ public final class NetUtil {
+                         currentIndex + 1 >= bytes.length) {
+                     return null;
+                 }
++                // Precompute shift: (IPV6_MAX_CHAR_BETWEEN_SEPARATOR - (i - begin)) * 4
+                 value <<= (IPV6_MAX_CHAR_BETWEEN_SEPARATOR - (i - begin)) << 2;
+ 
+                 if (compressLength > 0) {
+@@ -767,14 +768,15 @@ public final class NetUtil {
+                             // We also parse pure IPv4 addresses as IPv4-Mapped for ease of use.
+                             ((!ipv4Mapped || currentIndex != 0 && !isValidIPv4Mapped(bytes, currentIndex,
+                                                                                      compressBegin, compressLength)) ||
+-                                (tmp == 3 && (!isValidNumericChar(ip.charAt(i - 1)) ||
+-                                              !isValidNumericChar(ip.charAt(i - 2)) ||
+-                                              !isValidNumericChar(ip.charAt(i - 3))) ||
+-                                 tmp == 2 && (!isValidNumericChar(ip.charAt(i - 1)) ||
+-                                              !isValidNumericChar(ip.charAt(i - 2))) ||
+-                                 tmp == 1 && !isValidNumericChar(ip.charAt(i - 1))))) {
++                                (tmp == 3 && (!(ip.charAt(i - 1) >= '0' && ip.charAt(i - 1) <= '9') ||
++                                              !(ip.charAt(i - 2) >= '0' && ip.charAt(i - 2) <= '9') ||
++                                              !(ip.charAt(i - 3) >= '0' && ip.charAt(i - 3) <= '9')) ||
++                                 tmp == 2 && (!(ip.charAt(i - 1) >= '0' && ip.charAt(i - 1) <= '9') ||
++                                              !(ip.charAt(i - 2) >= '0' && ip.charAt(i - 2) <= '9')) ||
++                                 tmp == 1 && !(ip.charAt(i - 1) >= '0' && ip.charAt(i - 1) <= '9')))) {
+                     return null;
+                 }
++                // Precompute shift: (IPV4_MAX_CHAR_BETWEEN_SEPARATOR - tmp) * 4
+                 value <<= (IPV4_MAX_CHAR_BETWEEN_SEPARATOR - tmp) << 2;
+ 
+                 // The value integer holds at most 3 bytes from right (most significant) to left (least significant).
+@@ -789,7 +791,9 @@ public final class NetUtil {
+                 begin = -1;
+                 break;
+             default:
+-                if (!isValidHexChar(c) || (ipv4Separators > 0 && !isValidNumericChar(c))) {
++                // Inlined isValidHexChar and isValidNumericChar for performance
++                if (!(c >= '0' && c <= '9' || c >= 'A' && c <= 'F' || c >= 'a' && c <= 'f') ||
++                    (ipv4Separators > 0 && !(c >= '0' && c <= '9'))) {
+                     return null;
+                 }
+                 if (begin < 0) {

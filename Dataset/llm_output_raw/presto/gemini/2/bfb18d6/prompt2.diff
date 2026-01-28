@@ -1,0 +1,56 @@
+diff --git a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+index cff4f39085..3138dfcbc1 100644
+--- a/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
++++ b/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java
+@@ -1040,28 +1040,40 @@ public final class GeoFunctions
+     @SqlType(GEOMETRY_TYPE_NAME)
+     public static Slice stIntersection(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)
+     {
+-        if (deserializeType(left) == GeometrySerializationType.ENVELOPE && deserializeType(right) == GeometrySerializationType.ENVELOPE) {
+         Envelope leftEnvelope = deserializeEnvelope(left);
++        if (leftEnvelope.isEmpty()) {
++            return left;
++        }
+         Envelope rightEnvelope = deserializeEnvelope(right);
++        if (rightEnvelope.isEmpty()) {
++            return right;
++        }
+ 
+-            // Envelope#intersect updates leftEnvelope to the intersection of the two envelopes
+-            if (!leftEnvelope.intersect(rightEnvelope)) {
++        Envelope intersectionEnvelope = new Envelope();
++        leftEnvelope.copyTo(intersectionEnvelope);
++        if (!intersectionEnvelope.intersect(rightEnvelope)) {
++            // For disjoint envelopes, the intersection is empty.
++            // For two envelopes, it's an empty polygon.
++            if (deserializeType(left) == GeometrySerializationType.ENVELOPE && deserializeType(right) == GeometrySerializationType.ENVELOPE) {
+                 return EMPTY_POLYGON;
+             }
++            // For other types, we have to fall back to the expensive intersection to get the correct empty type.
++        }
+ 
+-            Envelope intersection = leftEnvelope;
+-            if (intersection.getXMin() == intersection.getXMax()) {
+-                if (intersection.getYMin() == intersection.getYMax()) {
+-                    return EsriGeometrySerde.serialize(createFromEsriGeometry(new Point(intersection.getXMin(), intersection.getXMax()), null));
++        if (deserializeType(left) == GeometrySerializationType.ENVELOPE && deserializeType(right) == GeometrySerializationType.ENVELOPE) {
++            // We have already computed the intersection envelope.
++            if (intersectionEnvelope.getXMin() == intersectionEnvelope.getXMax()) {
++                if (intersectionEnvelope.getYMin() == intersectionEnvelope.getYMax()) {
++                    return EsriGeometrySerde.serialize(createFromEsriGeometry(new Point(intersectionEnvelope.getXMin(), intersectionEnvelope.getXMax()), null));
+                 }
+-                return EsriGeometrySerde.serialize(createFromEsriGeometry(new Polyline(new Point(intersection.getXMin(), intersection.getYMin()), new Point(intersection.getXMin(), intersection.getYMax())), null));
++                return EsriGeometrySerde.serialize(createFromEsriGeometry(new Polyline(new Point(intersectionEnvelope.getXMin(), intersectionEnvelope.getYMin()), new Point(intersectionEnvelope.getXMin(), intersectionEnvelope.getYMax())), null));
+             }
+ 
+-            if (intersection.getYMin() == intersection.getYMax()) {
+-                return EsriGeometrySerde.serialize(createFromEsriGeometry(new Polyline(new Point(intersection.getXMin(), intersection.getYMin()), new Point(intersection.getXMax(), intersection.getYMin())), null));
++            if (intersectionEnvelope.getYMin() == intersectionEnvelope.getYMax()) {
++                return EsriGeometrySerde.serialize(createFromEsriGeometry(new Polyline(new Point(intersectionEnvelope.getXMin(), intersectionEnvelope.getYMin()), new Point(intersectionEnvelope.getXMax(), intersectionEnvelope.getYMin())), null));
+             }
+ 
+-            return EsriGeometrySerde.serialize(intersection);
++            return EsriGeometrySerde.serialize(intersectionEnvelope);
+         }
+ 
+         OGCGeometry leftGeometry = EsriGeometrySerde.deserialize(left);

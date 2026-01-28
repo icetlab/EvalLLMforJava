@@ -1,0 +1,21 @@
+I’ve replaced the ByteBuffer/CharBuffer‐based percent‐decoding in decodeComponent with a simple byte[] buffer and direct String decoding to avoid the costly NIO allocations and CharsetDecoder use.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java",
+    "search": "        // Each encoded byte takes 3 characters (e.g. \"%20\")\n        int decodedCapacity = (toExcluded - firstEscaped) / 3;\n        ByteBuffer byteBuf = ByteBuffer.allocate(decodedCapacity);\n        CharBuffer charBuf = CharBuffer.allocate(decodedCapacity);\n\n        StringBuilder strBuf = new StringBuilder(len);\n        strBuf.append(s, from, firstEscaped);",
+    "replace": "        // Each encoded byte takes 3 characters (e.g. \"%20\")\n        int decodedCapacity = (toExcluded - firstEscaped) / 3;\n        byte[] byteBuf = new byte[decodedCapacity];\n        int byteBufPos;\n\n        StringBuilder strBuf = new StringBuilder(len);\n        strBuf.append(s, from, firstEscaped);"
+  },
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java",
+    "search": "            byteBuf.clear();",
+    "replace": "            byteBufPos = 0;"
+  },
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java",
+    "search": "            byteBuf.flip();\n            charBuf.clear();\n            CoderResult result = decoder.reset().decode(byteBuf, charBuf, true);\n            try {\n                if (!result.isUnderflow()) {\n                    result.throwException();\n                }\n                result = decoder.flush(charBuf);\n                if (!result.isUnderflow()) {\n                    result.throwException();\n                }\n            } catch (CharacterCodingException ex) {\n                throw new IllegalStateException(ex);\n            }\n            strBuf.append(charBuf.flip());",
+    "replace": "            // decode accumulated bytes\n            strBuf.append(new String(byteBuf, 0, byteBufPos, charset));"
+  }
+]
+```

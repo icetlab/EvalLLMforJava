@@ -1,0 +1,32 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java b/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java
+index 979fc2cb80..fc2b2875d4 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java
+@@ -160,6 +160,8 @@ public class PageProcessor
+         private boolean lastComputeYielded;
+         private int lastComputeBatchSize;
+         private Work<List<Block>> pageProjectWork;
++        // reused across batches to avoid per-batch allocations
++        private final Block[] blocks;
+ 
+         private ProjectSelectedPositions(SqlFunctionProperties properties, DriverYieldSignal yieldSignal, LocalMemoryContext memoryContext, Page page, SelectedPositions selectedPositions)
+         {
+@@ -171,6 +173,8 @@ public class PageProcessor
+             this.memoryContext = memoryContext;
+             this.selectedPositions = selectedPositions;
+             this.previouslyComputedResults = new Block[outputCount];
++            // allocate the reusable blocks array once
++            this.blocks = new Block[outputCount];
+         }
+ 
+         @Override
+@@ -282,7 +286,8 @@ public class PageProcessor
+ 
+         private ProcessBatchResult processBatch(int batchSize)
+         {
+-            Block[] blocks = new Block[outputCount];
++            // reuse the pre-allocated blocks array to reduce allocations
++                    Arrays.fill(blocks, null);
+ 
+             int pageSize = 0;
+             SelectedPositions positionsBatch = selectedPositions.subRange(0, batchSize);

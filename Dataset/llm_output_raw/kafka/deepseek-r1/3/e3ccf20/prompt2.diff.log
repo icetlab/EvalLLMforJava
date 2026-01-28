@@ -1,0 +1,17 @@
+## Improvement Intent
+
+The performance issue is in the `matchingAcls` method where Scala's `Set ++` operation is used to combine multiple ACL sets. When the right-hand set has many entries (100+), this operation becomes slow due to iterating through all entries and calculating hash codes. Since `authorize` is called for every request to the broker, this performance issue is critical.
+
+The solution replaces the inefficient `prefixed ++ wildcard ++ literal` chain with a single `mutable.HashSet` that accumulates all ACLs, then converts to an immutable Set. This avoids the repeated hash code calculations and intermediate Set creations.
+
+## Changes
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  private def matchingAcls(resourceType: ResourceType, resourceName: String): Set[AclEntry] = {\n    inReadLock(lock) {\n      val wildcard = aclCache.get(new ResourcePattern(resourceType, ResourcePattern.WILDCARD_RESOURCE, PatternType.LITERAL))\n        .map(_.acls)\n        .getOrElse(Set.empty)\n\n      val literal = aclCache.get(new ResourcePattern(resourceType, resourceName, PatternType.LITERAL))\n        .map(_.acls)\n        .getOrElse(Set.empty)\n\n      val prefixed = aclCache\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .filterKeys(resource => resourceName.startsWith(resource.name))\n        .values\n        .flatMap { _.acls }\n        .toSet\n\n      prefixed ++ wildcard ++ literal\n    }\n  }",
+    "replace": "  private def matchingAcls(resourceType: ResourceType, resourceName: String): Set[AclEntry] = {\n    inReadLock(lock) {\n      val wildcard = aclCache.get(new ResourcePattern(resourceType, ResourcePattern.WILDCARD_RESOURCE, PatternType.LITERAL))\n        .map(_.acls)\n        .getOrElse(Set.empty)\n\n      val literal = aclCache.get(new ResourcePattern(resourceType, resourceName, PatternType.LITERAL))\n        .map(_.acls)\n        .getOrElse(Set.empty)\n\n      val prefixed = aclCache\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .filterKeys(resource => resourceName.startsWith(resource.name))\n        .values\n        .flatMap { _.acls }\n        .toSet\n\n      // Use mutable HashSet for efficient accumulation, then convert to immutable\n      val result = new mutable.HashSet[AclEntry]\n      result.sizeHint(prefixed.size + wildcard.size + literal.size)\n      result ++= prefixed\n      result ++= wildcard\n      result ++= literal\n      result.toSet\n    }\n  }"
+  }
+]
+```

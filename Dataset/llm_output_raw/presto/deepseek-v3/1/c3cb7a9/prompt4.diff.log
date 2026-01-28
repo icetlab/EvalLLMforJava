@@ -1,0 +1,48 @@
+## Explanation
+
+The performance issue is to optimize the `findEndPosition` method in `WindowOperator.java`. This method uses a binary search to find the end position of a group where all elements are equal according to a comparator. The current implementation can be optimized by:
+
+1. **Reducing the number of comparisons**: The binary search performs comparisons at each step, which can be expensive. We can add an early exit for the common case where the entire range is the same group.
+2. **Using a linear scan for small ranges**: For small ranges, a linear scan might be more efficient due to lower overhead.
+3. **Optimizing the loop condition**: The current loop condition `while (left + 1 < right)` can be adjusted to reduce iterations.
+
+However, note that the method is static and used in two contexts: `findGroupEnd(Page, PagesHashStrategy, int)` and `findGroupEnd(PagesIndex, PagesHashStrategy, int)`. The comparator is a `BiPredicate<Integer, Integer>` that checks equality between two positions.
+
+Given the constraints, we can optimize by:
+- Adding a check at the start: if the last position equals the start, return immediately (entire range is one group).
+- Using a linear scan for small ranges (e.g., less than 10 elements) because binary search overhead isn't justified.
+- Adjusting the binary search to reduce comparisons.
+
+But note: the method is called with `startPosition` and `endPosition` where `endPosition` is the exclusive upper bound. The group is defined by equality with the `startPosition`. The binary search finds the first position where the element is not equal to the start.
+
+Let's analyze the current algorithm:
+- It maintains `left` as the last known equal position and `right` as the first known unequal position.
+- Initially, `left = startPosition`, `right = endPosition`.
+- It terminates when `left + 1 == right`, returning `right`.
+
+We can optimize by:
+1. First, check if `startPosition` equals `endPosition - 1`. If so, return `endPosition` (single element group).
+2. Check if the entire range is equal by comparing `startPosition` with `endPosition - 1`. If equal, return `endPosition`.
+3. For small ranges, use linear scan.
+4. Otherwise, use binary search but with a more efficient loop.
+
+However, we must be careful not to break the existing functionality. The unit test `testFindEndPosition` provides specific cases we must pass.
+
+Let's implement the following changes:
+- Add a linear scan for small ranges (<= 16 elements) because it's simpler and has less overhead.
+- For larger ranges, use binary search but add an early check for the entire range being equal.
+- Also, add a check for the last element being equal to start to avoid binary search if the group extends to the end.
+
+We'll change the `findEndPosition` method accordingly.
+
+## Changes
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java",
+    "search": "    /**\n     * @param startPosition - inclusive\n     * @param endPosition   - exclusive\n     * @param comparator    - returns true if positions given as parameters are equal\n     * @return the end of the group position exclusive (the position the very next group starts)\n     */\n    @VisibleForTesting\n    static int findEndPosition(int startPosition, int endPosition, BiPredicate<Integer, Integer> comparator)\n    {\n        checkArgument(startPosition >= 0, \"startPosition must be greater or equal than zero: %s\", startPosition);\n        checkArgument(startPosition < endPosition, \"startPosition (%s) must be less than endPosition (%s)\", startPosition, endPosition);\n\n        int left = startPosition;\n        int right = endPosition;\n\n        while (left + 1 < right) {\n            int middle = (left + right) >>> 1;\n\n            if (comparator.test(startPosition, middle)) {\n                left = middle;\n            }\n            else {\n                right = middle;\n            }\n        }\n\n        return right;\n    }",
+    "replace": "    /**\n     * @param startPosition - inclusive\n     * @param endPosition   - exclusive\n     * @param comparator    - returns true if positions given as parameters are equal\n     * @return the end of the group position exclusive (the position the very next group starts)\n     */\n    @VisibleForTesting\n    static int findEndPosition(int startPosition, int endPosition, BiPredicate<Integer, Integer> comparator)\n    {\n        checkArgument(startPosition >= 0, \"startPosition must be greater or equal than zero: %s\", startPosition);\n        checkArgument(startPosition < endPosition, \"startPosition (%s) must be less than endPosition (%s)\", startPosition, endPosition);\n\n        // If the range is small, use linear scan for better performance\n        if (endPosition - startPosition <= 16) {\n            for (int i = startPosition + 1; i < endPosition; i++) {\n                if (!comparator.test(startPosition, i)) {\n                    return i;\n                }\n            }\n            return endPosition;\n        }\n\n        // Check if the entire range is one group\n        if (comparator.test(startPosition, endPosition - 1)) {\n            return endPosition;\n        }\n\n        int left = startPosition;\n        int right = endPosition;\n\n        while (left + 1 < right) {\n            int middle = (left + right) >>> 1;\n\n            if (comparator.test(startPosition, middle)) {\n                left = middle;\n            }\n            else {\n                right = middle;\n            }\n        }\n\n        return right;\n    }"
+  }
+]
+```

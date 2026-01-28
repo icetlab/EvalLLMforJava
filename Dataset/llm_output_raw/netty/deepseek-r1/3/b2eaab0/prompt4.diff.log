@@ -1,0 +1,43 @@
+Looking at the performance issue related to HPACK header processing hotspots, I can see several methods in `PlatformDependent.java` that are relatively large and complex, which could prevent them from being inlined by the JIT compiler. The benchmark shows comparison operations are critical for HPACK header processing, so we should focus on simplifying methods related to equality checking and hashing.
+
+Here are the key issues:
+1. Methods like `hashCodeAscii(CharSequence)` have complex switch statements that generate large bytecode
+2. The `hashCodeAsciiCompute` and sanitization methods for `CharSequence` are duplicated logic
+3. Several safe methods (`getLongSafe`, `getIntSafe`, `getShortSafe`) could be simplified
+
+Let me provide targeted improvements to shrink these methods:
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "    private static long getLongSafe(byte[] bytes, int offset) {\n        if (BIG_ENDIAN_NATIVE_ORDER) {\n            return (long) bytes[offset] << 56 |\n                    ((long) bytes[offset + 1] & 0xff) << 48 |\n                    ((long) bytes[offset + 2] & 0xff) << 40 |\n                    ((long) bytes[offset + 3] & 0xff) << 32 |\n                    ((long) bytes[offset + 4] & 0xff) << 24 |\n                    ((long) bytes[offset + 5] & 0xff) << 16 |\n                    ((long) bytes[offset + 6] & 0xff) <<  8 |\n                    (long) bytes[offset + 7] & 0xff;\n        }\n        return (long) bytes[offset] & 0xff |\n                ((long) bytes[offset + 1] & 0xff) << 8 |\n                ((long) bytes[offset + 2] & 0xff) << 16 |\n                ((long) bytes[offset + 3] & 0xff) << 24 |\n                ((long) bytes[offset + 4] & 0xff) << 32 |\n                ((long) bytes[offset + 5] & 0xff) << 40 |\n                ((long) bytes[offset + 6] & 0xff) << 48 |\n                (long) bytes[offset + 7] << 56;\n    }",
+    "replace": "    private static long getLongSafe(byte[] bytes, int offset) {\n        long result = 0;\n        if (BIG_ENDIAN_NATIVE_ORDER) {\n            for (int i = 0; i < 8; i++) {\n                result |= ((long) bytes[offset + i] & 0xffL) << (56 - (i << 3));\n            }\n        } else {\n            for (int i = 0; i < 8; i++) {\n                result |= ((long) bytes[offset + i] & 0xffL) << (i << 3);\n            }\n        }\n        return result;\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "    private static int getIntSafe(byte[] bytes, int offset) {\n        if (BIG_ENDIAN_NATIVE_ORDER) {\n            return bytes[offset] << 24 |\n                    (bytes[offset + 1] & 0xff) << 16 |\n                    (bytes[offset + 2] & 0xff) << 8 |\n                    bytes[offset + 3] & 0xff;\n        }\n        return bytes[offset] & 0xff |\n                (bytes[offset + 1] & 0xff) << 8 |\n                (bytes[offset + 2] & 0xff) << 16 |\n                bytes[offset + 3] << 24;\n    }",
+    "replace": "    private static int getIntSafe(byte[] bytes, int offset) {\n        int result = 0;\n        if (BIG_ENDIAN_NATIVE_ORDER) {\n            for (int i = 0; i < 4; i++) {\n                result |= (bytes[offset + i] & 0xff) << (24 - (i << 3));\n            }\n        } else {\n            for (int i = 0; i < 4; i++) {\n                result |= (bytes[offset + i] & 0xff) << (i << 3);\n            }\n        }\n        return result;\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "    private static short getShortSafe(byte[] bytes, int offset) {\n        if (BIG_ENDIAN_NATIVE_ORDER) {\n            return (short) (bytes[offset] << 8 | (bytes[offset + 1] & 0xff));\n        }\n        return (short) (bytes[offset] & 0xff | (bytes[offset + 1] << 8));\n    }",
+    "replace": "    private static short getShortSafe(byte[] bytes, int offset) {\n        if (BIG_ENDIAN_NATIVE_ORDER) {\n            return (short) ((bytes[offset] & 0xff) << 8 | (bytes[offset + 1] & 0xff));\n        }\n        return (short) ((bytes[offset] & 0xff) | (bytes[offset + 1] & 0xff) << 8);\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "    /**\n     * Identical to {@link PlatformDependent0#hashCodeAsciiCompute(long, int)} but for {@link CharSequence}.\n     */\n    private static int hashCodeAsciiCompute(CharSequence value, int offset, int hash) {\n        if (BIG_ENDIAN_NATIVE_ORDER) {\n            return hash * HASH_CODE_C1 +\n                    // Low order int\n                    hashCodeAsciiSanitizeInt(value, offset + 4) * HASH_CODE_C2 +\n                    // High order int\n                    hashCodeAsciiSanitizeInt(value, offset);\n        }\n        return hash * HASH_CODE_C1 +\n                // Low order int\n                hashCodeAsciiSanitizeInt(value, offset) * HASH_CODE_C2 +\n                // High order int\n                hashCodeAsciiSanitizeInt(value, offset + 4);\n    }",
+    "replace": "    /**\n     * Identical to {@link PlatformDependent0#hashCodeAsciiCompute(long, int)} but for {@link CharSequence}.\n     */\n    private static int hashCodeAsciiCompute(CharSequence value, int offset, int hash) {\n        long word = 0;\n        // Build 64-bit word from 8 chars\n        for (int i = 0; i < 8; i++) {\n            word |= ((long) value.charAt(offset + i) & 0xffL) << (i << 3);\n        }\n        // Use same computation as PlatformDependent0.hashCodeAsciiCompute\n        return hash * HASH_CODE_C1 +\n                // Low order int\n                hashCodeAsciiSanitize((int) word) * HASH_CODE_C2 +\n                // High order int\n                (int) ((word & 0x1f1f1f1f00000000L) >>> 32);\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "    /**\n     * Identical to {@link PlatformDependent0#hashCodeAsciiSanitize(int)} but for {@link CharSequence}.\n     */\n    private static int hashCodeAsciiSanitizeInt(CharSequence value, int offset) {\n        if (BIG_ENDIAN_NATIVE_ORDER) {\n            // mimic a unsafe.getInt call on a big endian machine\n            return (value.charAt(offset + 3) & 0x1f) |\n                   (value.charAt(offset + 2) & 0x1f) << 8 |\n                   (value.charAt(offset + 1) & 0x1f) << 16 |\n                   (value.charAt(offset) & 0x1f) << 24;\n        }\n        return (value.charAt(offset + 3) & 0x1f) << 24 |\n               (value.charAt(offset + 2) & 0x1f) << 16 |\n               (value.charAt(offset + 1) & 0x1f) << 8 |\n               (value.charAt(offset) & 0x1f);\n    }",
+    "replace": "    /**\n     * Identical to {@link PlatformDependent0#hashCodeAsciiSanitize(int)} but for {@link CharSequence}.\n     */\n    private static int hashCodeAsciiSanitizeInt(CharSequence value, int offset) {\n        int result = 0;\n        for (int i = 0; i < 4; i++) {\n            int shift = BIG_ENDIAN_NATIVE_ORDER ? (24 - (i << 3)) : (i << 3);\n            result |= (value.charAt(offset + i) & 0x1f) << shift;\n        }\n        return result;\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "    /**\n     * Identical to {@link PlatformDependent0#hashCodeAsciiSanitize(short)} but for {@link CharSequence}.\n     */\n    private static int hashCodeAsciiSanitizeShort(CharSequence value, int offset) {\n        if (BIG_ENDIAN_NATIVE_ORDER) {\n            // mimic a unsafe.getShort call on a big endian machine\n            return (value.charAt(offset + 1) & 0x1f) |\n                    (value.charAt(offset) & 0x1f) << 8;\n        }\n        return (value.charAt(offset + 1) & 0x1f) << 8 |\n                (value.charAt(offset) & 0x1f);\n    }",
+    "replace": "    /**\n     * Identical to {@link PlatformDependent0#hashCodeAsciiSanitize(short)} but for {@link CharSequence}.\n     */\n    private static int hashCodeAsciiSanitizeShort(CharSequence value, int offset) {\n        int c1 = value.charAt(offset) & 0x1f;\n        int c2 = value.charAt(offset + 1) & 0x1f;\n        return BIG_ENDIAN_NATIVE_ORDER ? (c1 << 8 | c2) : (c2 << 8 | c1);\n    }"
+  }
+]
+```

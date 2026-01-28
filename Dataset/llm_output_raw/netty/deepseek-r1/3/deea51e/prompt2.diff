@@ -1,0 +1,15 @@
+diff --git a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java
+index 301a2c51cf..cf30629d89 100644
+--- a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java
++++ b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java
+@@ -251,7 +251,9 @@ final class HpackEncoder {
+      */
+     private void encodeStringLiteral(ByteBuf out, CharSequence string) {
+         int huffmanLength = hpackHuffmanEncoder.getEncodedLength(string);
+-        if (huffmanLength < string.length()) {
++        // Only use Huffman encoding if it provides meaningful compression (at least 20% savings)
++        // This avoids CPU cost for minimal space gains
++        if (huffmanLength < string.length() * 0.8) {
+             encodeInteger(out, 0x80, 7, huffmanLength);
+             hpackHuffmanEncoder.encode(out, string);
+         } else {

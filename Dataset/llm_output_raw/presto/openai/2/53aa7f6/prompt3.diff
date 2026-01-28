@@ -1,0 +1,36 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java b/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java
+index bc8850802d..63c7e88fba 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java
+@@ -24,6 +24,7 @@ import com.google.common.collect.ImmutableList;
+ 
+ import java.lang.invoke.MethodHandle;
+ import java.util.List;
++import java.util.ArrayList;
+ 
+ import static com.google.common.base.MoreObjects.toStringHelper;
+ import static com.google.common.collect.ImmutableList.toImmutableList;
+@@ -45,7 +46,10 @@ public class GeneratedPageProjection
+         this.isDeterministic = isDeterministic;
+         this.inputChannels = requireNonNull(inputChannels, "inputChannels is null");
+         this.pageProjectionWorkFactory = requireNonNull(pageProjectionWorkFactory, "pageProjectionWorkFactory is null");
+-        this.blockBuilders = projections.stream().map(RowExpression::getType).map(type -> type.createBlockBuilder(null, 1)).collect(toImmutableList());
++        this.blockBuilders = new ArrayList<>(projections.size());
++        for (RowExpression expression : projections) {
++            this.blockBuilders.add(expression.getType().createBlockBuilder(null, 1));
++        }
+     }
+ 
+     @Override
+@@ -63,7 +67,10 @@ public class GeneratedPageProjection
+     @Override
+     public Work<List<Block>> project(SqlFunctionProperties properties, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions)
+     {
+-        blockBuilders = blockBuilders.stream().map(blockBuilder -> blockBuilder.newBlockBuilderLike(null)).collect(toImmutableList());
++        for (int i = 0; i < blockBuilders.size(); i++) {
++            BlockBuilder previous = blockBuilders.get(i);
++            blockBuilders.set(i, previous.newBlockBuilderLike(null));
++        }
+         try {
+             return (Work<List<Block>>) pageProjectionWorkFactory.invoke(blockBuilders, properties, page, selectedPositions);
+         }

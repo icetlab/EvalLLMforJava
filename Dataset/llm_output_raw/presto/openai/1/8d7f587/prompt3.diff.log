@@ -1,0 +1,11 @@
+I’ve optimized `getEnvelope` to reuse a single `Envelope` instance per thread via `ThreadLocal`, eliminating per-call allocations and reducing GC pressure during envelope computations. 
+
+```json
+[
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "    private static Envelope getEnvelope(OGCGeometry geometry)\n    {\n        Envelope envelope = new Envelope();\n        geometry.getEsriGeometry().queryEnvelope(envelope);\n        return envelope;\n    }",
+    "replace": "    private static final ThreadLocal<Envelope> QUERY_ENVELOPE = ThreadLocal.withInitial(Envelope::new);\n\n    private static Envelope getEnvelope(OGCGeometry geometry)\n    {\n        Envelope envelope = QUERY_ENVELOPE.get();\n        geometry.getEsriGeometry().queryEnvelope(envelope);\n        return envelope;\n    }"
+  }
+]
+```

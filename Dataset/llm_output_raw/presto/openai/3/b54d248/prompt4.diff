@@ -1,0 +1,26 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java b/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java
+index f9e7ee73b4..f546782dc6 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java
+@@ -24,12 +24,15 @@ public interface HashGenerator
+     default int getPartition(int partitionCount, int position, Page page)
+     {
+         long rawHash = hashPosition(position, page);
+-
+-        // clear the sign bit
+-        rawHash &= 0x7fff_ffff_ffff_ffffL;
+-
+-        int partition = (int) (rawHash % partitionCount);
+-
++        int partition;
++        // use fast bitmask when partitionCount is power of two
++        if ((partitionCount & (partitionCount - 1)) == 0) {
++            partition = (int) (rawHash & (partitionCount - 1));
++        }
++        else {
++            // unsigned remainder avoids clearing sign bit manually
++            partition = (int) Long.remainderUnsigned(rawHash, partitionCount);
++        }
+         checkState(partition >= 0 && partition < partitionCount);
+         return partition;
+     }

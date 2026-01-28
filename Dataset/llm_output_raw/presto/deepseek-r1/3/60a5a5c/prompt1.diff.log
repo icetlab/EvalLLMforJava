@@ -1,0 +1,27 @@
+Looking at the build error, the issue is that the search block I provided doesn't match the actual code in the file. The code has changed since the initial version. Let me examine the provided PagesSerde.java file and identify the correct code sections to modify.
+
+The compilation error shows that `slice.getUnderlyingSlice()` doesn't exist. I need to revert to the original working code and apply only safe optimizations.
+
+**Explanation:** I'll focus on two key performance improvements: 
+1. Reverting the problematic `getUnderlyingSlice()` call and restoring the simpler copy logic
+2. Improving the flush method in PartitionedOutputOperator by pre-allocating lists to avoid resizing during stream collection
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java",
+    "search": "if (spillCipher.isPresent()) {\n            slice = Slices.wrappedBuffer(spillCipher.get().encrypt(slice.toByteBuffer()));\n            markers = ENCRYPTED.set(markers);\n        }\n        else {\n            //  Encryption disabled, slice data is likely much smaller than its backing buffer\n            //  either because of compression or dynamic sizing of the initial output slice\n            slice = Slices.copyOf(slice);\n        }",
+    "replace": "if (spillCipher.isPresent()) {\n            slice = Slices.wrappedBuffer(spillCipher.get().encrypt(slice.toByteBuffer()));\n            markers = ENCRYPTED.set(markers);\n        }\n        else {\n            // Encryption disabled, slice data is likely much smaller than its backing buffer\n            // either because of compression or dynamic sizing of the initial output slice\n            slice = Slices.copyOf(slice);\n        }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java",
+    "search": "import java.util.List;\nimport java.util.Optional;\nimport java.util.OptionalInt;\nimport java.util.concurrent.atomic.AtomicLong;\nimport java.util.function.Function;",
+    "replace": "import java.util.ArrayList;\nimport java.util.List;\nimport java.util.Optional;\nimport java.util.OptionalInt;\nimport java.util.concurrent.atomic.AtomicLong;\nimport java.util.function.Function;"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java",
+    "search": "                    List<SerializedPage> serializedPages = splitPage(pagePartition, DEFAULT_MAX_PAGE_SIZE_IN_BYTES).stream()\n                            .map(serde::serialize)\n                            .collect(toImmutableList());",
+    "replace": "                    // Pre-allocate list with estimated size to avoid resizing during stream collection\n                    List<Page> splitPages = splitPage(pagePartition, DEFAULT_MAX_PAGE_SIZE_IN_BYTES);\n                    List<SerializedPage> serializedPages = new ArrayList<>(splitPages.size());\n                    for (Page splitPage : splitPages) {\n                        serializedPages.add(serde.serialize(splitPage));\n                    }"
+  }
+]
+```

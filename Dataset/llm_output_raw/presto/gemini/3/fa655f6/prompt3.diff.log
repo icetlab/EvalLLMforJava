@@ -1,0 +1,15 @@
+The performance of key lookups in `SingleMapBlock` can be improved by simplifying the calculation of `hashTableOffset` and `hashTableSize` within the various `seekKey` methods.
+
+The original code calculates these values using `offset / 2 * HASH_MULTIPLIER` and `positionCount / 2 * HASH_MULTIPLIER`. Given that `HASH_MULTIPLIER` is a constant with a value of `2`, and both `offset` and `positionCount` are guaranteed to be even numbers, these expressions can be simplified to just `offset` and `positionCount` respectively. This optimization removes two integer division and two multiplication operations from each key lookup, which can be significant in performance-critical code paths.
+
+I will apply this simplification to all `seekKey` and `seekKeyExact` methods in `SingleMapBlock.java`. Since the code snippet to be replaced is identical across all these methods, a single replacement rule can be applied globally within the file.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java",
+    "search": "        int hashTableOffset = offset / 2 * HASH_MULTIPLIER;\n        int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;",
+    "replace": "        // HASH_MULTIPLIER is 2 and offset and positionCount are always even.\n        int hashTableOffset = offset;\n        int hashTableSize = positionCount;"
+  }
+]
+```

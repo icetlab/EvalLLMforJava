@@ -1,0 +1,15 @@
+I need to fix the map_concat function to preserve the correct semantics where the second argument (rightMap) overwrites the first argument (leftMap). The issue is that my previous optimization changed the precedence order. I need to revert to processing rightMap first but keep the performance improvement of allocating TypedSet with the correct key count.
+
+The original code processes rightMap first, then leftMap (skipping duplicates). This gives rightMap precedence. The test expects `{true=10, false=20}` when concatenating `{false=20}` with `{true=10}`.
+
+The key performance improvement is to allocate TypedSet with `rightMap.getPositionCount() / 2` instead of `rightMap.getPositionCount()` since positions are key-value pairs.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapConcatFunction.java",
+    "search": "    @TypeParameter(\"K\")\n    @TypeParameter(\"V\")\n    @SqlType(\"map(K,V)\")\n    public static Block mapConcat(\n            @TypeParameter(\"K\") Type keyType,\n            @TypeParameter(\"V\") Type valueType,\n            @SqlType(\"map(K,V)\") Block leftMap,\n            @SqlType(\"map(K,V)\") Block rightMap)\n    {\n        TypedSet typedSet = new TypedSet(keyType, rightMap.getPositionCount());\n        BlockBuilder blockBuilder = new InterleavedBlockBuilder(ImmutableList.of(keyType, valueType), new BlockBuilderStatus(), leftMap.getPositionCount() + rightMap.getPositionCount());",
+    "replace": "    @TypeParameter(\"K\")\n    @TypeParameter(\"V\")\n    @SqlType(\"map(K,V)\")\n    public static Block mapConcat(\n            @TypeParameter(\"K\") Type keyType,\n            @TypeParameter(\"V\") Type valueType,\n            @SqlType(\"map(K,V)\") Block leftMap,\n            @SqlType(\"map(K,V)\") Block rightMap)\n    {\n        // Allocate TypedSet with the number of keys (not positions) for the right map\n        TypedSet typedSet = new TypedSet(keyType, rightMap.getPositionCount() / 2);\n        BlockBuilder blockBuilder = new InterleavedBlockBuilder(ImmutableList.of(keyType, valueType), new BlockBuilderStatus(), leftMap.getPositionCount() + rightMap.getPositionCount());"
+  }
+]
+```

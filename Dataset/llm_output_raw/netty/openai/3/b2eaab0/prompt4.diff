@@ -1,0 +1,42 @@
+diff --git a/common/src/main/java/io/netty/util/internal/PlatformDependent.java b/common/src/main/java/io/netty/util/internal/PlatformDependent.java
+index 0a70c36401..5c082eb061 100644
+--- a/common/src/main/java/io/netty/util/internal/PlatformDependent.java
++++ b/common/src/main/java/io/netty/util/internal/PlatformDependent.java
+@@ -69,6 +69,9 @@ public final class PlatformDependent {
+ 
+     private static final InternalLogger logger = InternalLoggerFactory.getInstance(PlatformDependent.class);
+ 
++    // Capture once whether we can use the unsafe+unaligned fast path for byte[] ops
++    private static final boolean USE_UNSAFE_EQUALS = io.netty.util.internal.PlatformDependent0.hasUnsafe() && unalignedAccess();
++
+     private static final Pattern MAX_DIRECT_MEMORY_SIZE_ARG_PATTERN = Pattern.compile(
+             "\\s*-XX:MaxDirectMemorySize\\s*=\\s*([0-9]+)\\s*([kKmMgG]?)\\s*$");
+ 
+@@ -683,9 +686,10 @@ public final class PlatformDependent {
+      * by the caller.
+      */
+     public static boolean equals(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {
+-        return !hasUnsafe() || !unalignedAccess() ?
+-                  equalsSafe(bytes1, startPos1, bytes2, startPos2, length) :
+-                  PlatformDependent0.equals(bytes1, startPos1, bytes2, startPos2, length);
++        if (USE_UNSAFE_EQUALS) {
++            return PlatformDependent0.equals(bytes1, startPos1, bytes2, startPos2, length);
++        }
++        return equalsSafe(bytes1, startPos1, bytes2, startPos2, length);
+     }
+ 
+     /**
+@@ -723,9 +727,10 @@ public final class PlatformDependent {
+      * @return {@code 0} if not equal. {@code 1} if equal.
+      */
+     public static int equalsConstantTime(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {
+-        return !hasUnsafe() || !unalignedAccess() ?
+-                  ConstantTimeUtils.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length) :
+-                  PlatformDependent0.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);
++        if (USE_UNSAFE_EQUALS) {
++            return PlatformDependent0.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);
++        }
++        return ConstantTimeUtils.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);
+     }
+ 
+     /**

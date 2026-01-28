@@ -1,0 +1,43 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java b/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java
+index bc8850802d..bbeaba8aa2 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java
+@@ -23,6 +23,7 @@ import com.facebook.presto.spi.relation.RowExpression;
+ import com.google.common.collect.ImmutableList;
+ 
+ import java.lang.invoke.MethodHandle;
++import java.util.ArrayList;
+ import java.util.List;
+ 
+ import static com.google.common.base.MoreObjects.toStringHelper;
+@@ -37,7 +38,7 @@ public class GeneratedPageProjection
+     private final InputChannels inputChannels;
+     private final MethodHandle pageProjectionWorkFactory;
+ 
+-    private List<BlockBuilder> blockBuilders;
++    private final List<BlockBuilder> templateBlockBuilders;
+ 
+     public GeneratedPageProjection(List<RowExpression> projections, boolean isDeterministic, InputChannels inputChannels, MethodHandle pageProjectionWorkFactory)
+     {
+@@ -45,7 +46,7 @@ public class GeneratedPageProjection
+         this.isDeterministic = isDeterministic;
+         this.inputChannels = requireNonNull(inputChannels, "inputChannels is null");
+         this.pageProjectionWorkFactory = requireNonNull(pageProjectionWorkFactory, "pageProjectionWorkFactory is null");
+-        this.blockBuilders = projections.stream().map(RowExpression::getType).map(type -> type.createBlockBuilder(null, 1)).collect(toImmutableList());
++        this.templateBlockBuilders = projections.stream().map(RowExpression::getType).map(type -> type.createBlockBuilder(null, 1)).collect(toImmutableList());
+     }
+ 
+     @Override
+@@ -63,7 +64,11 @@ public class GeneratedPageProjection
+     @Override
+     public Work<List<Block>> project(SqlFunctionProperties properties, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions)
+     {
+-        blockBuilders = blockBuilders.stream().map(blockBuilder -> blockBuilder.newBlockBuilderLike(null)).collect(toImmutableList());
++        List<BlockBuilder> blockBuilders = new ArrayList<>(templateBlockBuilders.size());
++        for (BlockBuilder blockBuilder : templateBlockBuilders) {
++            blockBuilders.add(blockBuilder.newBlockBuilderLike(null));
++        }
++
+         try {
+             return (Work<List<Block>>) pageProjectionWorkFactory.invoke(blockBuilders, properties, page, selectedPositions);
+         }

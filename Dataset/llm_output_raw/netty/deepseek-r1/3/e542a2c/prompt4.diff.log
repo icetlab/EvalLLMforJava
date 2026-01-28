@@ -1,0 +1,16 @@
+The performance issue is that `ensureAccessible()` performs a volatile read of the reference count on every ByteBuf operation. Since this is a best-effort check anyway (it can't perfectly prevent use-after-release due to race conditions), we can use a non-volatile read first and only do the volatile read as a fallback when we suspect the buffer might be released. This reduces memory barriers and allows the JIT compiler to optimize more aggressively, especially for method-chaining patterns and primitive operations that are frequently inlined.
+
+```json
+[
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "    /**\n     * Should be called by every method that tries to access the buffers content to check\n     * if the buffer was released before.\n     */\n    protected final void ensureAccessible() {\n        if (checkAccessible && refCnt() == 0) {\n            throw new IllegalReferenceCountException(0);\n        }\n    }",
+    "replace": "    /**\n     * Should be called by every method that tries to access the buffers content to check\n     * if the buffer was released before.\n     */\n    protected final void ensureAccessible() {\n        if (checkAccessible) {\n            // Try non-volatile read first to avoid volatile read penalty in hot paths.\n            // This is safe because:\n            // 1. If we read a non-zero value, the buffer hasn't been released (release sets refCnt to 0 with volatile write).\n            // 2. If we read 0, we must double-check with volatile read to avoid false positives from\n            //    thread-local cache inconsistencies or race conditions where the buffer was just released.\n            int refCnt = refCnt0();\n            if (refCnt == 0 && refCnt() == 0) {\n                throw new IllegalReferenceCountException(0);\n            }\n        }\n    }\n\n    /**\n     * Non-volatile read of reference count. Used as a fast-path in ensureAccessible().\n     * Default implementation does a volatile read for safety.\n     */\n    int refCnt0() {\n        return refCnt();\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java",
+    "search": "    private volatile int refCnt;\n\n    protected AbstractReferenceCountedByteBuf(int maxCapacity) {\n        super(maxCapacity);\n        refCntUpdater.set(this, 1);\n    }",
+    "replace": "    private volatile int refCnt;\n\n    protected AbstractReferenceCountedByteBuf(int maxCapacity) {\n        super(maxCapacity);\n        refCntUpdater.set(this, 1);\n    }\n\n    @Override\n    int refCnt0() {\n        // Plain read of volatile field - gives recent value without memory barrier\n        return refCnt;\n    }"
+  }
+]
+```

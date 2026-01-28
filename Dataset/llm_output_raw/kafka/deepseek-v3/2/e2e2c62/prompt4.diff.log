@@ -1,0 +1,81 @@
+## Explanation
+
+The performance issue is that the `matchingAcls` method uses `TreeMap.from/to` to filter prefixed ACLs, which becomes inefficient when there are many topics and prefix ACLs. The `TreeMap.from/to` range query returns many entries that don't actually match the resource name, requiring expensive string comparisons (`startsWith`) to filter them out. The fix is to optimize the prefixed ACL lookup by only iterating over relevant entries.
+
+The current implementation in `matchingAcls`:
+1. Uses `TreeMap.from` and `to` to get a range of prefixed resources
+2. Then applies `startsWith` to filter within that range
+
+The optimization:
+- For prefixed ACLs, we should directly iterate over only the prefixes that could match the resource
+- We can use the tree structure more efficiently by finding the first potential match and iterating until we pass beyond possible matches
+
+However, looking at the code, the actual issue is that `TreeMap.from/to` returns a large range when the resource name starts with common prefixes. We need to make the filtering more efficient by:
+1. Reducing the range size
+2. Making the `startsWith` check faster
+
+But actually, the real problem described is that we're doing `flatMap` over all entries in the range and then filtering with `startsWith`. We should instead use `takeWhile` to stop early when we know no more prefixes can match.
+
+Let's examine the current code more carefully:
+
+```scala
+val prefixed = aclCacheSnapshot
+  .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))
+  .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))
+  .flatMap { case (resource, acls) => if (resourceName.startsWith(resource.name)) acls.acls else Seq.empty }
+  .toBuffer
+```
+
+The issue is that `resourceName.take(1)` creates a very broad range. For example, if `resourceName = "foo-bar35_resource-95"`, then `take(1) = "f"`, so we get all prefixed resources starting from `"foo-bar35_resource-95"` to `"f"` (which is most of them in reverse order).
+
+Actually, looking at the benchmark, it seems the range is too broad. We need a better upper bound. For prefix matching, if we're looking for resources that match `resourceName`, we need prefixes where `resourceName.startsWith(prefix)`. So the upper bound should be the smallest string greater than `resourceName` that no prefix of `resourceName` could match.
+
+Actually, for prefix matching `resourceName.startsWith(prefix)`, the prefix must be ≤ `resourceName`. So we should look from `resourceName` downward, not upward. The current code seems backwards.
+
+Wait, let me re-examine: `TreeMap.from(x).to(y)` gets entries from `x` to `y` inclusive. With `ResourceOrdering` which sorts by name in reverse order, and we're going from `resourceName` to `resourceName.take(1)`, which for `"foo-bar35_resource-95"` to `"f"` gets almost all entries since `"f"` comes much earlier in reverse alphabetical order.
+
+Actually, the real fix should be to iterate only over prefixes that could match. Since prefixes must be ≤ the resource name (for `startsWith` to be true), we should iterate from the resource name downward until we find prefixes that don't match.
+
+Here's the optimized approach:
+1. Start from the exact resource name (as a prefix pattern)
+2. Iterate backward (since reverse alphabetical order) while `resourceName.startsWith(currentPrefix)`
+3. Stop when we find a prefix that doesn't match
+
+But actually, we need to handle the case where the prefix is shorter than the resource name. We should iterate over all possible prefixes of the resource name.
+
+Actually, let me think about this differently. For a resource name `"foo-bar"`, possible matching prefixes are: `"foo-bar"`, `"foo-ba"`, `"foo-b"`, `"foo-"`, `"foo"`, `"fo"`, `"f"`, `""`. But we only store actual prefixes that exist in the ACL cache.
+
+So the optimal algorithm would be to check each possible prefix of the resource name, from longest to shortest, and see if it exists in the cache. But checking each one requires a map lookup.
+
+Given the constraints, I think the best approach is to:
+1. Use `TreeMap.from` with the resource name as the start
+2. Use `takeWhile` to stop when we've passed all possible matching prefixes
+3. The stop condition is when the prefix name is no longer a prefix of the resource name
+
+Here's the fix:
+
+```scala
+val prefixed = aclCacheSnapshot
+  .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))
+  .takeWhile { case (resource, _) => 
+    resource.resourceType == resourceType && 
+    resource.patternType == PatternType.PREFIXED &&
+    resourceName.startsWith(resource.name)
+  }
+  .flatMap { case (resource, acls) => acls.acls }
+  .toBuffer
+```
+
+This will iterate only over prefixes that actually match, stopping as soon as we find a non-matching prefix.
+
+Now let's implement this change:
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "    val prefixed = aclCacheSnapshot\n      .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n      .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n      .flatMap { case (resource, acls) => if (resourceName.startsWith(resource.name)) acls.acls else Seq.empty }\n      .toBuffer",
+    "replace": "    val prefixed = aclCacheSnapshot\n      .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n      .takeWhile { case (resource, _) => \n        resource.resourceType == resourceType && \n        resource.patternType == PatternType.PREFIXED &&\n        resourceName.startsWith(resource.name)\n      }\n      .flatMap { case (resource, acls) => acls.acls }\n      .toBuffer"
+  }
+]
+```

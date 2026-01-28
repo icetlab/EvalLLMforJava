@@ -1,0 +1,32 @@
+Looking at the performance issue to optimize boolean reading for contiguous rows with no nulls and no filter, I can see two main areas for improvement:
+
+1. **ByteInputStream.next()** - The current implementation reads byte-by-byte which is inefficient for bulk operations
+2. **ByteSelectiveStreamReader.readNoFilter()** - When reading contiguous rows with no nulls, we can optimize by reading in bulk
+
+Here are the proposed changes:
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java",
+    "search": "    public byte next()\n            throws IOException\n    {\n        if (offset == length) {\n            readNextBlock();\n        }\n        return buffer[offset++];\n    }",
+    "replace": "    public byte next()\n            throws IOException\n    {\n        if (offset == length) {\n            readNextBlock();\n        }\n        return buffer[offset++];\n    }\n\n    public void nextBytes(byte[] output, int outputOffset, int length)\n            throws IOException\n    {\n        int remaining = length;\n        while (remaining > 0) {\n            if (offset == length) {\n                readNextBlock();\n            }\n            int chunk = Math.min(remaining, length - offset);\n            System.arraycopy(buffer, offset, output, outputOffset, chunk);\n            offset += chunk;\n            outputOffset += chunk;\n            remaining -= chunk;\n        }\n    }"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "    private int readNoFilter(int[] positions, int positionCount)\n            throws IOException\n    {\n        // filter == null implies outputRequired == true\n        int streamPosition = 0;\n        for (int i = 0; i < positionCount; i++) {\n            int position = positions[i];\n            if (position > streamPosition) {\n                skip(position - streamPosition);\n                streamPosition = position;\n            }\n\n            if (presentStream != null && !presentStream.nextBit()) {\n                nulls[i] = true;\n            }\n            else {\n                values[i] = dataStream.next();\n                if (presentStream != null) {\n                    nulls[i] = false;\n                }\n            }\n            streamPosition++;\n        }\n        outputPositionCount = positionCount;\n        return streamPosition;\n    }",
+    "replace": "    private int readNoFilter(int[] positions, int positionCount)\n            throws IOException\n    {\n        // filter == null implies outputRequired == true\n        int streamPosition = 0;\n        \n        // Optimize for contiguous rows with no nulls\n        if (presentStream == null && positionCount > 0) {\n            // Check if positions are contiguous\n            boolean isContiguous = true;\n            for (int i = 1; i < positionCount; i++) {\n                if (positions[i] != positions[i-1] + 1) {\n                    isContiguous = false;\n                    break;\n                }\n            }\n            \n            if (isContiguous) {\n                // We need to skip to the first position if we're not already there\n                if (positions[0] > streamPosition) {\n                    skip(positions[0] - streamPosition);\n                    streamPosition = positions[0];\n                }\n                \n                // Bulk read all values at once\n                dataStream.nextBytes(values, 0, positionCount);\n                outputPositionCount = positionCount;\n                return streamPosition + positionCount;\n            }\n        }\n        \n        // Fall back to original per-value reading for non-contiguous or with nulls\n        for (int i = 0; i < positionCount; i++) {\n            int position = positions[i];\n            if (position > streamPosition) {\n                skip(position - streamPosition);\n                streamPosition = position;\n            }\n\n            if (presentStream != null && !presentStream.nextBit()) {\n                nulls[i] = true;\n            }\n            else {\n                values[i] = dataStream.next();\n                if (presentStream != null) {\n                    nulls[i] = false;\n                }\n            }\n            streamPosition++;\n        }\n        outputPositionCount = positionCount;\n        return streamPosition;\n    }"
+  }
+]
+```
+
+**Explanation:**
+1. Added a new `nextBytes()` method to `ByteInputStream` that reads multiple bytes at once using `System.arraycopy()`, which is much more efficient for bulk operations.
+
+2. In `ByteSelectiveStreamReader.readNoFilter()`:
+   - Added an optimization path for when there's no nulls (`presentStream == null`) and positions are contiguous
+   - Checks if positions array represents contiguous rows (each position is exactly one more than the previous)
+   - If contiguous, uses bulk `nextBytes()` to read all values in one operation instead of calling `next()` for each position
+   - Falls back to original per-value reading for non-contiguous cases or when there are nulls
+
+This optimization should significantly improve performance when reading contiguous rows with no nulls, which is a common case in analytical queries.

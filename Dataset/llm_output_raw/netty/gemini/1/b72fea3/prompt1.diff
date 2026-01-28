@@ -1,0 +1,133 @@
+diff --git a/codec/src/main/java/io/netty/handler/codec/DateFormatter.java b/codec/src/main/java/io/netty/handler/codec/DateFormatter.java
+index 86df148500..26012310a8 100644
+--- a/codec/src/main/java/io/netty/handler/codec/DateFormatter.java
++++ b/codec/src/main/java/io/netty/handler/codec/DateFormatter.java
+@@ -261,10 +261,6 @@ public final class DateFormatter {
+         return false;
+     }
+ 
+-    private static boolean matchMonth(String month, CharSequence txt, int tokenStart) {
+-        return AsciiString.regionMatchesAscii(month, true, 0, txt, tokenStart, 3);
+-    }
+-
+     private boolean tryParseMonth(CharSequence txt, int tokenStart, int tokenEnd) {
+         int len = tokenEnd - tokenStart;
+ 
+@@ -272,34 +268,78 @@ public final class DateFormatter {
+             return false;
+         }
+ 
+-        if (matchMonth("Jan", txt, tokenStart)) {
++        char m1 = txt.charAt(tokenStart);
++        char m2 = txt.charAt(tokenStart + 1);
++        char m3 = txt.charAt(tokenStart + 2);
++
++        switch (m1 | 0x20) {
++            case 'j':
++                if ((m2 | 0x20) == 'a' && (m3 | 0x20) == 'n') {
+                     month = Calendar.JANUARY;
+-        } else if (matchMonth("Feb", txt, tokenStart)) {
++                } else if ((m2 | 0x20) == 'u' && (m3 | 0x20) == 'n') {
++                    month = Calendar.JUNE;
++                } else if ((m2 | 0x20) == 'u' && (m3 | 0x20) == 'l') {
++                    month = Calendar.JULY;
++                } else {
++                    return false;
++                }
++                break;
++            case 'f':
++                if ((m2 | 0x20) == 'e' && (m3 | 0x20) == 'b') {
+                     month = Calendar.FEBRUARY;
+-        } else if (matchMonth("Mar", txt, tokenStart)) {
++                } else {
++                    return false;
++                }
++                break;
++            case 'm':
++                if ((m2 | 0x20) == 'a' && (m3 | 0x20) == 'r') {
+                     month = Calendar.MARCH;
+-        } else if (matchMonth("Apr", txt, tokenStart)) {
+-            month = Calendar.APRIL;
+-        } else if (matchMonth("May", txt, tokenStart)) {
++                } else if ((m2 | 0x20) == 'a' && (m3 | 0x20) == 'y') {
+                     month = Calendar.MAY;
+-        } else if (matchMonth("Jun", txt, tokenStart)) {
+-            month = Calendar.JUNE;
+-        } else if (matchMonth("Jul", txt, tokenStart)) {
+-            month = Calendar.JULY;
+-        } else if (matchMonth("Aug", txt, tokenStart)) {
++                } else {
++                    return false;
++                }
++                break;
++            case 'a':
++                if ((m2 | 0x20) == 'p' && (m3 | 0x20) == 'r') {
++                    month = Calendar.APRIL;
++                } else if ((m2 | 0x20) == 'u' && (m3 | 0x20) == 'g') {
+                     month = Calendar.AUGUST;
+-        } else if (matchMonth("Sep", txt, tokenStart)) {
++                } else {
++                    return false;
++                }
++                break;
++            case 's':
++                if ((m2 | 0x20) == 'e' && (m3 | 0x20) == 'p') {
+                     month = Calendar.SEPTEMBER;
+-        } else if (matchMonth("Oct", txt, tokenStart)) {
++                } else {
++                    return false;
++                }
++                break;
++            case 'o':
++                if ((m2 | 0x20) == 'c' && (m3 | 0x20) == 't') {
+                     month = Calendar.OCTOBER;
+-        } else if (matchMonth("Nov", txt, tokenStart)) {
++                } else {
++                    return false;
++                }
++                break;
++            case 'n':
++                if ((m2 | 0x20) == 'o' && (m3 | 0x20) == 'v') {
+                     month = Calendar.NOVEMBER;
+-        } else if (matchMonth("Dec", txt, tokenStart)) {
++                } else {
++                    return false;
++                }
++                break;
++            case 'd':
++                if ((m2 | 0x20) == 'e' && (m3 | 0x20) == 'c') {
+                     month = Calendar.DECEMBER;
+                 } else {
+                     return false;
+                 }
+-
++                break;
++            default:
++                return false;
++        }
+         return true;
+     }
+ 
+@@ -387,7 +427,7 @@ public final class DateFormatter {
+         }
+ 
+         // terminate trailing token
+-        return tokenStart != -1 && parseToken(txt, tokenStart, txt.length());
++        return tokenStart != -1 && parseToken(txt, tokenStart, end);
+     }
+ 
+     private boolean normalizeAndValidate() {
+diff --git a/common/src/main/java/io/netty/util/AsciiString.java b/common/src/main/java/io/netty/util/AsciiString.java
+index f53746960a..19557e6716 100644
+--- a/common/src/main/java/io/netty/util/AsciiString.java
++++ b/common/src/main/java/io/netty/util/AsciiString.java
+@@ -1184,8 +1184,7 @@ public final class AsciiString implements CharSequence, Comparable<CharSequence>
+                             + length + ") <= srcLen(" + length() + ')');
+         }
+ 
+-        @SuppressWarnings("deprecation")
+-        final String str = new String(value, 0, start + offset, length);
++        final String str = new String(value, start + offset, length, CharsetUtil.ISO_8859_1);
+         return str;
+     }
+ 

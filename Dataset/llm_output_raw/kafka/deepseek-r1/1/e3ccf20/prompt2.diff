@@ -1,0 +1,19 @@
+diff --git a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+index 86f06981ff..a552d23a7c 100644
+--- a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
++++ b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+@@ -357,7 +357,13 @@ class AclAuthorizer extends Authorizer with Logging {
+         .flatMap { _.acls }
+         .toSet
+ 
+-      prefixed ++ wildcard ++ literal
++      // Use mutable HashSet for efficient accumulation, then convert to immutable
++      val result = new mutable.HashSet[AclEntry]
++      result.sizeHint(prefixed.size + wildcard.size + literal.size)
++      result ++= prefixed
++      result ++= wildcard
++      result ++= literal
++      result.toSet
+     }
+   }
+ 

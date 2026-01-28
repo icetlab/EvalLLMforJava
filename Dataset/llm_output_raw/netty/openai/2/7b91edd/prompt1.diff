@@ -1,0 +1,62 @@
+diff --git a/common/src/main/java/io/netty/util/NetUtil.java b/common/src/main/java/io/netty/util/NetUtil.java
+index fbe09ea676..7b5d002729 100644
+--- a/common/src/main/java/io/netty/util/NetUtil.java
++++ b/common/src/main/java/io/netty/util/NetUtil.java
+@@ -384,15 +384,16 @@ public final class NetUtil {
+      * Converts a 32-bit integer into an IPv4 address.
+      */
+     public static String intToIpAddress(int i) {
+-        StringBuilder buf = new StringBuilder(15);
+-        buf.append(i >> 24 & 0xff);
+-        buf.append('.');
+-        buf.append(i >> 16 & 0xff);
+-        buf.append('.');
+-        buf.append(i >> 8 & 0xff);
+-        buf.append('.');
+-        buf.append(i & 0xff);
+-        return buf.toString();
++        char[] buf = new char[15];
++        int pos = 0;
++        pos = appendDecimal((i >>> 24) & 0xff, buf, pos);
++        buf[pos++] = '.';
++        pos = appendDecimal((i >>> 16) & 0xff, buf, pos);
++        buf[pos++] = '.';
++        pos = appendDecimal((i >>> 8) & 0xff, buf, pos);
++        buf[pos++] = '.';
++        pos = appendDecimal(i & 0xff, buf, pos);
++        return new String(buf, 0, pos);
+     }
+ 
+     /**
+@@ -1110,4 +1111,31 @@ public final class NetUtil {
+     private NetUtil() {
+         // Unused
+     }
++
++    /**
++     * Append a decimal value (0-255) to a character buffer.
++     * @param value integer value to append
++     * @param buf character buffer
++     * @param pos starting position
++     * @return updated position after appending
++     */
++    private static int appendDecimal(int value, char[] buf, int pos) {
++        if (value < 10) {
++            buf[pos++] = (char) ('0' + value);
++        } else if (value < 100) {
++            int tens = value / 10;
++            int ones = value - tens * 10;
++            buf[pos++] = (char) ('0' + tens);
++            buf[pos++] = (char) ('0' + ones);
++        } else {
++            int hundreds = value / 100;
++            int rem = value - hundreds * 100;
++            int tens = rem / 10;
++            int ones = rem - tens * 10;
++            buf[pos++] = (char) ('0' + hundreds);
++            buf[pos++] = (char) ('0' + tens);
++            buf[pos++] = (char) ('0' + ones);
++        }
++        return pos;
++    }
+ }

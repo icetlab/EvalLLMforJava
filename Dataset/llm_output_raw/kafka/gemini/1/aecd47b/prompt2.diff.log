@@ -1,0 +1,23 @@
+I have analyzed the build failure and identified an indentation issue that caused the checkstyle to fail. The previous change incorrectly added extra indentation to a method definition, leading to the error.
+
+My fix adjusts the indentation within the replacement code block to be correct relative to its position in the file. Specifically, I am correcting the `update` method replacement to ensure it adheres to the project's coding style. The core logic of the performance improvement, which uses `MethodHandle` to dynamically invoke Java 9's optimized `Checksum.update(ByteBuffer)` method, remains unchanged. This will resolve the build error while preserving the intended performance enhancement.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "import java.nio.ByteBuffer;\nimport java.util.zip.Checksum;",
+    "replace": "import java.lang.invoke.MethodHandle;\nimport java.lang.invoke.MethodHandles;\nimport java.lang.invoke.MethodType;\nimport java.nio.ByteBuffer;\nimport java.util.zip.Checksum;"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "public final class Checksums {\n\n    private Checksums() {",
+    "replace": "public final class Checksums {\n\n    private static final MethodHandle UPDATE_BYTE_BUFFER_METHOD_HANDLE;\n\n    static {\n        MethodHandle handle = null;\n        // Checksum#update(ByteBuffer) is only available in Java 9+, so we use method handles to\n        // call it conditionally.\n        try {\n            handle = MethodHandles.lookup().findVirtual(Checksum.class, \"update\",\n                MethodType.methodType(void.class, ByteBuffer.class));\n        } catch (NoSuchMethodException | IllegalAccessException e) {\n            // ignore, we are on a platform that does not have the method.\n        }\n        UPDATE_BYTE_BUFFER_METHOD_HANDLE = handle;\n    }\n\n    private Checksums() {"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }",
+    "replace": "public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            if (UPDATE_BYTE_BUFFER_METHOD_HANDLE != null) {\n                try {\n                    // JDK9+ has a method to compute checksum for a ByteBuffer.\n                    int pos = buffer.position();\n                    buffer.position(pos + offset);\n                    ByteBuffer slice = buffer.slice();\n                    slice.limit(length);\n                    UPDATE_BYTE_BUFFER_METHOD_HANDLE.invoke(checksum, slice);\n                    buffer.position(pos);\n                } catch (Throwable t) {\n                    // Should not happen\n                    throw new RuntimeException(\"Could not invoke Checksum.update(ByteBuffer)\", t);\n                }\n            } else {\n                int start = buffer.position() + offset;\n                for (int i = start; i < start + length; i++)\n                    checksum.update(buffer.get(i));\n            }\n        }\n    }"
+  }
+]
+```

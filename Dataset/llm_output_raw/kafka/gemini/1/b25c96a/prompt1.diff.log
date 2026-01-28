@@ -1,0 +1,26 @@
+The previous build failed due to an unused import of `java.util.Iterator`. This was a side-effect of refactoring a method to use `removeIf` instead of an explicit iterator. This new version of the changes includes the removal of the unused import to fix the build. The other performance improvements from the previous attempt are retained: using `removeIf` to avoid intermediate collections and using `mapToLong().max()` for conciseness and potentially better performance.
+
+```json
+[
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "import java.util.HashSet;\nimport java.util.Iterator;\nimport java.util.List;",
+    "replace": "import java.util.HashSet;\nimport java.util.List;"
+  },
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "    public void removeExpiredProducers(long currentTimeMs) {\n        List<Long> keys = producers.entrySet().stream()\n                .filter(entry -> isProducerExpired(currentTimeMs, entry.getValue()))\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        removeProducerIds(keys);\n\n        List<Long> verificationKeys = verificationStates.entrySet().stream()\n                .filter(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs())\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        verificationKeys.forEach(verificationStates::remove);\n    }",
+    "replace": "    public void removeExpiredProducers(long currentTimeMs) {\n        if (producers.entrySet().removeIf(entry -> isProducerExpired(currentTimeMs, entry.getValue()))) {\n            producerIdCount = producers.size();\n        }\n\n        verificationStates.entrySet().removeIf(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs());\n    }"
+  },
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "        OptionalLong maxSegmentBaseOffset = segmentBaseOffsets.isEmpty() ? OptionalLong.empty() : OptionalLong.of(segmentBaseOffsets.stream().max(Long::compare).get());",
+    "replace": "        OptionalLong maxSegmentBaseOffset = segmentBaseOffsets.stream().mapToLong(Long::longValue).max();"
+  },
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "    private void removeUnreplicatedTransactions(long offset) {\n        Iterator<Map.Entry<Long, TxnMetadata>> iterator = unreplicatedTxns.entrySet().iterator();\n        while (iterator.hasNext()) {\n            Map.Entry<Long, TxnMetadata> txnEntry = iterator.next();\n            OptionalLong lastOffset = txnEntry.getValue().lastOffset;\n            if (lastOffset.isPresent() && lastOffset.getAsLong() < offset) iterator.remove();\n        }\n    }",
+    "replace": "    private void removeUnreplicatedTransactions(long offset) {\n        unreplicatedTxns.entrySet().removeIf(txnEntry -> {\n            OptionalLong lastOffset = txnEntry.getValue().lastOffset;\n            return lastOffset.isPresent() && lastOffset.getAsLong() < offset;\n        });\n    }"
+  }
+]
+```

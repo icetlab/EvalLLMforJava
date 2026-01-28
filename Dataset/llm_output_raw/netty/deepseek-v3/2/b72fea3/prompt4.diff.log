@@ -1,0 +1,54 @@
+The performance issue is that `DateFormatter.tryParseMonth` uses a chain of `if-else` statements with `matchMonth` calls, which involves repeated string comparisons. This can be optimized by using a lookup table or a more efficient matching mechanism, especially since month abbreviations are fixed 3-character ASCII strings.
+
+We can improve performance by:
+1. Using a precomputed hash or switch-like structure to quickly identify the month.
+2. Since month abbreviations are exactly 3 ASCII characters, we can compute a unique integer key from the three characters and use a switch statement or a small lookup table.
+
+However, note that `matchMonth` uses `AsciiString.regionMatchesAscii` which is already optimized for ASCII case-insensitive comparison. The main overhead is the sequential if-else chain. We can replace it with a switch on a hash computed from the three characters.
+
+But we must ensure that the hash is case-insensitive and unique for the 12 month abbreviations. Let's compute a simple hash: for each character, take the lower 5 bits (since letters differ in the lower 5 bits when case is ignored) and combine them into a 15-bit integer. Alternatively, we can use a perfect hash function.
+
+Given the small set, we can precompute a mapping from the three characters to the month constant. We'll compute a hash by shifting the lower 5 bits of each character into a 15-bit integer (bits 0-4 for first char, 5-9 for second, 10-14 for third). This yields a number between 0 and 32767. We can then use a switch on this hash.
+
+Alternatively, we can use a lookup table indexed by the first character, but that may be more complex.
+
+Let's implement a fast case-insensitive hash: for each character, convert to uppercase (or lowercase) and then take the value minus 'A' (0-25) and shift. Since we know the characters are letters, we can do `(c & 0x1F)` to get a case-insensitive number 1-26 (since 'A' and 'a' both have lower 5 bits as 1). Actually, ASCII: 'A' is 0x41 (01000001), 'a' is 0x61 (01100001). Lower 5 bits: both are 00001 (1). So `c & 0x1F` gives 1 for 'A'/'a', 2 for 'B'/'b', etc.
+
+We'll compute: `hash = ((c0 & 0x1F) << 10) | ((c1 & 0x1F) << 5) | (c2 & 0x1F)`. This gives a number between 0 and 32767.
+
+We can then switch on the hash values for each month. Let's compute the hash for each month abbreviation:
+
+- Jan: J=10, a=1, n=14 -> (10<<10)|(1<<5)|14 = 10240 + 32 + 14 = 10286
+- Feb: F=6, e=5, b=2 -> (6<<10)|(5<<5)|2 = 6144 + 160 + 2 = 6306
+- Mar: M=13, a=1, r=18 -> (13<<10)|(1<<5)|18 = 13312 + 32 + 18 = 13362
+- Apr: A=1, p=16, r=18 -> (1<<10)|(16<<5)|18 = 1024 + 512 + 18 = 1554
+- May: M=13, a=1, y=25 -> (13<<10)|(1<<5)|25 = 13312 + 32 + 25 = 13369
+- Jun: J=10, u=21, n=14 -> (10<<10)|(21<<5)|14 = 10240 + 672 + 14 = 10926
+- Jul: J=10, u=21, l=12 -> (10<<10)|(21<<5)|12 = 10240 + 672 + 12 = 10924
+- Aug: A=1, u=21, g=7 -> (1<<10)|(21<<5)|7 = 1024 + 672 + 7 = 1703
+- Sep: S=19, e=5, p=16 -> (19<<10)|(5<<5)|16 = 19456 + 160 + 16 = 19632
+- Oct: O=15, c=3, t=20 -> (15<<10)|(3<<5)|20 = 15360 + 96 + 20 = 15476
+- Nov: N=14, o=15, v=22 -> (14<<10)|(15<<5)|22 = 14336 + 480 + 22 = 14838
+- Dec: D=4, e=5, c=3 -> (4<<10)|(5<<5)|3 = 4096 + 160 + 3 = 4259
+
+These are all unique. So we can use a switch on these hash values.
+
+We'll change `tryParseMonth` to compute the hash from the three characters (if length is 3) and then switch. This avoids multiple method calls and string comparisons.
+
+We must also ensure that the characters are ASCII letters. The existing `matchMonth` does case-insensitive matching, and our hash method is case-insensitive because we use `& 0x1F`.
+
+We'll also keep the length check.
+
+Now, we need to modify only the `DateFormatter.java` file. We'll replace the `tryParseMonth` method.
+
+Let's produce the JSON changes.
+
+```json
+[
+  {
+    "filepath": "../netty/codec/src/main/java/io/netty/handler/codec/DateFormatter.java",
+    "search": "    private boolean tryParseMonth(CharSequence txt, int tokenStart, int tokenEnd) {\n        int len = tokenEnd - tokenStart;\n\n        if (len != 3) {\n            return false;\n        }\n\n        if (matchMonth(\"Jan\", txt, tokenStart)) {\n            month = Calendar.JANUARY;\n        } else if (matchMonth(\"Feb\", txt, tokenStart)) {\n            month = Calendar.FEBRUARY;\n        } else if (matchMonth(\"Mar\", txt, tokenStart)) {\n            month = Calendar.MARCH;\n        } else if (matchMonth(\"Apr\", txt, tokenStart)) {\n            month = Calendar.APRIL;\n        } else if (matchMonth(\"May\", txt, tokenStart)) {\n            month = Calendar.MAY;\n        } else if (matchMonth(\"Jun\", txt, tokenStart)) {\n            month = Calendar.JUNE;\n        } else if (matchMonth(\"Jul\", txt, tokenStart)) {\n            month = Calendar.JULY;\n        } else if (matchMonth(\"Aug\", txt, tokenStart)) {\n            month = Calendar.AUGUST;\n        } else if (matchMonth(\"Sep\", txt, tokenStart)) {\n            month = Calendar.SEPTEMBER;\n        } else if (matchMonth(\"Oct\", txt, tokenStart)) {\n            month = Calendar.OCTOBER;\n        } else if (matchMonth(\"Nov\", txt, tokenStart)) {\n            month = Calendar.NOVEMBER;\n        } else if (matchMonth(\"Dec\", txt, tokenStart)) {\n            month = Calendar.DECEMBER;\n        } else {\n            return false;\n        }\n\n        return true;\n    }",
+    "replace": "    private boolean tryParseMonth(CharSequence txt, int tokenStart, int tokenEnd) {\n        int len = tokenEnd - tokenStart;\n\n        if (len != 3) {\n            return false;\n        }\n\n        // Compute a case-insensitive hash from three ASCII letters.\n        // Use lower 5 bits of each character (since ASCII letters differ in case only in bit 5).\n        int hash = ((txt.charAt(tokenStart) & 0x1F) << 10) |\n                   ((txt.charAt(tokenStart + 1) & 0x1F) << 5) |\n                   (txt.charAt(tokenStart + 2) & 0x1F);\n\n        switch (hash) {\n            case 10286: // Jan\n                month = Calendar.JANUARY;\n                break;\n            case 6306:  // Feb\n                month = Calendar.FEBRUARY;\n                break;\n            case 13362: // Mar\n                month = Calendar.MARCH;\n                break;\n            case 1554:  // Apr\n                month = Calendar.APRIL;\n                break;\n            case 13369: // May\n                month = Calendar.MAY;\n                break;\n            case 10926: // Jun\n                month = Calendar.JUNE;\n                break;\n            case 10924: // Jul\n                month = Calendar.JULY;\n                break;\n            case 1703:  // Aug\n                month = Calendar.AUGUST;\n                break;\n            case 19632: // Sep\n                month = Calendar.SEPTEMBER;\n                break;\n            case 15476: // Oct\n                month = Calendar.OCTOBER;\n                break;\n            case 14838: // Nov\n                month = Calendar.NOVEMBER;\n                break;\n            case 4259:  // Dec\n                month = Calendar.DECEMBER;\n                break;\n            default:\n                return false;\n        }\n        return true;\n    }"
+  }
+]
+```

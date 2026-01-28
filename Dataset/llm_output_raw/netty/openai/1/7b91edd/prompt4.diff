@@ -1,0 +1,14 @@
+diff --git a/common/src/main/java/io/netty/util/NetUtil.java b/common/src/main/java/io/netty/util/NetUtil.java
+index fbe09ea676..542c03134f 100644
+--- a/common/src/main/java/io/netty/util/NetUtil.java
++++ b/common/src/main/java/io/netty/util/NetUtil.java
+@@ -801,7 +801,8 @@ public final class NetUtil {
+                 // at most 4 consecutive bytes we can use bit shifting to accomplish this.
+                 // The most significant byte will be encountered first, and reside in the right most
+                 // position of the following integer
+-                value += StringUtil.decodeHexNibble(c) << ((i - begin) << 2);
++                int nibble = c <= '9' ? c - '0' : c <= 'F' ? c - 'A' + 10 : c - 'a' + 10;
++                value += nibble << ((i - begin) << 2);
+                 break;
+             }
+         }

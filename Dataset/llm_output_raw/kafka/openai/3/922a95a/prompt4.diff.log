@@ -1,0 +1,11 @@
+I’m refactoring the follower‐append path to avoid taking the ISR read lock for regular follower writes, so that `makeFollower()` is not delayed by in‐flight appends. Only future‐replica appends still acquire the lock.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/cluster/Partition.scala",
+    "search": "private def doAppendRecordsToFollowerOrFutureReplica(records: MemoryRecords, isFuture: Boolean): Option[LogAppendInfo] = {\n    // The read lock is needed to handle race condition if request handler thread tries to\n    // remove future replica after receiving AlterReplicaLogDirsRequest.\n    inReadLock(leaderIsrUpdateLock) {\n      if (isFuture) {\n        // Note the replica may be undefined if it is removed by a non-ReplicaAlterLogDirsThread before\n        // this method is called\n        futureLog.map { _.appendAsFollower(records) }\n      } else {\n        // The read lock is needed to prevent the follower replica from being updated while ReplicaAlterDirThread\n        // is executing maybeDeleteAndSwapFutureReplica() to replace follower replica with the future replica.\n        Some(localLogOrException.appendAsFollower(records))\n      }\n    }\n  }",
+    "replace": "private def doAppendRecordsToFollowerOrFutureReplica(records: MemoryRecords, isFuture: Boolean): Option[LogAppendInfo] = {\n    if (isFuture) {\n      // The read lock is needed to handle race condition if request handler thread tries to\n      // remove future replica after receiving AlterReplicaLogDirsRequest.\n      inReadLock(leaderIsrUpdateLock) {\n        // Note the replica may be undefined if it is removed by a non-ReplicaAlterLogDirsThread before this method is called\n        futureLog.map(_.appendAsFollower(records))\n      }\n    } else {\n      // No ISR lock for regular follower append to avoid blocking makeFollower()\n      Some(localLogOrException.appendAsFollower(records))\n    }\n  }"
+  }
+]
+```

@@ -1,0 +1,41 @@
+diff --git a/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java b/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java
+index 6bcafd2d60..8d7daaab0b 100644
+--- a/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java
++++ b/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java
+@@ -369,17 +369,25 @@ public class ProducerStateManager {
+      * Also expire any verification state entries that are lingering as unverified.
+      */
+     public void removeExpiredProducers(long currentTimeMs) {
+-        List<Long> keys = producers.entrySet().stream()
+-                .filter(entry -> isProducerExpired(currentTimeMs, entry.getValue()))
+-                .map(Map.Entry::getKey)
+-                .collect(Collectors.toList());
+-        removeProducerIds(keys);
+-
+-        List<Long> verificationKeys = verificationStates.entrySet().stream()
+-                .filter(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs())
+-                .map(Map.Entry::getKey)
+-                .collect(Collectors.toList());
+-        verificationKeys.forEach(verificationStates::remove);
++        // Expire idle producers directly via iterator to avoid extra allocations
++        Iterator<Map.Entry<Long, ProducerStateEntry>> prodIter = producers.entrySet().iterator();
++        while (prodIter.hasNext()) {
++            Map.Entry<Long, ProducerStateEntry> entry = prodIter.next();
++            if (isProducerExpired(currentTimeMs, entry.getValue())) {
++                prodIter.remove();
++            }
++        }
++        producerIdCount = producers.size();
++
++        // Expire stale verification entries similarly
++        Iterator<Map.Entry<Long, VerificationStateEntry>> verifIter = verificationStates.entrySet().iterator();
++        long expirationMs = producerStateManagerConfig.producerIdExpirationMs();
++        while (verifIter.hasNext()) {
++            Map.Entry<Long, VerificationStateEntry> entry = verifIter.next();
++            if (currentTimeMs - entry.getValue().timestamp() >= expirationMs) {
++                verifIter.remove();
++            }
++        }
+     }
+ 
+     /**

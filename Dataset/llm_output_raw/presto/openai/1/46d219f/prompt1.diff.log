@@ -1,0 +1,11 @@
+I have optimized map concatenation by adding early returns when one map is empty and by sizing the TypedSet and InterleavedBlockBuilder based on entry counts rather than position counts, reducing unnecessary memory allocation.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapConcatFunction.java",
+    "search": "TypedSet typedSet = new TypedSet(keyType, rightMap.getPositionCount());\n        BlockBuilder blockBuilder = new InterleavedBlockBuilder(ImmutableList.of(keyType, valueType), new BlockBuilderStatus(), leftMap.getPositionCount() + rightMap.getPositionCount());",
+    "replace": "int rightPositions = rightMap.getPositionCount();\n        int leftPositions = leftMap.getPositionCount();\n        if (rightPositions == 0) {\n            return leftMap;\n        }\n        if (leftPositions == 0) {\n            return rightMap;\n        }\n        TypedSet typedSet = new TypedSet(keyType, rightPositions / 2);\n        BlockBuilder blockBuilder = new InterleavedBlockBuilder(ImmutableList.of(keyType, valueType), new BlockBuilderStatus(), (leftPositions + rightPositions) / 2);"
+  }
+]
+```

@@ -1,0 +1,11 @@
+The build failure was due to a checkstyle violation where an `if` statement lacked required braces. I'll fix this by adding braces around the single-statement `if` block while preserving the optimized bitwise implementation.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/IntegerUtil.java",
+    "search": "  /**\n   * shift the byte left from the specified position\n   * @param v a integer value\n   * @param pos the position from which to shift byte values left\n   * @param count the shifting numbers\n   * @return a fresh integer value\n   */\n  public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    byte[] initialVal = toBDBytes(v);\n    System.arraycopy(initialVal, pos + 1, initialVal, pos, count);\n    return fromBDBytes(initialVal);\n  }",
+    "replace": "  /**\n   * shift the byte left from the specified position\n   * @param v a integer value\n   * @param pos the position from which to shift byte values left\n   * @param count the shifting numbers\n   * @return a fresh integer value\n   */\n  public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    if (count == 0) {\n      return v;\n    }\n    int blockMask = 0;\n    for (int i = pos + 1; i <= pos + count; ++i) {\n      blockMask |= 0xFF << (8 * (3 - i));\n    }\n    int destMask = 0;\n    for (int i = pos; i < pos + count; ++i) {\n      destMask |= 0xFF << (8 * (3 - i));\n    }\n    int block = (v & blockMask) << 8;\n    int lastByteMask = 0xFF << (8 * (3 - (pos + count)));\n    int lastByte = v & lastByteMask;\n    return (v & ~destMask) | block | lastByte;\n  }"
+  }
+]
+```

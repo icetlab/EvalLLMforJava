@@ -1,0 +1,24 @@
+## Explanation of Improvements
+
+The current implementation has performance inefficiencies in the URI normalization logic. The main issues are:
+
+1. **Multiple string scanning operations**: The code calls `uri.lastIndexOf(SLASH)` twice in different branches, which can scan the string multiple times.
+2. **String concatenation inefficiency**: Using `uri += SLASH` creates new string objects instead of using more efficient string building.
+3. **Redundant condition checks**: The logic can be simplified to avoid duplicate checks.
+
+The improvements focus on:
+- Using a single pass to determine if a slash needs to be inserted
+- Using `StringBuilder` more efficiently
+- Reducing redundant string scanning operations
+
+Here are the atomic changes:
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java",
+    "search": "        // Add / as absolute path if no is present.\n        // See http://tools.ietf.org/html/rfc2616#section-5.1.2\n        String uri = request.uri();\n\n        if (uri.isEmpty()) {\n            uri += SLASH;\n        } else {\n            int start = uri.indexOf(\"://\");\n            if (start != -1 && uri.charAt(0) != SLASH) {\n                int startIndex = start + 3;\n                // Correctly handle query params.\n                // See https://github.com/netty/netty/issues/2732\n                int index = uri.indexOf(QUESTION_MARK, startIndex);\n                if (index == -1) {\n                    if (uri.lastIndexOf(SLASH) <= startIndex) {\n                        uri += SLASH;\n                    }\n                } else {\n                    if (uri.lastIndexOf(SLASH, index) <= startIndex) {\n                        int len = uri.length();\n                        StringBuilder sb = new StringBuilder(len + 1);\n                        sb.append(uri, 0, index)\n                          .append(SLASH)\n                          .append(uri, index, len);\n                        uri = sb.toString();\n                    }\n                }\n            }\n        }",
+    "replace": "        // Add / as absolute path if no is present.\n        // See http://tools.ietf.org/html/rfc2616#section-5.1.2\n        String uri = request.uri();\n\n        if (uri.isEmpty()) {\n            uri = \"/\";\n        } else {\n            int start = uri.indexOf(\"://\");\n            if (start != -1 && uri.charAt(0) != SLASH) {\n                int startIndex = start + 3;\n                // Correctly handle query params.\n                // See https://github.com/netty/netty/issues/2732\n                int queryIndex = uri.indexOf(QUESTION_MARK, startIndex);\n                \n                // Check if slash is needed with a single pass\n                boolean needsSlash = false;\n                if (queryIndex == -1) {\n                    // No query string - check entire string\n                    needsSlash = uri.indexOf(SLASH, startIndex) == -1;\n                } else {\n                    // Has query string - check only up to query mark\n                    needsSlash = uri.indexOf(SLASH, startIndex) == -1 || \n                                 uri.indexOf(SLASH, startIndex) >= queryIndex;\n                }\n                \n                if (needsSlash) {\n                    if (queryIndex == -1) {\n                        // Append slash at the end\n                        uri = uri + SLASH;\n                    } else {\n                        // Insert slash before query mark\n                        uri = uri.substring(0, queryIndex) + SLASH + uri.substring(queryIndex);\n                    }\n                }\n            }\n        }"
+  }
+]
+```

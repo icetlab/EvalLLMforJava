@@ -1,0 +1,18 @@
+The performance of `removeExpiredProducers` in `ProducerStateManager` is suboptimal when handling a large number of producer IDs. The current implementation uses Java streams to filter expired producers and collect their keys into an intermediate list before removal. This two-step process introduces unnecessary overhead from creating and populating the list, leading to increased memory allocation and CPU usage, especially when a large number of producers expire simultaneously.
+
+To improve this, I will modify the logic to use `Map.entrySet().removeIf()`. This allows for iterating over the map entries and removing those that match the expiration predicate in a single pass, completely avoiding the creation of an intermediate collection. This change will make the expiration process more efficient, reducing both memory footprint and execution time. The same optimization will be applied to the expiration of verification state entries.
+
+```json
+[
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "        List<Long> keys = producers.entrySet().stream()\n                .filter(entry -> isProducerExpired(currentTimeMs, entry.getValue()))\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        removeProducerIds(keys);",
+    "replace": "        producers.entrySet().removeIf(entry -> isProducerExpired(currentTimeMs, entry.getValue()));\n        producerIdCount = producers.size();"
+  },
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "        List<Long> verificationKeys = verificationStates.entrySet().stream()\n                .filter(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs())\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        verificationKeys.forEach(verificationStates::remove);",
+    "replace": "        verificationStates.entrySet().removeIf(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs());"
+  }
+]
+```

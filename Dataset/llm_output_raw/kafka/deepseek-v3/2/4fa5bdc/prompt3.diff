@@ -1,0 +1,47 @@
+diff --git a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+index 58860be864..89a9ff6f35 100644
+--- a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
++++ b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+@@ -352,13 +352,35 @@ class AclAuthorizer extends Authorizer with Logging {
+       .map(_.acls)
+       .getOrElse(Set.empty)
+ 
+-    val prefixed = aclCacheSnapshot
+-      .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))
+-      .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))
+-      .filterKeys(resource => resourceName.startsWith(resource.name))
+-      .values
+-      .flatMap { _.acls }
+-      .toSet
++    // For prefix matching, we need to find all PREFIXED resources where the resource name starts with the prefix
++    // The TreeMap is ordered by (resourceType, patternType, name in reverse order)
++    // So for a given resourceName, we start from (resourceType, resourceName, PREFIXED) and go backwards
++    // until we find prefixes that match
++    val prefixed = {
++      val builder = Set.newBuilder[AclEntry]
++      // Start from the first possible prefix (resourceName itself)
++      val startKey = new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED)
++      
++      // Get iterator starting from startKey
++      val iterator = aclCacheSnapshot.iteratorFrom(startKey)
++      while (iterator.hasNext) {
++        val (resource, versionedAcls) = iterator.next()
++        // Stop when we encounter a different resource type or pattern type
++        if (resource.resourceType != resourceType || resource.patternType != PatternType.PREFIXED) {
++          // We've moved beyond PREFIXED resources for this resource type
++          // No need to check further as TreeMap is ordered
++        } else if (resourceName.startsWith(resource.name)) {
++          // This is a matching prefix
++          builder ++= versionedAcls.acls
++        } else {
++          // Since TreeMap is ordered by name in reverse order, and we're iterating forward,
++          // once we find a prefix that doesn't match, no subsequent prefixes will match either
++          // because all subsequent prefixes are lexicographically >= current prefix
++          // and if resourceName doesn't start with current prefix, it won't start with any longer prefix
++        }
++      }
++      builder.result()
++    }
+ 
+     new AclSets(prefixed, wildcard, literal)
+   }

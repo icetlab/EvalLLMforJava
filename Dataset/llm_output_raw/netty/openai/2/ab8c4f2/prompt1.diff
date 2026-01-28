@@ -1,0 +1,34 @@
+diff --git a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java
+index 8db29fd7bd..651e354546 100644
+--- a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java
++++ b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java
+@@ -321,9 +321,8 @@ final class HpackEncoder {
+      * oldest entry from the dynamic table until sufficient space is available.
+      */
+     private void ensureCapacity(long headerSize) {
+-        while (maxHeaderTableSize - size < headerSize) {
+-            int index = length();
+-            if (index == 0) {
++        while (size + headerSize > maxHeaderTableSize) {
++            if (size == 0) {
+                 break;
+             }
+             remove();
+@@ -360,7 +359,7 @@ final class HpackEncoder {
+      * header field is not in the dynamic table.
+      */
+     private HeaderEntry getEntryInsensitive(CharSequence name, CharSequence value) {
+-        if (length() == 0 || name == null || value == null) {
++        if (size == 0 || name == null || value == null) {
+             return null;
+         }
+         int h = AsciiString.hashCode(name);
+@@ -380,7 +379,7 @@ final class HpackEncoder {
+      * the header field name is not in the dynamic table.
+      */
+     private int getIndex(CharSequence name) {
+-        if (length() == 0 || name == null) {
++        if (size == 0 || name == null) {
+             return -1;
+         }
+         int h = AsciiString.hashCode(name);

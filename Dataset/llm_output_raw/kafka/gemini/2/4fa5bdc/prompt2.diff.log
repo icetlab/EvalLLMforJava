@@ -1,0 +1,22 @@
+The performance issue stems from unnecessary object and collection creation during ACL matching. The `AclSets` helper class eagerly evaluates collections, and its `find` method is inefficient as it doesn't short-circuit after finding a match. Additionally, the `matchingAcls` method creates a new `Set` for prefixed ACLs on every authorization check, which is a performance bottleneck.
+
+My improvement addresses these issues by:
+1.  Modifying the `AclSets` class to operate on more generic `Iterable`s instead of `Set`s and to use lazy evaluation (`view`) for its `find` operation. This makes `find` more efficient by stopping at the first match.
+2.  Updating the `matchingAcls` method to avoid creating a new `Set` for prefixed ACLs. Instead, it now passes the `Iterable` of ACLs directly to the `AclSets` constructor.
+
+These changes reduce object allocation and unnecessary computation in the critical authorization path, leading to better performance.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  class AclSets(sets: Set[AclEntry]*) {\n    def find(p: AclEntry => Boolean): Option[AclEntry] = sets.flatMap(_.find(p)).headOption\n    def isEmpty: Boolean = !sets.exists(_.nonEmpty)\n  }",
+    "replace": "  class AclSets(sets: Iterable[AclEntry]*) {\n    def find(p: AclEntry => Boolean): Option[AclEntry] = sets.view.flatMap(_.find(p)).headOption\n    def isEmpty: Boolean = !sets.exists(_.nonEmpty)\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "      .flatMap { _.acls }\n      .toSet\n\n    new AclSets(prefixed, wildcard, literal)",
+    "replace": "      .flatMap { _.acls }\n\n    new AclSets(prefixed, wildcard, literal)"
+  }
+]
+```

@@ -1,0 +1,50 @@
+diff --git a/common/src/main/java/io/netty/util/NetUtil.java b/common/src/main/java/io/netty/util/NetUtil.java
+index fbe09ea676..d811071d53 100644
+--- a/common/src/main/java/io/netty/util/NetUtil.java
++++ b/common/src/main/java/io/netty/util/NetUtil.java
+@@ -38,6 +38,8 @@ import java.security.AccessController;
+ import java.security.PrivilegedAction;
+ 
+ import static io.netty.util.AsciiString.indexOf;
++import java.util.concurrent.ConcurrentMap;
++import java.util.concurrent.ConcurrentHashMap;
+ 
+ /**
+  * A class that holds a number of network-related constants.
+@@ -126,6 +128,9 @@ public final class NetUtil {
+     private static final boolean IPV6_ADDRESSES_PREFERRED =
+             SystemPropertyUtil.getBoolean("java.net.preferIPv6Addresses", false);
+ 
++    // Cache for parsed IPv6 byte arrays to improve repeated lookups
++    private static final ConcurrentMap<String, byte[]> IPV6_BYTES_CACHE = new ConcurrentHashMap<>();
++
+     /**
+      * The logger being used by this class
+      */
+@@ -706,6 +711,13 @@ public final class NetUtil {
+      * @return byte array representation of the {@code ip} or {@code null} if not a valid IP address.
+      */
+     private static byte[] getIPv6ByName(CharSequence ip, boolean ipv4Mapped) {
++        // Fast‐path cache lookup for repeated calls
++        if (ipv4Mapped && ip instanceof String) {
++            byte[] cached = IPV6_BYTES_CACHE.get((String) ip);
++            if (cached != null) {
++                return cached.clone();
++            }
++        }
+         final byte[] bytes = new byte[IPV6_BYTE_COUNT];
+         final int ipLength = ip.length();
+         int compressBegin = 0;
+@@ -893,7 +905,11 @@ public final class NetUtil {
+             bytes[10] = bytes[11] = (byte) 0xff;
+         }
+ 
+-        return bytes;
++        byte[] result = bytes;
++        if (ipv4Mapped && ip instanceof String) {
++            IPV6_BYTES_CACHE.put((String) ip, result.clone());
++        }
++        return result;
+     }
+ 
+     /**

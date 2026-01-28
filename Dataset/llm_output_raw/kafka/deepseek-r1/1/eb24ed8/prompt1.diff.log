@@ -1,0 +1,21 @@
+The primary performance improvement focuses on optimizing the `forName()` method by replacing a chain of string comparisons with a single HashMap lookup. This change reduces the time complexity from O(n) to O(1) for name lookups, which is particularly beneficial when this method is called frequently (e.g., during configuration parsing or message processing). Additionally, the static map is initialized once in a thread-safe manner using the enum initialization guarantee.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "import java.util.zip.GZIPInputStream;\nimport java.util.zip.GZIPOutputStream;",
+    "replace": "import java.util.zip.GZIPInputStream;\nimport java.util.zip.GZIPOutputStream;\nimport java.util.Collections;\nimport java.util.HashMap;\nimport java.util.Map;"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "    CompressionType(int id, String name, float rate) {\n        this.id = id;\n        this.name = name;\n        this.rate = rate;\n    }",
+    "replace": "    CompressionType(int id, String name, float rate) {\n        this.id = id;\n        this.name = name;\n        this.rate = rate;\n    }\n\n    private static final Map<String, CompressionType> NAME_TO_TYPE;\n    static {\n        Map<String, CompressionType> map = new HashMap<>();\n        for (CompressionType type : values()) {\n            map.put(type.name, type);\n        }\n        NAME_TO_TYPE = Collections.unmodifiableMap(map);\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "    public static CompressionType forName(String name) {\n        if (NONE.name.equals(name))\n            return NONE;\n        else if (GZIP.name.equals(name))\n            return GZIP;\n        else if (SNAPPY.name.equals(name))\n            return SNAPPY;\n        else if (LZ4.name.equals(name))\n            return LZ4;\n        else if (ZSTD.name.equals(name))\n            return ZSTD;\n        else\n            throw new IllegalArgumentException(\"Unknown compression name: \" + name);\n    }",
+    "replace": "    public static CompressionType forName(String name) {\n        CompressionType type = NAME_TO_TYPE.get(name);\n        if (type == null) {\n            throw new IllegalArgumentException(\"Unknown compression name: \" + name);\n        }\n        return type;\n    }"
+  }
+]
+```

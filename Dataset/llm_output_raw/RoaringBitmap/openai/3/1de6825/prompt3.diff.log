@@ -1,0 +1,11 @@
+I replaced the per-call byte‐array allocations in getChildKey() with direct bit-shifts on the stored longs, eliminating the temporary arrays and speeding up key extraction.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/art/Node16.java",
+    "search": "@Override\n  public byte getChildKey(int pos) {\n    int posInLong;\n    if (pos <= 7) {\n      posInLong = pos;\n      byte[] firstBytes = LongUtils.toBDBytes(firstV);\n      return firstBytes[posInLong];\n    } else {\n      posInLong = pos - 8;\n      byte[] secondBytes = LongUtils.toBDBytes(secondV);\n      return secondBytes[posInLong];\n    }\n  }",
+    "replace": "@Override\n  public byte getChildKey(int pos) {\n    if (pos <= 7) {\n      // extract byte from firstV in big-endian order without array allocation\n      return (byte) (firstV >>> ((7 - pos) << 3));\n    } else {\n      int posInSecond = pos - 8;\n      // extract byte from secondV in big-endian order without array allocation\n      return (byte) (secondV >>> ((7 - posInSecond) << 3));\n    }\n  }"
+  }
+]
+```

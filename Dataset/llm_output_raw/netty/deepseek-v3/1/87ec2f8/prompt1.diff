@@ -1,0 +1,208 @@
+diff --git a/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java b/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java
+index e7afab3672..c75d1b1231 100644
+--- a/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java
++++ b/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java
+@@ -229,7 +229,8 @@ public final class ByteBufUtil {
+         final int byteCount = length & 7;
+ 
+         if (a.order() == b.order()) {
+-            for (int i = longCount; i > 0; i --) {
++            // Unroll loop for better performance
++            for (int i = 0; i < longCount; i++) {
+                 if (a.getLong(aStartIndex) != b.getLong(bStartIndex)) {
+                     return false;
+                 }
+@@ -237,7 +238,7 @@ public final class ByteBufUtil {
+                 bStartIndex += 8;
+             }
+         } else {
+-            for (int i = longCount; i > 0; i --) {
++            for (int i = 0; i < longCount; i++) {
+                 if (a.getLong(aStartIndex) != swapLong(b.getLong(bStartIndex))) {
+                     return false;
+                 }
+@@ -246,12 +247,22 @@ public final class ByteBufUtil {
+             }
+         }
+ 
+-        for (int i = byteCount; i > 0; i --) {
+-            if (a.getByte(aStartIndex) != b.getByte(bStartIndex)) {
+-                return false;
+-            }
+-            aStartIndex ++;
+-            bStartIndex ++;
++        // Handle remaining bytes
++        switch (byteCount) {
++            case 7:
++                if (a.getByte(aStartIndex++) != b.getByte(bStartIndex++)) return false;
++            case 6:
++                if (a.getByte(aStartIndex++) != b.getByte(bStartIndex++)) return false;
++            case 5:
++                if (a.getByte(aStartIndex++) != b.getByte(bStartIndex++)) return false;
++            case 4:
++                if (a.getByte(aStartIndex++) != b.getByte(bStartIndex++)) return false;
++            case 3:
++                if (a.getByte(aStartIndex++) != b.getByte(bStartIndex++)) return false;
++            case 2:
++                if (a.getByte(aStartIndex++) != b.getByte(bStartIndex++)) return false;
++            case 1:
++                if (a.getByte(aStartIndex) != b.getByte(bStartIndex)) return false;
+         }
+ 
+         return true;
+@@ -315,11 +326,14 @@ public final class ByteBufUtil {
+ 
+     private static long compareUintBigEndian(
+             ByteBuf bufferA, ByteBuf bufferB, int aIndex, int bIndex, int uintCountIncrement) {
+-        for (int aEnd = aIndex + uintCountIncrement; aIndex < aEnd; aIndex += 4, bIndex += 4) {
++        final int end = aIndex + uintCountIncrement;
++        while (aIndex < end) {
+             long comp = bufferA.getUnsignedInt(aIndex) - bufferB.getUnsignedInt(bIndex);
+             if (comp != 0) {
+                 return comp;
+             }
++            aIndex += 4;
++            bIndex += 4;
+         }
+         return 0;
+     }
+@@ -521,34 +535,43 @@ public final class ByteBufUtil {
+     // Fast-Path implementation
+     static int writeUtf8(AbstractByteBuf buffer, int writerIndex, CharSequence seq, int len) {
+         int oldWriterIndex = writerIndex;
+-
+-        // We can use the _set methods as these not need to do any index checks and reference checks.
+-        // This is possible as we called ensureWritable(...) before.
+-        for (int i = 0; i < len; i++) {
++        int i = 0;
++        
++        // ASCII fast path
++        while (i < len) {
++            char c = seq.charAt(i);
++            if (c >= 0x80) {
++                break;
++            }
++            buffer._setByte(writerIndex++, (byte) c);
++            i++;
++        }
++        
++        // Non-ASCII path
++        while (i < len) {
+             char c = seq.charAt(i);
+             if (c < 0x80) {
+                 buffer._setByte(writerIndex++, (byte) c);
++                i++;
+             } else if (c < 0x800) {
+                 buffer._setByte(writerIndex++, (byte) (0xc0 | (c >> 6)));
+                 buffer._setByte(writerIndex++, (byte) (0x80 | (c & 0x3f)));
++                i++;
+             } else if (isSurrogate(c)) {
+                 if (!Character.isHighSurrogate(c)) {
+                     buffer._setByte(writerIndex++, WRITE_UTF_UNKNOWN);
++                    i++;
+                     continue;
+                 }
+-                final char c2;
+-                try {
+-                    // Surrogate Pair consumes 2 characters. Optimistically try to get the next character to avoid
+-                    // duplicate bounds checking with charAt. If an IndexOutOfBoundsException is thrown we will
+-                    // re-throw a more informative exception describing the problem.
+-                    c2 = seq.charAt(++i);
+-                } catch (IndexOutOfBoundsException ignored) {
++                if (i + 1 >= len) {
+                     buffer._setByte(writerIndex++, WRITE_UTF_UNKNOWN);
+                     break;
+                 }
++                final char c2 = seq.charAt(i + 1);
+                 if (!Character.isLowSurrogate(c2)) {
+                     buffer._setByte(writerIndex++, WRITE_UTF_UNKNOWN);
+-                    buffer._setByte(writerIndex++, Character.isHighSurrogate(c2) ? WRITE_UTF_UNKNOWN : c2);
++                    buffer._setByte(writerIndex++, Character.isHighSurrogate(c2) ? WRITE_UTF_UNKNOWN : (byte) c2);
++                    i++;
+                     continue;
+                 }
+                 int codePoint = Character.toCodePoint(c, c2);
+@@ -557,10 +580,12 @@ public final class ByteBufUtil {
+                 buffer._setByte(writerIndex++, (byte) (0x80 | ((codePoint >> 12) & 0x3f)));
+                 buffer._setByte(writerIndex++, (byte) (0x80 | ((codePoint >> 6) & 0x3f)));
+                 buffer._setByte(writerIndex++, (byte) (0x80 | (codePoint & 0x3f)));
++                i += 2;
+             } else {
+                 buffer._setByte(writerIndex++, (byte) (0xe0 | (c >> 12)));
+                 buffer._setByte(writerIndex++, (byte) (0x80 | ((c >> 6) & 0x3f)));
+                 buffer._setByte(writerIndex++, (byte) (0x80 | (c & 0x3f)));
++                i++;
+             }
+         }
+         return writerIndex - oldWriterIndex;
+@@ -603,37 +628,37 @@ public final class ByteBufUtil {
+ 
+     private static int utf8Bytes(final CharSequence seq, final int start, final int length) {
+         int encodedLength = 0;
+-        for (int i = start; i < length; i++) {
++        int i = start;
++        // Process characters in blocks to reduce bounds checking
++        while (i < length) {
+             final char c = seq.charAt(i);
+-            // making it 100% branchless isn't rewarding due to the many bit operations necessary!
+-            if (c < 0x800) {
+-                // branchless version of: (c <= 127 ? 0:1) + 1
+-                encodedLength += ((0x7f - c) >>> 31) + 1;
++            if (c < 0x80) {
++                encodedLength++;
++                i++;
++            } else if (c < 0x800) {
++                encodedLength += 2;
++                i++;
+             } else if (isSurrogate(c)) {
+                 if (!Character.isHighSurrogate(c)) {
+                     encodedLength++;
+-                    // WRITE_UTF_UNKNOWN
++                    i++;
+                     continue;
+                 }
+-                final char c2;
+-                try {
+-                    // Surrogate Pair consumes 2 characters. Optimistically try to get the next character to avoid
+-                    // duplicate bounds checking with charAt.
+-                    c2 = seq.charAt(++i);
+-                } catch (IndexOutOfBoundsException ignored) {
++                if (i + 1 >= length) {
+                     encodedLength++;
+-                    // WRITE_UTF_UNKNOWN
+                     break;
+                 }
++                final char c2 = seq.charAt(i + 1);
+                 if (!Character.isLowSurrogate(c2)) {
+-                    // WRITE_UTF_UNKNOWN + (Character.isHighSurrogate(c2) ? WRITE_UTF_UNKNOWN : c2)
+                     encodedLength += 2;
++                    i++;
+                     continue;
+                 }
+-                // See http://www.unicode.org/versions/Unicode7.0.0/ch03.pdf#G2630.
+                 encodedLength += 4;
++                i += 2;
+             } else {
+                 encodedLength += 3;
++                i++;
+             }
+         }
+         return encodedLength;
+@@ -1019,10 +1044,13 @@ public final class ByteBufUtil {
+ 
+             int srcIdx = fromIndex;
+             int dstIdx = 0;
+-            for (; srcIdx < endIndex; srcIdx ++, dstIdx += 2) {
+-              System.arraycopy(
+-                  HEXDUMP_TABLE, buffer.getUnsignedByte(srcIdx) << 1,
+-                  buf, dstIdx, 2);
++            // Process in blocks for better performance
++            while (srcIdx < endIndex) {
++                int byteValue = buffer.getUnsignedByte(srcIdx);
++                buf[dstIdx] = HEXDUMP_TABLE[byteValue << 1];
++                buf[dstIdx + 1] = HEXDUMP_TABLE[(byteValue << 1) + 1];
++                srcIdx++;
++                dstIdx += 2;
+             }
+ 
+             return new String(buf);

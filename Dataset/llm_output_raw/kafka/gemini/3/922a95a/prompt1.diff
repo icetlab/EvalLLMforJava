@@ -1,0 +1,53 @@
+diff --git a/core/src/main/scala/kafka/cluster/Partition.scala b/core/src/main/scala/kafka/cluster/Partition.scala
+index 9cfd99e8e5..e82fde697d 100755
+--- a/core/src/main/scala/kafka/cluster/Partition.scala
++++ b/core/src/main/scala/kafka/cluster/Partition.scala
+@@ -165,8 +165,10 @@ case class OngoingReassignmentState(addingReplicas: Seq[Int],
+                                     removingReplicas: Seq[Int],
+                                     replicas: Seq[Int]) extends AssignmentState {
+ 
+-  override def replicationFactor: Int = replicas.diff(addingReplicas).size // keep the size of the original replicas
+-  override def isAddingReplica(replicaId: Int): Boolean = addingReplicas.contains(replicaId)
++  private val addingReplicasSet = addingReplicas.toSet
++
++  override def replicationFactor: Int = replicas.count(!addingReplicasSet.contains(_)) // keep the size of the original replicas
++  override def isAddingReplica(replicaId: Int): Boolean = addingReplicasSet.contains(replicaId)
+ }
+ 
+ case class SimpleAssignmentState(replicas: Seq[Int]) extends AssignmentState
+@@ -651,9 +653,10 @@ class Partition(val topicPartition: TopicPartition,
+     val replicaSet = assignment.toSet
+     val removedReplicas = remoteReplicasMap.keys -- replicaSet
+ 
+-    assignment
+-      .filter(_ != localBrokerId)
+-      .foreach(id => remoteReplicasMap.getAndMaybePut(id, new Replica(id, topicPartition)))
++    assignment.foreach { id =>
++      if (id != localBrokerId)
++        remoteReplicasMap.getAndMaybePut(id, new Replica(id, topicPartition))
++    }
+     removedReplicas.foreach(remoteReplicasMap.remove)
+     if (addingReplicas.nonEmpty || removingReplicas.nonEmpty)
+       assignmentState = OngoingReassignmentState(addingReplicas, removingReplicas, assignment)
+@@ -774,7 +777,9 @@ class Partition(val topicPartition: TopicPartition,
+       // maybeIncrementLeaderHW is in the hot path, the following code is written to
+       // avoid unnecessary collection generation
+       var newHighWatermark = leaderLog.logEndOffsetMetadata
+-      remoteReplicasMap.values.foreach { replica =>
++      val iterator = remoteReplicasMap.values.iterator
++      while (iterator.hasNext) {
++        val replica = iterator.next()
+         if (replica.logEndOffsetMetadata.messageOffset < newHighWatermark.messageOffset &&
+           (curTime - replica.lastCaughtUpTimeMs <= replicaLagTimeMaxMs || inSyncReplicaIds.contains(replica.brokerId))) {
+           newHighWatermark = replica.logEndOffsetMetadata
+@@ -814,7 +819,9 @@ class Partition(val topicPartition: TopicPartition,
+     // lowWatermarkIfLeader may be called many times when a DeleteRecordsRequest is outstanding,
+     // care has been taken to avoid generating unnecessary collections in this code
+     var lowWaterMark = localLogOrException.logStartOffset
+-    remoteReplicas.foreach { replica =>
++    val iterator = remoteReplicas.iterator
++    while (iterator.hasNext) {
++      val replica = iterator.next()
+       if (metadataCache.getAliveBroker(replica.brokerId).nonEmpty && replica.logStartOffset < lowWaterMark) {
+         lowWaterMark = replica.logStartOffset
+       }

@@ -1,0 +1,32 @@
+diff --git a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+index 58860be864..eb5cdeb7a5 100644
+--- a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
++++ b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+@@ -62,8 +62,17 @@ object AclAuthorizer {
+     def exists: Boolean = zkVersion != ZkVersion.UnknownVersion
+   }
+ 
+-  class AclSets(sets: Set[AclEntry]*) {
+-    def find(p: AclEntry => Boolean): Option[AclEntry] = sets.flatMap(_.find(p)).headOption
++  class AclSets(sets: Iterable[AclEntry]*) {
++    def find(p: AclEntry => Boolean): Option[AclEntry] = {
++      for (set <- sets) {
++        val iter = set.iterator
++        while (iter.hasNext) {
++          val acl = iter.next()
++          if (p(acl)) return Some(acl)
++        }
++      }
++      None
++    }
+     def isEmpty: Boolean = !sets.exists(_.nonEmpty)
+   }
+ 
+@@ -358,7 +367,6 @@ class AclAuthorizer extends Authorizer with Logging {
+       .filterKeys(resource => resourceName.startsWith(resource.name))
+       .values
+       .flatMap { _.acls }
+-      .toSet
+ 
+     new AclSets(prefixed, wildcard, literal)
+   }

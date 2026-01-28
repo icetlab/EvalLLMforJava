@@ -1,0 +1,115 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
+index 30e0088e35..19e447452d 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
+@@ -369,6 +369,9 @@ public class OptimizedPartitionedOutputOperator
+         private final int fixedWidthRowSize;
+         private final DecodedBlockNode[] decodedBlocks;
+ 
++        private int[] pageSerializedRowSizes;
++        private int[] allPositions;
++
+         private boolean hasAnyRowBeenReplicated;
+ 
+         public PagePartitioner(
+@@ -462,9 +465,34 @@ public class OptimizedPartitionedOutputOperator
+                 decodedBlocks[i] = decodeBlock(flattener, blockLeaseCloser, page.getBlock(i));
+             }
+ 
++            // Calculate serialized row sizes once per page
++            if (variableWidthChannels.isEmpty()) {
++                pageSerializedRowSizes = null;
++            }
++            else {
++                pageSerializedRowSizes = ensureCapacity(pageSerializedRowSizes, positionCount, SMALL, INITIALIZE);
++
++                allPositions = ensureCapacity(allPositions, positionCount);
++                for (int i = 0; i < positionCount; i++) {
++                    allPositions[i] = i;
++                }
++
++                for (int channel : variableWidthChannels) {
++                    BlockEncodingBuffer sizeCalculator = createBlockEncodingBuffers(decodedBlocks[channel]);
++                    sizeCalculator.setupDecodedBlocksAndPositions(decodedBlocks[channel], allPositions, positionCount);
++                    sizeCalculator.accumulateSerializedRowSizes(pageSerializedRowSizes);
++                }
++
++                if (fixedWidthRowSize > 0) {
++                    for (int i = 0; i < positionCount; i++) {
++                        pageSerializedRowSizes[i] += fixedWidthRowSize;
++                    }
++                }
++            }
++
+             // Copy the data to their destination partitions and flush when the buffer is full.
+             for (int i = 0; i < partitionBuffers.length; i++) {
+-                partitionBuffers[i].appendData(decodedBlocks, fixedWidthRowSize, variableWidthChannels, outputBuffer);
++                partitionBuffers[i].appendData(decodedBlocks, fixedWidthRowSize, variableWidthChannels.isEmpty(), outputBuffer, pageSerializedRowSizes);
+             }
+ 
+             // Return all borrowed arrays
+@@ -570,7 +598,7 @@ public class OptimizedPartitionedOutputOperator
+             positions[positionCount++] = position;
+         }
+ 
+-        private void appendData(DecodedBlockNode[] decodedBlocks, int fixedWidthRowSize, List<Integer> variableWidthChannels, OutputBuffer outputBuffer)
++        private void appendData(DecodedBlockNode[] decodedBlocks, int fixedWidthRowSize, boolean hasNoVariableWidth, OutputBuffer outputBuffer, int[] pageSerializedRowSizes)
+         {
+             if (decodedBlocks.length != channelCount) {
+                 throw new IllegalArgumentException(format("Unexpected number of decoded blocks %d. It should be %d.", decodedBlocks.length, channelCount));
+@@ -591,12 +619,17 @@ public class OptimizedPartitionedOutputOperator
+                 blockEncodingBuffers[i].setupDecodedBlocksAndPositions(decodedBlocks[i], positions, positionCount);
+             }
+ 
+-            populateSerializedRowSizes(fixedWidthRowSize, variableWidthChannels);
++            if (!hasNoVariableWidth) {
++                serializedRowSizes = ensureCapacity(serializedRowSizes, positionCount);
++                for (int i = 0; i < positionCount; i++) {
++                    serializedRowSizes[i] = pageSerializedRowSizes[positions[i]];
++                }
++            }
+ 
+             // Due to the limitation of buffer size, we append the data batch by batch
+             int offset = 0;
+             do {
+-                int batchSize = calculateNextBatchSize(fixedWidthRowSize, variableWidthChannels, offset);
++                int batchSize = calculateNextBatchSize(fixedWidthRowSize, hasNoVariableWidth, offset);
+ 
+                 for (int i = 0; i < channelCount; i++) {
+                     blockEncodingBuffers[i].setNextBatch(offset, batchSize);
+@@ -626,32 +659,14 @@ public class OptimizedPartitionedOutputOperator
+             }
+         }
+ 
+-        /**
+-         * Calculate the row sizes in bytes and write them to serializedRowSizes.
+-         */
+-        private void populateSerializedRowSizes(int fixedWidthRowSize, List<Integer> variableWidthChannels)
+-        {
+-            if (variableWidthChannels.isEmpty()) {
+-                return;
+-            }
+ 
+-            serializedRowSizes = ensureCapacity(serializedRowSizes, positionCount, SMALL, INITIALIZE);
+ 
+-            for (int i : variableWidthChannels) {
+-                blockEncodingBuffers[i].accumulateSerializedRowSizes(serializedRowSizes);
+-            }
+-
+-            for (int i = 0; i < positionCount; i++) {
+-                serializedRowSizes[i] += fixedWidthRowSize;
+-            }
+-        }
+-
+-        private int calculateNextBatchSize(int fixedWidthRowSize, List<Integer> variableWidthChannels, int startPosition)
++        private int calculateNextBatchSize(int fixedWidthRowSize, boolean hasNoVariableWidth, int startPosition)
+         {
+             int bytesRemaining = capacity - getSerializedBuffersSizeInBytes();
+ 
+-            if (variableWidthChannels.isEmpty()) {
+-                int maxPositionsFit = max(bytesRemaining / fixedWidthRowSize, 1);
++            if (hasNoVariableWidth) {
++                int maxPositionsFit = fixedWidthRowSize > 0 ? max(bytesRemaining / fixedWidthRowSize, 1) : positionCount - startPosition;
+                 if (maxPositionsFit <= positionCount - startPosition) {
+                     bufferFull = true;
+                     return maxPositionsFit;

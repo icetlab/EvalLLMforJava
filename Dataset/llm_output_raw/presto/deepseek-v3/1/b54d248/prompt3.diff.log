@@ -1,0 +1,20 @@
+Looking at the provided code, I can see that `HashGenerator` is an interface with a default method `getPartition` that computes a partition number from a hash. The current implementation uses modulo division (`rawHash % partitionCount`), which can be relatively slow compared to using bitwise operations when `partitionCount` is a power of two.
+
+However, I notice that the code doesn't check if `partitionCount` is a power of two. If we can assume that `partitionCount` is always a power of two (which is common in distributed systems for hash partitioning), we can replace the modulo operation with a faster bitwise AND operation.
+
+But looking at the test file, I see that `PARTITION_COUNT = 512`, which is indeed a power of two (2^9). This suggests that in practice, partition counts are likely to be powers of two.
+
+Let me optimize the `getPartition` method by:
+1. Using bitwise AND when `partitionCount` is a power of two
+2. Adding a check to determine if `partitionCount` is a power of two
+3. Falling back to modulo for non-power-of-two partition counts
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java",
+    "search": "    default int getPartition(int partitionCount, int position, Page page)\n    {\n        long rawHash = hashPosition(position, page);\n\n        // clear the sign bit\n        rawHash &= 0x7fff_ffff_ffff_ffffL;\n\n        int partition = (int) (rawHash % partitionCount);\n\n        checkState(partition >= 0 && partition < partitionCount);\n        return partition;\n    }",
+    "replace": "    default int getPartition(int partitionCount, int position, Page page)\n    {\n        long rawHash = hashPosition(position, page);\n\n        // clear the sign bit\n        rawHash &= 0x7fff_ffff_ffff_ffffL;\n\n        int partition;\n        if ((partitionCount & (partitionCount - 1)) == 0) {\n            // partitionCount is a power of two, use faster bitwise AND\n            partition = (int) (rawHash & (partitionCount - 1));\n        } else {\n            partition = (int) (rawHash % partitionCount);\n        }\n\n        checkState(partition >= 0 && partition < partitionCount);\n        return partition;\n    }"
+  }
+]
+```

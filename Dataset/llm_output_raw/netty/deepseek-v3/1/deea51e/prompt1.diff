@@ -1,0 +1,86 @@
+diff --git a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java
+index 301a2c51cf..921ca2de8a 100644
+--- a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java
++++ b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java
+@@ -130,8 +130,9 @@ final class HpackEncoder {
+         for (Map.Entry<CharSequence, CharSequence> header : headers) {
+             CharSequence name = header.getKey();
+             CharSequence value = header.getValue();
+-            encodeHeader(out, name, value, sensitivityDetector.isSensitive(name, value),
+-                         HpackHeaderField.sizeOf(name, value));
++            boolean sensitive = sensitivityDetector.isSensitive(name, value);
++            long headerSize = HpackHeaderField.sizeOf(name, value);
++            encodeHeader(out, name, value, sensitive, headerSize);
+         }
+     }
+ 
+@@ -353,11 +354,16 @@ final class HpackEncoder {
+         }
+         int h = AsciiString.hashCode(name);
+         int i = index(h);
+-        for (HeaderEntry e = headerFields[i]; e != null; e = e.next) {
+-            // To avoid short circuit behavior a bitwise operator is used instead of a boolean operator.
+-            if (e.hash == h && (equalsConstantTime(name, e.name) & equalsConstantTime(value, e.value)) != 0) {
+-                return e;
+-            }
++        HeaderEntry e = headerFields[i];
++        // Unroll the first iteration to avoid checking e != null twice
++        if (e != null) {
++            do {
++                // To avoid short circuit behavior a bitwise operator is used instead of a boolean operator.
++                if (e.hash == h && (equalsConstantTime(name, e.name) & equalsConstantTime(value, e.value)) != 0) {
++                    return e;
++                }
++                e = e.next;
++            } while (e != null);
+         }
+         return null;
+     }
+@@ -372,10 +378,15 @@ final class HpackEncoder {
+         }
+         int h = AsciiString.hashCode(name);
+         int i = index(h);
+-        for (HeaderEntry e = headerFields[i]; e != null; e = e.next) {
+-            if (e.hash == h && equalsConstantTime(name, e.name) != 0) {
+-                return getIndex(e.index);
+-            }
++        HeaderEntry e = headerFields[i];
++        // Unroll the first iteration to avoid checking e != null twice
++        if (e != null) {
++            do {
++                if (e.hash == h && equalsConstantTime(name, e.name) != 0) {
++                    return getIndex(e.index);
++                }
++                e = e.next;
++            } while (e != null);
+         }
+         return -1;
+     }
+@@ -425,7 +436,8 @@ final class HpackEncoder {
+         int i = index(h);
+         HeaderEntry prev = headerFields[i];
+         HeaderEntry e = prev;
+-        while (e != null) {
++        // Unroll the first iteration
++        if (e != null) {
+             HeaderEntry next = e.next;
+             if (e == eldest) {
+                 if (prev == eldest) {
+@@ -439,6 +451,17 @@ final class HpackEncoder {
+             }
+             prev = e;
+             e = next;
++            while (e != null) {
++                next = e.next;
++                if (e == eldest) {
++                    prev.next = next;
++                    eldest.remove();
++                    size -= eldest.size();
++                    return eldest;
++                }
++                prev = e;
++                e = next;
++            }
+         }
+         return null;
+     }

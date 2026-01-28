@@ -1,0 +1,44 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java
+index 720023399d..1ab881fa27 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java
+@@ -47,6 +47,9 @@ final class ReaderUtils
+ 
+     public static byte[] unpackByteNulls(byte[] values, boolean[] isNull)
+     {
++        if (values.length == isNull.length) {
++            return values.clone();
++        }
+         byte[] result = new byte[isNull.length];
+ 
+         int position = 0;
+@@ -61,6 +64,9 @@ final class ReaderUtils
+ 
+     public static short[] unpackShortNulls(short[] values, boolean[] isNull)
+     {
++        if (values.length == isNull.length) {
++            return values.clone();
++        }
+         short[] result = new short[isNull.length];
+ 
+         int position = 0;
+@@ -75,6 +81,9 @@ final class ReaderUtils
+ 
+     public static int[] unpackIntNulls(int[] values, boolean[] isNull)
+     {
++        if (values.length == isNull.length) {
++            return values.clone();
++        }
+         int[] result = new int[isNull.length];
+ 
+         int position = 0;
+@@ -89,6 +98,9 @@ final class ReaderUtils
+ 
+     public static long[] unpackLongNulls(long[] values, boolean[] isNull)
+     {
++        if (values.length == isNull.length) {
++            return values.clone();
++        }
+         long[] result = new long[isNull.length];
+ 
+         int position = 0;

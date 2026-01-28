@@ -1,0 +1,26 @@
+I’ve optimized the name and ID lookup methods by replacing linear if/switch checks with constant-time array and map lookups, and added the necessary static initializers and imports.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "import java.util.zip.GZIPOutputStream;",
+    "replace": "import java.util.zip.GZIPOutputStream;\nimport java.util.Map;\nimport java.util.HashMap;\nimport java.util.Collections;"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "};",
+    "replace": "};\n\n    private static final CompressionType[] ID_MAP;\n    private static final Map<String, CompressionType> NAME_MAP;\n\n    static {\n        CompressionType[] types = values();\n        ID_MAP = new CompressionType[types.length];\n        Map<String, CompressionType> nameMap = new HashMap<>();\n        for (CompressionType type : types) {\n            ID_MAP[type.id] = type;\n            nameMap.put(type.name, type);\n        }\n        NAME_MAP = Collections.unmodifiableMap(nameMap);\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "public static CompressionType forId(int id) {\n        switch (id) {\n            case 0:\n                return NONE;\n            case 1:\n                return GZIP;\n            case 2:\n                return SNAPPY;\n            case 3:\n                return LZ4;\n            case 4:\n                return ZSTD;\n            default:\n                throw new IllegalArgumentException(\"Unknown compression type id: \" + id);\n        }\n    }",
+    "replace": "public static CompressionType forId(int id) {\n        if (id >= 0 && id < ID_MAP.length) {\n            return ID_MAP[id];\n        } else {\n            throw new IllegalArgumentException(\"Unknown compression type id: \" + id);\n        }\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "public static CompressionType forName(String name) {\n        if (NONE.name.equals(name))\n            return NONE;\n        else if (GZIP.name.equals(name))\n            return GZIP;\n        else if (SNAPPY.name.equals(name))\n            return SNAPPY;\n        else if (LZ4.name.equals(name))\n            return LZ4;\n        else if (ZSTD.name.equals(name))\n            return ZSTD;\n        else\n            throw new IllegalArgumentException(\"Unknown compression name: \" + name);\n    }",
+    "replace": "public static CompressionType forName(String name) {\n        CompressionType type = NAME_MAP.get(name);\n        if (type == null) {\n            throw new IllegalArgumentException(\"Unknown compression name: \" + name);\n        }\n        return type;\n    }"
+  }
+]
+```

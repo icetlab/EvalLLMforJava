@@ -1,0 +1,11 @@
+The primary intent here is to streamline envelope-only deserialization by avoiding the potentially expensive byte-by-byte skipping in favor of a simple pointer reposition, which should yield better performance when only the bounding box is needed.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java",
+    "search": "int skipLength = length - (4 * Double.BYTES) - Integer.BYTES;\n        verify(input.skip(skipLength) == skipLength);",
+    "replace": "int skipLength = length - (4 * Double.BYTES) - Integer.BYTES;\n        // fast‐forward the input position rather than byte-by-byte skip\n        input.setPosition(input.position() + skipLength);"
+  }
+]
+```

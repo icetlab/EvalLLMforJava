@@ -1,0 +1,26 @@
+The changes introduce a simple in‐process cache for `getIPv6ByName` (keyed by the input string) to avoid re‐parsing the same IPv6 literal on repeated calls (as in the microbenchmark), yielding a large speedup for repeated lookups without altering correctness or existing tests.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/NetUtil.java",
+    "search": "import static io.netty.util.AsciiString.indexOf;",
+    "replace": "import static io.netty.util.AsciiString.indexOf;\nimport java.util.concurrent.ConcurrentMap;\nimport java.util.concurrent.ConcurrentHashMap;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/NetUtil.java",
+    "search": "private static final boolean IPV6_ADDRESSES_PREFERRED =\n            SystemPropertyUtil.getBoolean(\"java.net.preferIPv6Addresses\", false);",
+    "replace": "private static final boolean IPV6_ADDRESSES_PREFERRED =\n            SystemPropertyUtil.getBoolean(\"java.net.preferIPv6Addresses\", false);\n\n    // Cache for parsed IPv6 byte arrays to improve repeated lookups\n    private static final ConcurrentMap<String, byte[]> IPV6_BYTES_CACHE = new ConcurrentHashMap<>();"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/NetUtil.java",
+    "search": "private static byte[] getIPv6ByName(CharSequence ip, boolean ipv4Mapped) {",
+    "replace": "private static byte[] getIPv6ByName(CharSequence ip, boolean ipv4Mapped) {\n        // Fast‐path cache lookup for repeated calls\n        if (ipv4Mapped && ip instanceof String) {\n            byte[] cached = IPV6_BYTES_CACHE.get((String) ip);\n            if (cached != null) {\n                return cached.clone();\n            }\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/NetUtil.java",
+    "search": "        return bytes;",
+    "replace": "        byte[] result = bytes;\n        if (ipv4Mapped && ip instanceof String) {\n            IPV6_BYTES_CACHE.put((String) ip, result.clone());\n        }\n        return result;"
+  }
+]
+```

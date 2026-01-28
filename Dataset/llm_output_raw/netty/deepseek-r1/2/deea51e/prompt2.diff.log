@@ -1,0 +1,23 @@
+Looking at the performance issue about Huffman coding having a "huge CPU cost," I need to analyze the `HpackEncoder` class. The issue states that Huffman coding provides minimal space savings but incurs significant CPU overhead. The key area to optimize is the `encodeStringLiteral` method in `HpackEncoder.java`, which decides whether to use Huffman encoding based on whether the encoded length is shorter than the original string length.
+
+The problem is that even when Huffman encoding saves only 1-2 bytes, it still incurs the full CPU cost of encoding. A better approach would be to only use Huffman encoding when the space savings are significant enough to justify the CPU cost.
+
+Here's my analysis and proposed changes:
+
+1. **Current logic**: Uses Huffman encoding if `huffmanLength < string.length()` (saves at least 1 byte)
+2. **Proposed logic**: Only use Huffman encoding if it saves a meaningful percentage of bytes (e.g., at least 20% compression)
+
+The fix should:
+- Avoid Huffman encoding for minimal gains (1-2 bytes)
+- Maintain correctness (still compliant with HTTP/2 spec)
+- Preserve existing unit tests
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java",
+    "search": "    private void encodeStringLiteral(ByteBuf out, CharSequence string) {\n        int huffmanLength = hpackHuffmanEncoder.getEncodedLength(string);\n        if (huffmanLength < string.length()) {\n            encodeInteger(out, 0x80, 7, huffmanLength);\n            hpackHuffmanEncoder.encode(out, string);\n        } else {\n            encodeInteger(out, 0x00, 7, string.length());\n            if (string instanceof AsciiString) {\n                // Fast-path\n                AsciiString asciiString = (AsciiString) string;\n                out.writeBytes(asciiString.array(), asciiString.arrayOffset(), asciiString.length());\n            } else {\n                // Only ASCII is allowed in http2 headers, so its fine to use this.\n                // https://tools.ietf.org/html/rfc7540#section-8.1.2\n                out.writeCharSequence(string, CharsetUtil.ISO_8859_1);\n            }\n        }\n    }",
+    "replace": "    private void encodeStringLiteral(ByteBuf out, CharSequence string) {\n        int huffmanLength = hpackHuffmanEncoder.getEncodedLength(string);\n        // Only use Huffman encoding if it provides meaningful compression (at least 20% savings)\n        // This avoids CPU cost for minimal space gains\n        if (huffmanLength < string.length() * 0.8) {\n            encodeInteger(out, 0x80, 7, huffmanLength);\n            hpackHuffmanEncoder.encode(out, string);\n        } else {\n            encodeInteger(out, 0x00, 7, string.length());\n            if (string instanceof AsciiString) {\n                // Fast-path\n                AsciiString asciiString = (AsciiString) string;\n                out.writeBytes(asciiString.array(), asciiString.arrayOffset(), asciiString.length());\n            } else {\n                // Only ASCII is allowed in http2 headers, so its fine to use this.\n                // https://tools.ietf.org/html/rfc7540#section-8.1.2\n                out.writeCharSequence(string, CharsetUtil.ISO_8859_1);\n            }\n        }\n    }"
+  }
+]
+```

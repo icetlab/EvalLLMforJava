@@ -1,0 +1,16 @@
+I’ve improved snapshot file discovery to use File APIs instead of repeatedly streaming over Paths, reducing object creation and filesystem calls.
+
+```json
+[
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "private static boolean isSnapshotFile(Path path) {\n        return Files.isRegularFile(path) && path.getFileName().toString().endsWith(LogFileUtils.PRODUCER_SNAPSHOT_FILE_SUFFIX);\n    }",
+    "replace": "private static boolean isSnapshotFile(Path path) {\n        File file = path.toFile();\n        return file.isFile() && path.getFileName().toString().endsWith(LogFileUtils.PRODUCER_SNAPSHOT_FILE_SUFFIX);\n    }"
+  },
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "public static List<SnapshotFile> listSnapshotFiles(File dir) throws IOException {\n        if (dir.exists() && dir.isDirectory()) {\n            try (Stream<Path> paths = Files.list(dir.toPath())) {\n                return paths.filter(ProducerStateManager::isSnapshotFile)\n                        .map(path -> new SnapshotFile(path.toFile())).collect(Collectors.toList());\n            }\n        } else {\n            return Collections.emptyList();\n        }\n    }",
+    "replace": "public static List<SnapshotFile> listSnapshotFiles(File dir) throws IOException {\n        File[] files = dir.listFiles((d, name) -> name.endsWith(LogFileUtils.PRODUCER_SNAPSHOT_FILE_SUFFIX));\n        if (files == null) {\n            return Collections.emptyList();\n        }\n        List<SnapshotFile> snapshotFiles = new ArrayList<>();\n        for (File file : files) {\n            if (file.isFile()) {\n                snapshotFiles.add(new SnapshotFile(file));\n            }\n        }\n        return snapshotFiles;\n    }"
+  }
+]
+```

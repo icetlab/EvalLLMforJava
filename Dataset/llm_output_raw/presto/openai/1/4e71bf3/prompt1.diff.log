@@ -1,0 +1,16 @@
+I have introduced local variables in the hot inner loops of the selective reader to reduce repeated field accesses and method calls. This should improve branch prediction and overall throughput in `readWithFilter` and `readNoFilter`.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "private int readWithFilter(int[] positions, int positionCount)\n            throws IOException\n    {\n        int streamPosition = 0;\n        outputPositionCount = 0;",
+    "replace": "private int readWithFilter(int[] positions, int positionCount)\n            throws IOException\n    {\n        // cache fields locally to reduce repeated dereferences\n        BooleanInputStream present = presentStream;\n        ByteInputStream data = dataStream;\n        TupleDomainFilter filter = this.filter;\n        boolean hasPresent = present != null;\n        int precedingFail = filter.getPrecedingPositionsToFail();\n        int succeedingFail = filter.getSucceedingPositionsToFail();\n\n        int streamPosition = 0;\n        outputPositionCount = 0;"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "private int readNoFilter(int[] positions, int positionCount)\n            throws IOException\n    {\n        // filter == null implies outputRequired == true\n        int streamPosition = 0;",
+    "replace": "private int readNoFilter(int[] positions, int positionCount)\n            throws IOException\n    {\n        // cache fields locally to reduce repeated dereferences\n        BooleanInputStream present = presentStream;\n        ByteInputStream data = dataStream;\n        boolean hasPresent = present != null;\n\n        // filter == null implies outputRequired == true\n        int streamPosition = 0;"
+  }
+]
+```

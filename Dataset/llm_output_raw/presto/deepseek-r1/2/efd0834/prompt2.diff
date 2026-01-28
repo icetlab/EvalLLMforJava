@@ -1,0 +1,24 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java b/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java
+index 01eaa20925..008627d748 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/project/PageProcessor.java
+@@ -154,7 +154,7 @@ public class PageProcessor
+             this.memoryContext = memoryContext;
+             this.selectedPositions = selectedPositions;
+             this.previouslyComputedResults = new Block[projections.size()];
+-            updateRetainedSize();
++            memoryContext.setBytes(0);
+         }
+ 
+         @Override
+@@ -168,6 +168,10 @@ public class PageProcessor
+                     return finished();
+                 }
+ 
++                if (retainedSizeInBytes == 0) {
++                    updateRetainedSize();
++                }
++
+                 // we always process one chunk
+                 if (lastComputeYielded) {
+                     // re-use the batch size from the last checkpoint

@@ -1,0 +1,31 @@
+I have updated the ACL lookup in authorization to avoid expensive Set concatenations by streaming ACL entries into a list and changed the related helper methods to work on generic Iterables instead of Sets.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "private def matchingAcls(resourceType: ResourceType, resourceName: String): Set[AclEntry] = {\n    inReadLock(lock) {\n      val wildcard = aclCache.get(new ResourcePattern(resourceType, ResourcePattern.WILDCARD_RESOURCE, PatternType.LITERAL))\n        .map(_.acls)\n        .getOrElse(Set.empty)\n\n      val literal = aclCache.get(new ResourcePattern(resourceType, resourceName, PatternType.LITERAL))\n        .map(_.acls)\n        .getOrElse(Set.empty)\n\n      val prefixed = aclCache\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .filterKeys(resource => resourceName.startsWith(resource.name))\n        .values\n        .flatMap { _.acls }\n        .toSet\n\n      prefixed ++ wildcard ++ literal\n    }\n}",
+    "replace": "private def matchingAcls(resourceType: ResourceType, resourceName: String): Iterable[AclEntry] = {\n    inReadLock(lock) {\n      val wildcardAcls = aclCache.get(new ResourcePattern(resourceType, ResourcePattern.WILDCARD_RESOURCE, PatternType.LITERAL))\n        .map(_.acls)\n        .getOrElse(Set.empty)\n\n      val literalAcls = aclCache.get(new ResourcePattern(resourceType, resourceName, PatternType.LITERAL))\n        .map(_.acls)\n        .getOrElse(Set.empty)\n\n      val prefixedAcls = aclCache\n        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n        .filterKeys(resource => resourceName.startsWith(resource.name))\n        .values\n        .flatMap { _.acls }\n\n      wildcardAcls.toList ::: literalAcls.toList ::: prefixedAcls.toList\n    }\n}"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "def isEmptyAclAndAuthorized(acls: Set[AclEntry]): Boolean = {",
+    "replace": "def isEmptyAclAndAuthorized(acls: Iterable[AclEntry]): Boolean = {"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "def denyAclExists(acls: Set[AclEntry]): Boolean = {",
+    "replace": "def denyAclExists(acls: Iterable[AclEntry]): Boolean = {"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "def allowAclExists(acls: Set[AclEntry]): Boolean = {",
+    "replace": "def allowAclExists(acls: Iterable[AclEntry]): Boolean = {"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "private def matchingAclExists(operation: AclOperation,\n                                resource: ResourcePattern,\n                                principal: KafkaPrincipal,\n                                host: String,\n                                permissionType: AclPermissionType,\n                                acls: Set[AclEntry]): Boolean = {",
+    "replace": "private def matchingAclExists(operation: AclOperation,\n                                resource: ResourcePattern,\n                                principal: KafkaPrincipal,\n                                host: String,\n                                permissionType: AclPermissionType,\n                                acls: Iterable[AclEntry]): Boolean = {"
+  }
+]
+```

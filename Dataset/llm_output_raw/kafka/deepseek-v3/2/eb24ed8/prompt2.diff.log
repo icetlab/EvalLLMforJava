@@ -1,0 +1,18 @@
+## Explanation of Improvements
+
+The performance issue is that ZstdInputStream and ZstdOutputStream from zstd-jni 1.4.5-6 allocate large internal buffers and don't buffer reads/writes efficiently. When DefaultRecord.writeTo() performs small single-byte reads/writes, it causes excessive JNI context switching between Java and native code. The solution is to wrap Zstd streams with BufferedInputStream/BufferedOutputStream to batch small operations, similar to how GZIP is already handled in the codebase.
+
+For ZSTD compression type, we need to:
+1. Wrap ZstdOutputStream with BufferedOutputStream to buffer writes
+2. Wrap ZstdInputStream with BufferedInputStream to buffer reads
+3. Use appropriate buffer sizes (16KB input buffer, 8KB output buffer) to match the GZIP implementation
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "    ZSTD(4, \"zstd\", 1.0f) {\n        @Override\n        public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {\n            try {\n                return (OutputStream) ZstdConstructors.OUTPUT.invoke(buffer);\n            } catch (Throwable e) {\n                throw new KafkaException(e);\n            }\n        }\n\n        @Override\n        public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {\n            try {\n                return (InputStream) ZstdConstructors.INPUT.invoke(new ByteBufferInputStream(buffer));\n            } catch (Throwable e) {\n                throw new KafkaException(e);\n            }\n        }\n    };",
+    "replace": "    ZSTD(4, \"zstd\", 1.0f) {\n        @Override\n        public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {\n            try {\n                // Set input buffer (uncompressed) to 16 KB and output buffer (compressed) to\n                // 8 KB to ensure reasonable performance in cases where the caller passes a small\n                // number of bytes to write (potentially a single byte)\n                return new BufferedOutputStream((OutputStream) ZstdConstructors.OUTPUT.invoke(buffer), 16 * 1024);\n            } catch (Throwable e) {\n                throw new KafkaException(e);\n            }\n        }\n\n        @Override\n        public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {\n            try {\n                // Set output buffer (uncompressed) to 16 KB and input buffer (compressed) to\n                // 8 KB to ensure reasonable performance in cases where the caller reads a small\n                // number of bytes (potentially a single byte)\n                return new BufferedInputStream((InputStream) ZstdConstructors.INPUT.invoke(new ByteBufferInputStream(buffer)), 16 * 1024);\n            } catch (Throwable e) {\n                throw new KafkaException(e);\n            }\n        }\n    };"
+  }
+]
+```

@@ -1,0 +1,94 @@
+diff --git a/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java b/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
+index e657ad86f8..6cb707c83b 100644
+--- a/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
++++ b/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
+@@ -51,7 +51,19 @@ public abstract class AbstractReferenceCountedByteBuf extends AbstractByteBuf {
+ 
+     @Override
+     public ByteBuf retain() {
+-        return retain0(1);
++        for (;;) {
++            int refCnt = this.refCnt;
++            if (refCnt == 0) {
++                throw new IllegalReferenceCountException(0, 1);
++            }
++            if (refCnt == Integer.MAX_VALUE) {
++                throw new IllegalReferenceCountException(Integer.MAX_VALUE, 1);
++            }
++            if (refCntUpdater.compareAndSet(this, refCnt, refCnt + 1)) {
++                break;
++            }
++        }
++        return this;
+     }
+ 
+     @Override
+@@ -87,7 +99,20 @@ public abstract class AbstractReferenceCountedByteBuf extends AbstractByteBuf {
+ 
+     @Override
+     public boolean release() {
+-        return release0(1);
++        for (;;) {
++            int refCnt = this.refCnt;
++            if (refCnt == 0) {
++                throw new IllegalReferenceCountException(0, -1);
++            }
++
++            if (refCntUpdater.compareAndSet(this, refCnt, refCnt - 1)) {
++                if (refCnt == 1) {
++                    deallocate();
++                    return true;
++                }
++                return false;
++            }
++        }
+     }
+ 
+     @Override
+diff --git a/common/src/main/java/io/netty/util/AbstractReferenceCounted.java b/common/src/main/java/io/netty/util/AbstractReferenceCounted.java
+index 493bcc1872..97e0d2db42 100644
+--- a/common/src/main/java/io/netty/util/AbstractReferenceCounted.java
++++ b/common/src/main/java/io/netty/util/AbstractReferenceCounted.java
+@@ -43,7 +43,19 @@ public abstract class AbstractReferenceCounted implements ReferenceCounted {
+ 
+     @Override
+     public ReferenceCounted retain() {
+-        return retain0(1);
++        for (;;) {
++            int refCnt = this.refCnt;
++            if (refCnt == 0) {
++                throw new IllegalReferenceCountException(0, 1);
++            }
++            if (refCnt == Integer.MAX_VALUE) {
++                throw new IllegalReferenceCountException(Integer.MAX_VALUE, 1);
++            }
++            if (refCntUpdater.compareAndSet(this, refCnt, refCnt + 1)) {
++                break;
++            }
++        }
++        return this;
+     }
+ 
+     @Override
+@@ -74,7 +86,20 @@ public abstract class AbstractReferenceCounted implements ReferenceCounted {
+ 
+     @Override
+     public boolean release() {
+-        return release0(1);
++        for (;;) {
++            int refCnt = this.refCnt;
++            if (refCnt == 0) {
++                throw new IllegalReferenceCountException(0, -1);
++            }
++
++            if (refCntUpdater.compareAndSet(this, refCnt, refCnt - 1)) {
++                if (refCnt == 1) {
++                    deallocate();
++                    return true;
++                }
++                return false;
++            }
++        }
+     }
+ 
+     @Override

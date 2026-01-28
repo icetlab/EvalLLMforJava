@@ -1,0 +1,90 @@
+diff --git a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
+index da5080ff85..9c0fed5625 100644
+--- a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
++++ b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
+@@ -120,27 +120,33 @@ public class QueryStringEncoder {
+      * @param s The String to encode
+      */
+     private void encodeNonUtf8Component(CharSequence s) {
++        final int length = s.length();
+         //Don't allocate memory until needed
+         char[] buf = null;
++        int bufSize = 0;
+ 
+-        for (int i = 0, len = s.length(); i < len;) {
++        for (int i = 0; i < length;) {
+             char c = s.charAt(i);
+             if (dontNeedEncoding(c)) {
+                 uriBuilder.append(c);
+                 i++;
+             } else {
+-                int index = 0;
+-                if (buf == null) {
+-                    buf = new char[s.length() - i];
+-                }
+-
++                int start = i;
+                 do {
+-                    buf[index] = c;
+-                    index++;
+                     i++;
+-                } while (i < s.length() && !dontNeedEncoding(c = s.charAt(i)));
+-
+-                byte[] bytes = new String(buf, 0, index).getBytes(charset);
++                } while (i < length && !dontNeedEncoding(c = s.charAt(i)));
++                
++                int charsCount = i - start;
++                if (buf == null || bufSize < charsCount) {
++                    buf = new char[charsCount];
++                    bufSize = charsCount;
++                }
++                
++                for (int j = 0; j < charsCount; j++) {
++                    buf[j] = s.charAt(start + j);
++                }
++                
++                byte[] bytes = new String(buf, 0, charsCount).getBytes(charset);
+ 
+                 for (byte b : bytes) {
+                     appendEncoded(b);
+@@ -153,7 +159,8 @@ public class QueryStringEncoder {
+      * @see ByteBufUtil#writeUtf8(io.netty.buffer.ByteBuf, CharSequence, int, int)
+      */
+     private void encodeUtf8Component(CharSequence s) {
+-        for (int i = 0, len = s.length(); i < len; i++) {
++        final int len = s.length();
++        for (int i = 0; i < len; i++) {
+             char c = s.charAt(i);
+             if (c < 0x80) {
+                 if (dontNeedEncoding(c)) {
+@@ -170,7 +177,7 @@ public class QueryStringEncoder {
+                     continue;
+                 }
+                 // Surrogate Pair consumes 2 characters.
+-                if (++i == s.length()) {
++                if (++i == len) {
+                     appendEncoded(WRITE_UTF_UNKNOWN);
+                     break;
+                 }
+@@ -199,7 +206,7 @@ public class QueryStringEncoder {
+     }
+ 
+     private void appendEncoded(int b) {
+-        uriBuilder.append('%').append(forDigit(b >> 4)).append(forDigit(b));
++        uriBuilder.append('%').append(CHAR_MAP[(b >> 4) & 0xF]).append(CHAR_MAP[b & 0xF]);
+     }
+ 
+     /**
+@@ -225,7 +232,10 @@ public class QueryStringEncoder {
+      * @return true or false
+      */
+     private static boolean dontNeedEncoding(char ch) {
+-        return ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9'
+-                || ch == '-' || ch == '_' || ch == '.' || ch == '*';
++        if (ch <= '*') {
++            return ch == '*' || ch == '-' || ch == '.' || ch == '_' 
++                || ch >= '0' && ch <= '9' || ch >= 'A' && ch <= 'Z';
++        }
++        return ch >= 'a' && ch <= 'z';
+     }
+ }

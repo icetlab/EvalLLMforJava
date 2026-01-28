@@ -1,0 +1,11 @@
+I’ve optimized the `toAvailable` method in `DefaultHandle` to use a single `compareAndSet` instead of `getAndSet` plus a check, reducing unnecessary memory-fence overhead.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "        void toAvailable() {\n            int prev = STATE_UPDATER.getAndSet(this, STATE_AVAILABLE);\n            if (prev == STATE_AVAILABLE) {\n                throw new IllegalStateException(\"Object has been recycled already.\");\n            }\n        }",
+    "replace": "        void toAvailable() {\n            if (!STATE_UPDATER.compareAndSet(this, STATE_CLAIMED, STATE_AVAILABLE)) {\n                throw new IllegalStateException(\"Object has been recycled already.\");\n            }\n        }"
+  }
+]
+```

@@ -1,0 +1,13 @@
+The `shiftLeftFromSpecifiedPosition` method in `IntegerUtil.java` is currently implemented by converting the input integer to a byte array, performing a `System.arraycopy` on the array, and then converting the byte array back to an integer. This process involves heap allocation for the byte array and the overhead of a method call, which can be suboptimal for a performance-sensitive utility function.
+
+My improvement replaces this logic with a pure bitwise manipulation approach. The new implementation achieves the same byte-shifting result by using bit masks and shifts directly on the integer value. This avoids the creation of a temporary byte array and the call to `System.arraycopy`, leading to significantly better performance by reducing object allocation and sticking to fast CPU-level instructions. An early exit for a `count` of zero is also included.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/IntegerUtil.java",
+    "search": "  public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    byte[] initialVal = toBDBytes(v);\n    System.arraycopy(initialVal, pos + 1, initialVal, pos, count);\n    return fromBDBytes(initialVal);\n  }",
+    "replace": "  public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    if (count == 0) {\n      return v;\n    }\n\n    int high_boundary_bit_pos = (4 - pos) * 8;\n    int high_mask = (pos == 0) ? 0 : (-1 << high_boundary_bit_pos);\n\n    int low_boundary_bit_pos = (4 - (pos + count)) * 8;\n    int low_mask = (1 << low_boundary_bit_pos) - 1;\n\n    int middle_mask = ~(high_mask | low_mask);\n\n    int new_middle_part = (v << 8) & middle_mask;\n\n    return (v & high_mask) | new_middle_part | (v & low_mask);\n  }"
+  }
+]
+```

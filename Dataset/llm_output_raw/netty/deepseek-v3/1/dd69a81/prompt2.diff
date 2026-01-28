@@ -1,0 +1,68 @@
+diff --git a/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java b/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java
+index 0db8a4ce34..2f8e039d16 100644
+--- a/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java
++++ b/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java
+@@ -44,25 +44,49 @@ public class HttpRequestEncoder extends HttpObjectEncoder<HttpRequest> {
+         String uri = request.uri();
+ 
+         if (uri.isEmpty()) {
+-            uri += SLASH;
++            uri = "/";
+         } else {
+-            int start = uri.indexOf("://");
++            // Check if URI contains protocol separator
++            int start = -1;
++            int uriLen = uri.length();
++            // Manual scan for "://" to avoid regex overhead
++            for (int i = 0; i < uriLen - 2; i++) {
++                if (uri.charAt(i) == ':' && uri.charAt(i + 1) == '/' && uri.charAt(i + 2) == '/') {
++                    start = i;
++                    break;
++                }
++            }
++            
+             if (start != -1 && uri.charAt(0) != SLASH) {
+                 int startIndex = start + 3;
+-                // Correctly handle query params.
+-                // See https://github.com/netty/netty/issues/2732
+-                int index = uri.indexOf(QUESTION_MARK, startIndex);
+-                if (index == -1) {
+-                    if (uri.lastIndexOf(SLASH) <= startIndex) {
+-                        uri += SLASH;
++                // Find if we need to insert slash before query string
++                boolean needSlash = true;
++                int slashPos = -1;
++                int queryPos = -1;
++                
++                // Single pass through the relevant portion of the URI
++                for (int i = startIndex; i < uriLen; i++) {
++                    char c = uri.charAt(i);
++                    if (c == SLASH) {
++                        slashPos = i;
++                        needSlash = false;
++                        break;
++                    } else if (c == QUESTION_MARK) {
++                        queryPos = i;
++                        break;
+                     }
+-                } else {
+-                    if (uri.lastIndexOf(SLASH, index) <= startIndex) {
+-                        int len = uri.length();
+-                        StringBuilder sb = new StringBuilder(len + 1);
+-                        sb.append(uri, 0, index)
++                }
++                
++                if (needSlash) {
++                    if (queryPos == -1) {
++                        // No query string, append slash at the end
++                        uri = uri + SLASH;
++                    } else {
++                        // Insert slash before query string
++                        StringBuilder sb = new StringBuilder(uriLen + 1);
++                        sb.append(uri, 0, queryPos)
+                           .append(SLASH)
+-                          .append(uri, index, len);
++                          .append(uri, queryPos, uriLen);
+                         uri = sb.toString();
+                     }
+                 }

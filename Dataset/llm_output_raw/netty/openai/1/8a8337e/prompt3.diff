@@ -1,0 +1,56 @@
+diff --git a/common/src/main/java/io/netty/util/Recycler.java b/common/src/main/java/io/netty/util/Recycler.java
+index dd7b2d73be..087ab374af 100644
+--- a/common/src/main/java/io/netty/util/Recycler.java
++++ b/common/src/main/java/io/netty/util/Recycler.java
+@@ -26,6 +26,7 @@ import org.jctools.queues.MessagePassingQueue;
+ import java.util.ArrayDeque;
+ import java.util.Queue;
+ import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
++import java.util.concurrent.atomic.AtomicInteger;
+ 
+ import static io.netty.util.internal.PlatformDependent.newMpscQueue;
+ import static java.lang.Math.max;
+@@ -197,7 +198,7 @@ public abstract class Recycler<T> {
+ 
+     final int threadLocalSize() {
+         LocalPool<T> localPool = threadLocal.getIfExists();
+-        return localPool == null ? 0 : localPool.pooledHandles.size();
++        return localPool == null ? 0 : localPool.handleCount.get();
+     }
+ 
+     /**
+@@ -258,6 +259,7 @@ public abstract class Recycler<T> {
+     private static final class LocalPool<T> {
+         private final int ratioInterval;
+         private volatile MessagePassingQueue<DefaultHandle<T>> pooledHandles;
++        private final AtomicInteger handleCount;
+         private int ratioCounter;
+ 
+         @SuppressWarnings("unchecked")
+@@ -269,6 +271,7 @@ public abstract class Recycler<T> {
+                 pooledHandles = (MessagePassingQueue<DefaultHandle<T>>) newMpscQueue(chunkSize, maxCapacity);
+             }
+             ratioCounter = ratioInterval; // Start at interval so the first one will be recycled.
++            handleCount = new AtomicInteger(0);
+         }
+ 
+         DefaultHandle<T> claim() {
+@@ -279,6 +282,7 @@ public abstract class Recycler<T> {
+             DefaultHandle<T> handle = handles.relaxedPoll();
+             if (null != handle) {
+                 handle.toClaimed();
++                handleCount.decrementAndGet();
+             }
+             return handle;
+         }
+@@ -286,8 +290,8 @@ public abstract class Recycler<T> {
+         void release(DefaultHandle<T> handle) {
+             handle.toAvailable();
+             MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;
+-            if (handles != null) {
+-                handles.relaxedOffer(handle);
++            if (handles != null && handles.relaxedOffer(handle)) {
++                handleCount.incrementAndGet();
+             }
+         }
+ 

@@ -1,0 +1,64 @@
+diff --git a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+index 679b59249d..a7e6a62ca2 100644
+--- a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
++++ b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+@@ -42,26 +42,45 @@ public final class Checksums {
+             checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);
+         } else {
+             int start = buffer.position() + offset;
+-            for (int i = start; i < start + length; i++)
+-                checksum.update(buffer.get(i));
++            if (length > 8) {
++                // Use bulk operation with a temporary array for larger lengths
++                byte[] tmp = new byte[Math.min(length, 4096)];
++                ByteBuffer dup = buffer.duplicate();
++                dup.position(start);
++                int remaining = length;
++                while (remaining > 0) {
++                    int toCopy = Math.min(remaining, tmp.length);
++                    dup.get(tmp, 0, toCopy);
++                    checksum.update(tmp, 0, toCopy);
++                    remaining -= toCopy;
++                }
++            } else {
++                // Small length: use simple loop
++                for (int i = start; i < start + length; i++)
++                    checksum.update(buffer.get(i));
++            }
+         }
+     }
+     
+     public static void updateInt(Checksum checksum, int input) {
+-        checksum.update((byte) (input >> 24));
+-        checksum.update((byte) (input >> 16));
+-        checksum.update((byte) (input >> 8));
+-        checksum.update((byte) input /* >> 0 */);
++        byte[] bytes = new byte[4];
++        bytes[0] = (byte) (input >> 24);
++        bytes[1] = (byte) (input >> 16);
++        bytes[2] = (byte) (input >> 8);
++        bytes[3] = (byte) input;
++        checksum.update(bytes, 0, 4);
+     }
+ 
+     public static void updateLong(Checksum checksum, long input) {
+-        checksum.update((byte) (input >> 56));
+-        checksum.update((byte) (input >> 48));
+-        checksum.update((byte) (input >> 40));
+-        checksum.update((byte) (input >> 32));
+-        checksum.update((byte) (input >> 24));
+-        checksum.update((byte) (input >> 16));
+-        checksum.update((byte) (input >> 8));
+-        checksum.update((byte) input /* >> 0 */);
++        byte[] bytes = new byte[8];
++        bytes[0] = (byte) (input >> 56);
++        bytes[1] = (byte) (input >> 48);
++        bytes[2] = (byte) (input >> 40);
++        bytes[3] = (byte) (input >> 32);
++        bytes[4] = (byte) (input >> 24);
++        bytes[5] = (byte) (input >> 16);
++        bytes[6] = (byte) (input >> 8);
++        bytes[7] = (byte) input;
++        checksum.update(bytes, 0, 8);
+     }
+ }

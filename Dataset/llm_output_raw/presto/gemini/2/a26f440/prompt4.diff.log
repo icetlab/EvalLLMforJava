@@ -1,0 +1,13 @@
+My optimization strategy focuses on reducing the memory footprint of the T-Digest structure, particularly for distributions with a small number of entries. The original implementation pre-allocates a large buffer for incoming data points to amortize the cost of merging, which is beneficial for large distributions but results in significant memory overhead for smaller ones.
+
+My change adjusts the buffer sizing logic. By reducing the multiplier for the buffer size calculation from 5 to 2, I am making a trade-off: decreasing the memory consumption at the cost of potentially more frequent merges for very large distributions. This change directly addresses the "structure" aspect of the optimization problem by making the arrays that buffer new points smaller, which is especially advantageous when many small T-Digest instances are created, as seen in some of the test cases. This preserves the performance benefits of pre-allocation while making the structure more memory-efficient for the common case of small to medium-sized distributions.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "        // having a big buffer is good for speed\n        int bufferSize = 5 * (int) ceil(this.publicCompression + sizeFudge);",
+    "replace": "        // having a big buffer is good for speed, but we choose a smaller value to optimize for small distributions\n        int bufferSize = 2 * (int) ceil(this.publicCompression + sizeFudge);"
+  }
+]
+```

@@ -1,0 +1,26 @@
+I’ve optimized per-byte loops by batching reads into a single byte array update, and reduced multiple single-byte checksum calls in updateInt/updateLong to one array-based call via a ThreadLocal buffer to minimize allocations.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "private Checksums() {\n    }",
+    "replace": "private Checksums() {\n    }\n\n    private static final ThreadLocal<byte[]> BUFFER = ThreadLocal.withInitial(() -> new byte[8]);"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }",
+    "replace": "        } else {\n            int start = buffer.position() + offset;\n            ByteBuffer duplicate = buffer.duplicate();\n            duplicate.position(start).limit(start + length);\n            byte[] temp = new byte[length];\n            duplicate.get(temp);\n            checksum.update(temp, 0, length);\n        }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "public static void updateInt(Checksum checksum, int input) {\n        checksum.update((byte) (input >> 24));\n        checksum.update((byte) (input >> 16));\n        checksum.update((byte) (input >> 8));\n        checksum.update((byte) input /* >> 0 */);\n    }",
+    "replace": "public static void updateInt(Checksum checksum, int input) {\n        byte[] buf = BUFFER.get();\n        buf[0] = (byte) (input >> 24);\n        buf[1] = (byte) (input >> 16);\n        buf[2] = (byte) (input >> 8);\n        buf[3] = (byte) input;\n        checksum.update(buf, 0, 4);\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "public static void updateLong(Checksum checksum, long input) {\n        checksum.update((byte) (input >> 56));\n        checksum.update((byte) (input >> 48));\n        checksum.update((byte) (input >> 40));\n        checksum.update((byte) (input >> 32));\n        checksum.update((byte) (input >> 24));\n        checksum.update((byte) (input >> 16));\n        checksum.update((byte) (input >> 8));\n        checksum.update((byte) input /* >> 0 */);\n    }",
+    "replace": "public static void updateLong(Checksum checksum, long input) {\n        byte[] buf = BUFFER.get();\n        buf[0] = (byte) (input >> 56);\n        buf[1] = (byte) (input >> 48);\n        buf[2] = (byte) (input >> 40);\n        buf[3] = (byte) (input >> 32);\n        buf[4] = (byte) (input >> 24);\n        buf[5] = (byte) (input >> 16);\n        buf[6] = (byte) (input >> 8);\n        buf[7] = (byte) input;\n        checksum.update(buf, 0, 8);\n    }"
+  }
+]
+```

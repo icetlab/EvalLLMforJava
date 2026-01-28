@@ -1,0 +1,41 @@
+## Performance Improvement Analysis
+
+The primary performance improvement opportunities in `ByteSelectiveStreamReader.java` involve reducing method call overhead, eliminating redundant calculations, and optimizing memory access patterns. The main issues identified are:
+
+1. **Redundant array capacity checks**: The `ensureValuesCapacity` method is called frequently, which internally calls `ensureCapacity` that performs array copying operations.
+
+2. **Excessive method call overhead**: Frequent calls to `filter.testNull()`, `filter.testLong()`, and array index operations.
+
+3. **Inefficient null handling**: Repeated checks for `presentStream != null` and conditional assignments.
+
+Here are the targeted improvements:
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "    private void ensureValuesCapacity(int capacity, boolean recordNulls)\n    {\n        values = ensureCapacity(values, capacity);\n\n        if (recordNulls) {\n            nulls = ensureCapacity(nulls, capacity);\n        }\n    }",
+    "replace": "    private void ensureValuesCapacity(int capacity, boolean recordNulls)\n    {\n        if (values == null || values.length < capacity) {\n            values = new byte[capacity];\n        }\n\n        if (recordNulls && (nulls == null || nulls.length < capacity)) {\n            nulls = new boolean[capacity];\n        }\n    }"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "            if (presentStream != null && !presentStream.nextBit()) {\n                if ((nonDeterministicFilter && filter.testNull()) || nullsAllowed) {\n                    if (outputRequired) {\n                        nulls[outputPositionCount] = true;\n                    }\n                    outputPositions[outputPositionCount] = position;\n                    outputPositionCount++;\n                }\n            }\n            else {\n                byte value = dataStream.next();\n                if (filter.testLong(value)) {\n                    if (outputRequired) {\n                        values[outputPositionCount] = value;\n                        if (nullsAllowed && presentStream != null) {\n                            nulls[outputPositionCount] = false;\n                        }\n                    }\n                    outputPositions[outputPositionCount] = position;\n                    outputPositionCount++;\n                }\n            }",
+    "replace": "            if (presentStream != null && !presentStream.nextBit()) {\n                if (nonDeterministicFilter) {\n                    if (filter.testNull()) {\n                        if (outputRequired) {\n                            nulls[outputPositionCount] = true;\n                        }\n                        outputPositions[outputPositionCount] = position;\n                        outputPositionCount++;\n                    }\n                } else if (nullsAllowed) {\n                    if (outputRequired) {\n                        nulls[outputPositionCount] = true;\n                    }\n                    outputPositions[outputPositionCount] = position;\n                    outputPositionCount++;\n                }\n            }\n            else {\n                byte value = dataStream.next();\n                if (filter.testLong(value)) {\n                    if (outputRequired) {\n                        values[outputPositionCount] = value;\n                        if (nullsAllowed && presentStream != null) {\n                            nulls[outputPositionCount] = false;\n                        }\n                    }\n                    outputPositions[outputPositionCount] = position;\n                    outputPositionCount++;\n                }\n            }"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "        int streamPosition = 0;\n        for (int i = 0; i < positionCount; i++) {\n            int position = positions[i];\n            if (position > streamPosition) {\n                skip(position - streamPosition);\n                streamPosition = position;\n            }\n\n            if (presentStream != null && !presentStream.nextBit()) {\n                nulls[i] = true;\n            }\n            else {\n                values[i] = dataStream.next();\n                if (presentStream != null) {\n                    nulls[i] = false;\n                }\n            }\n            streamPosition++;\n        }",
+    "replace": "        int streamPosition = 0;\n        boolean hasPresentStream = presentStream != null;\n        for (int i = 0; i < positionCount; i++) {\n            int position = positions[i];\n            if (position > streamPosition) {\n                skip(position - streamPosition);\n                streamPosition = position;\n            }\n\n            if (hasPresentStream && !presentStream.nextBit()) {\n                nulls[i] = true;\n            }\n            else {\n                values[i] = dataStream.next();\n                if (hasPresentStream) {\n                    nulls[i] = false;\n                }\n            }\n            streamPosition++;\n        }"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "        if (readOffset < offset) {\n            skip(offset - readOffset);\n        }\n\n        int streamPosition = 0;\n        if (dataStream == null && presentStream != null) {\n            streamPosition = readAllNulls(positions, positionCount);\n        }\n        else if (filter == null) {\n            streamPosition = readNoFilter(positions, positionCount);\n        }\n        else {\n            streamPosition = readWithFilter(positions, positionCount);\n        }",
+    "replace": "        if (readOffset < offset) {\n            skip(offset - readOffset);\n        }\n\n        int streamPosition;\n        if (dataStream == null && presentStream != null) {\n            streamPosition = readAllNulls(positions, positionCount);\n        }\n        else if (filter == null) {\n            streamPosition = readNoFilter(positions, positionCount);\n        }\n        else {\n            streamPosition = readWithFilter(positions, positionCount);\n        }"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "    private void skip(int items)\n            throws IOException\n    {\n        if (dataStream == null) {\n            presentStream.skip(items);\n        }\n        else if (presentStream != null) {\n            int dataToSkip = presentStream.countBitsSet(items);\n            dataStream.skip(dataToSkip);\n        }\n        else {\n            dataStream.skip(items);\n        }\n    }",
+    "replace": "    private void skip(int items)\n            throws IOException\n    {\n        if (dataStream == null) {\n            presentStream.skip(items);\n        }\n        else if (presentStream != null) {\n            if (items > 0) {\n                int dataToSkip = presentStream.countBitsSet(items);\n                if (dataToSkip > 0) {\n                    dataStream.skip(dataToSkip);\n                }\n            }\n        }\n        else {\n            dataStream.skip(items);\n        }\n    }"
+  }
+]
+```

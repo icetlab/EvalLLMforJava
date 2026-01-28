@@ -1,0 +1,61 @@
+Looking at the performance issue description: "Creation of unnecessary sets in AclAuthorizer.acls() method causes performance degradation."
+
+The issue likely refers to the `acls` method in `AclAuthorizer.scala` which currently creates multiple intermediate sets when filtering ACLs. Specifically, in the `acls` method:
+
+```scala
+override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {
+  inReadLock(lock) {
+    unorderedAcls.flatMap { case (resource, versionedAcls) =>
+      versionedAcls.acls.map(acl => new AclBinding(resource, acl.ace))
+          .filter(filter.matches)
+    }.asJava
+  }
+}
+```
+
+This method creates a new `AclBinding` for every ACL entry and then filters them. However, the performance issue might be more subtle. Looking at the `unorderedAcls` method:
+
+```scala
+private def unorderedAcls: Map[ResourcePattern, VersionedAcls] = aclCache
+```
+
+This returns the entire ACL cache as a Map. The `flatMap` operation then iterates over all entries, creating AclBinding objects for every ACL entry, even if they don't match the filter. This could be inefficient when the cache is large and the filter is selective.
+
+A better approach would be to filter at the resource level first, since `AclBindingFilter` can filter by resource pattern. We can check if the resource matches the filter before iterating through all ACLs for that resource.
+
+However, looking more carefully at the `AclBindingFilter.matches` method, it needs to check both the resource and the ACL entry. We can optimize by:
+1. First checking if the resource pattern matches the filter's resource pattern filter
+2. Only then iterate through the ACLs for that resource
+
+But note: `filter.matches` on an `AclBinding` checks both resource and entry. We need to separate these checks.
+
+Actually, looking at the `AclBindingFilter` class, it has two components: `patternFilter` and `entryFilter`. We can use these separately to optimize.
+
+Here's the optimization plan:
+1. First filter resources by `patternFilter.matches(resource)`
+2. For matching resources, filter ACLs by `entryFilter.matches(acl)`
+3. Only create `AclBinding` objects for matching pairs
+
+This avoids creating `AclBinding` objects for non-matching resources or ACLs.
+
+Let's implement this change:
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n    inReadLock(lock) {\n      unorderedAcls.flatMap { case (resource, versionedAcls) =>\n        versionedAcls.acls.map(acl => new AclBinding(resource, acl.ace))\n            .filter(filter.matches)\n      }.asJava\n    }\n  }",
+    "replace": "  override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n    inReadLock(lock) {\n      val result = new java.util.ArrayList[AclBinding]\n      unorderedAcls.foreach { case (resource, versionedAcls) =>\n        if (filter.patternFilter.matches(resource)) {\n          versionedAcls.acls.foreach { acl =>\n            if (filter.entryFilter.matches(acl.ace)) {\n              result.add(new AclBinding(resource, acl.ace))\n            }\n          }\n        }\n      }\n      result\n    }\n  }"
+  }
+]
+```
+
+This change:
+1. Uses mutable collection `ArrayList` for efficiency (avoids intermediate immutable collections)
+2. Filters by resource first before iterating through ACLs
+3. Only creates `AclBinding` objects for matching resource-ACL pairs
+4. Returns the Java collection directly without additional conversion
+
+This should significantly reduce object creation and improve performance when the ACL cache is large and filters are selective.
+
+Note: We need to ensure we're using the correct imports. The current code uses `lang.Iterable` from Java, and we're returning an `ArrayList` which implements that interface.

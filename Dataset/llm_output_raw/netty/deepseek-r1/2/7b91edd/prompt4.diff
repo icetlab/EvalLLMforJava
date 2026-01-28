@@ -1,0 +1,47 @@
+diff --git a/common/src/main/java/io/netty/util/NetUtil.java b/common/src/main/java/io/netty/util/NetUtil.java
+index fbe09ea676..af73b60d09 100644
+--- a/common/src/main/java/io/netty/util/NetUtil.java
++++ b/common/src/main/java/io/netty/util/NetUtil.java
+@@ -728,7 +728,9 @@ public final class NetUtil {
+                         currentIndex + 1 >= bytes.length) {
+                     return null;
+                 }
+-                value <<= (IPV6_MAX_CHAR_BETWEEN_SEPARATOR - (i - begin)) << 2;
++                // Optimized shift calculation: compute once
++                int shift = (IPV6_MAX_CHAR_BETWEEN_SEPARATOR - (i - begin)) << 2;
++                value <<= shift;
+ 
+                 if (compressLength > 0) {
+                     compressLength -= 2;
+@@ -775,7 +777,9 @@ public final class NetUtil {
+                                  tmp == 1 && !isValidNumericChar(ip.charAt(i - 1))))) {
+                     return null;
+                 }
+-                value <<= (IPV4_MAX_CHAR_BETWEEN_SEPARATOR - tmp) << 2;
++                // Optimized shift calculation: compute once
++                int shift = (IPV4_MAX_CHAR_BETWEEN_SEPARATOR - tmp) << 2;
++                value <<= shift;
+ 
+                 // The value integer holds at most 3 bytes from right (most significant) to left (least significant).
+                 // The following bit shifting is to restructure the bytes to be left (most significant) to
+@@ -801,7 +805,19 @@ public final class NetUtil {
+                 // at most 4 consecutive bytes we can use bit shifting to accomplish this.
+                 // The most significant byte will be encountered first, and reside in the right most
+                 // position of the following integer
+-                value += StringUtil.decodeHexNibble(c) << ((i - begin) << 2);
++                // Optimized: precompute shift and use direct hex lookup
++                int shift = (i - begin) << 2;
++                int digit;
++                if (c >= '0' && c <= '9') {
++                    digit = c - '0';
++                } else if (c >= 'a' && c <= 'f') {
++                    digit = c - 'a' + 10;
++                } else if (c >= 'A' && c <= 'F') {
++                    digit = c - 'A' + 10;
++                } else {
++                    return null;
++                }
++                value += digit << shift;
+                 break;
+             }
+         }

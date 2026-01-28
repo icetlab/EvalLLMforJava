@@ -1,0 +1,59 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
+index 30e0088e35..cc7c71601e 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
+@@ -431,12 +431,10 @@ public class OptimizedPartitionedOutputOperator
+ 
+         public void partitionPage(Page page)
+         {
+-            // Populate positions to copy for each destination partition.
++            // First, count the number of positions for each partition.
+             int positionCount = page.getPositionCount();
+-
+-            for (int i = 0; i < partitionBuffers.length; i++) {
+-                partitionBuffers[i].resetPositions(positionCount);
+-            }
++            int[] partitionAssignments = new int[positionCount];
++            int[] partitionCounts = new int[partitionBuffers.length];
+ 
+             Block nullBlock = nullChannel.isPresent() ? page.getBlock(nullChannel.getAsInt()) : null;
+             Page partitionFunctionArgs = getPartitionFunctionArguments(page);
+@@ -446,14 +444,35 @@ public class OptimizedPartitionedOutputOperator
+                         nullBlock != null && nullBlock.isNull(position);
+ 
+                 if (shouldReplicate) {
++                    partitionAssignments[position] = -1;
+                     for (int i = 0; i < partitionBuffers.length; i++) {
+-                        partitionBuffers[i].addPosition(position);
++                        partitionCounts[i]++;
++                    }
++                    if (replicatesAnyRow && !hasAnyRowBeenReplicated) {
++                        hasAnyRowBeenReplicated = true;
+                     }
+-                    hasAnyRowBeenReplicated = true;
+                 }
+                 else {
+                     int partition = partitionFunction.getPartition(partitionFunctionArgs, position);
+-                    partitionBuffers[partition].addPosition(position);
++                    partitionAssignments[position] = partition;
++                    partitionCounts[partition]++;
++                }
++            }
++
++            // Then, reset the positions array for each partition with the exact count.
++            for (int i = 0; i < partitionBuffers.length; i++) {
++                partitionBuffers[i].resetPositions(partitionCounts[i]);
++            }
++
++            // Then, second pass to add positions.
++            for (int position = 0; position < positionCount; position++) {
++                if (partitionAssignments[position] == -1) {
++                    for (int i = 0; i < partitionBuffers.length; i++) {
++                        partitionBuffers[i].addPosition(position);
++                    }
++                }
++                else {
++                    partitionBuffers[partitionAssignments[position]].addPosition(position);
+                 }
+             }
+ 

@@ -1,0 +1,21 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapConcatFunction.java b/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapConcatFunction.java
+index 24e83bddde..5073df501a 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapConcatFunction.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapConcatFunction.java
+@@ -40,7 +40,15 @@ public final class MapConcatFunction
+             @SqlType("map(K,V)") Block leftMap,
+             @SqlType("map(K,V)") Block rightMap)
+     {
+-        TypedSet typedSet = new TypedSet(keyType, rightMap.getPositionCount());
++        int leftCount = leftMap.getPositionCount();
++        int rightCount = rightMap.getPositionCount();
++        if (rightCount == 0) {
++            return leftMap;
++        }
++        if (leftCount == 0) {
++            return rightMap;
++        }
++        TypedSet typedSet = new TypedSet(keyType, rightCount);
+         BlockBuilder blockBuilder = new InterleavedBlockBuilder(ImmutableList.of(keyType, valueType), new BlockBuilderStatus(), leftMap.getPositionCount() + rightMap.getPositionCount());
+         for (int i = 0; i < rightMap.getPositionCount(); i += 2) {
+             typedSet.add(rightMap, i);

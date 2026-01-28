@@ -1,0 +1,23 @@
+The primary improvement is to optimize the `checkedAdd` method in both `RoaringBitmap` and `MutableRoaringBitmap`. The current implementation unconditionally updates the container reference, even when no new element is added and the container itself hasn't changed. The proposed change makes this update conditional on the container instance changing, which avoids unnecessary writes, especially when adding duplicate values. This is particularly beneficial for container types that are not modified in-place (like `ArrayContainer`) or when no modification occurs at all.
+
+Additionally, a bug is fixed in `RoaringBitmap.contains(RoaringBitmap subset)`. The method was incorrectly advancing an iterator using the subset's container array instead of its own, which could lead to incorrect results.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java",
+    "search": "  public boolean checkedAdd(final int x) {\n    final char hb = Util.highbits(x);\n    final int i = highLowContainer.getIndex(hb);\n    if (i >= 0) {\n      Container c = highLowContainer.getContainerAtIndex(i);\n      int oldCard = c.getCardinality();\n      // we need to keep the newContainer if a switch between containers type\n      // occur, in order to get the new cardinality\n      Container newCont = c.add(Util.lowbits(x));\n      highLowContainer.setContainerAtIndex(i, newCont);\n      if (newCont.getCardinality() > oldCard) {\n        return true;\n      }\n    } else {\n      final ArrayContainer newac = new ArrayContainer();\n      highLowContainer.insertNewKeyValueAt(-i - 1, hb, newac.add(Util.lowbits(x)));\n      return true;\n    }\n    return false;\n  }",
+    "replace": "  public boolean checkedAdd(final int x) {\n    final char hb = Util.highbits(x);\n    final int i = highLowContainer.getIndex(hb);\n    if (i >= 0) {\n      Container c = highLowContainer.getContainerAtIndex(i);\n      int oldCard = c.getCardinality();\n      Container newCont = c.add(Util.lowbits(x));\n      if (newCont != c) {\n        highLowContainer.setContainerAtIndex(i, newCont);\n      }\n      return newCont.getCardinality() > oldCard;\n    } else {\n      final ArrayContainer newac = new ArrayContainer();\n      highLowContainer.insertNewKeyValueAt(-i - 1, hb, newac.add(Util.lowbits(x)));\n      return true;\n    }\n  }"
+  },
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java",
+    "search": "      } else if (s1 - s2 > 0) {\n        return false;\n      } else {\n        pos1 = subset.highLowContainer.advanceUntil(s2, pos1);\n      }",
+    "replace": "      } else if (s1 > s2) {\n        return false;\n      } else { // s1 < s2\n        pos1 = this.highLowContainer.advanceUntil(s2, pos1);\n      }"
+  },
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MutableRoaringBitmap.java",
+    "search": "  public boolean checkedAdd(final int x) {\n    final char hb = BufferUtil.highbits(x);\n    final int i = highLowContainer.getIndex(hb);\n    if (i >= 0) {\n      MappeableContainer C = highLowContainer.getContainerAtIndex(i);\n      int oldcard = C.getCardinality();\n      C = C.add(BufferUtil.lowbits(x));\n      getMappeableRoaringArray().setContainerAtIndex(i, C);\n      return C.getCardinality() > oldcard;\n    } else {\n      final MappeableArrayContainer newac = new MappeableArrayContainer();\n      getMappeableRoaringArray().insertNewKeyValueAt(-i - 1, hb, newac.add(BufferUtil.lowbits(x)));\n      return true;\n    }\n  }",
+    "replace": "  public boolean checkedAdd(final int x) {\n    final char hb = BufferUtil.highbits(x);\n    final int i = highLowContainer.getIndex(hb);\n    if (i >= 0) {\n      MappeableContainer c = highLowContainer.getContainerAtIndex(i);\n      int oldcard = c.getCardinality();\n      MappeableContainer newCont = c.add(BufferUtil.lowbits(x));\n      if (newCont != c) {\n        getMappeableRoaringArray().setContainerAtIndex(i, newCont);\n      }\n      return newCont.getCardinality() > oldcard;\n    } else {\n      final MappeableArrayContainer newac = new MappeableArrayContainer();\n      getMappeableRoaringArray().insertNewKeyValueAt(-i - 1, hb, newac.add(BufferUtil.lowbits(x)));\n      return true;\n    }\n  }"
+  }
+]
+```

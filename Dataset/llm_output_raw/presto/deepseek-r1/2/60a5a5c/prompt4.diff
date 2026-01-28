@@ -1,0 +1,39 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java b/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java
+index 74b77228f0..05b587cb3c 100644
+--- a/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java
++++ b/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java
+@@ -46,6 +46,8 @@ public class PagesSerde
+     private final Optional<Compressor> compressor;
+     private final Optional<Decompressor> decompressor;
+     private final Optional<SpillCipher> spillCipher;
++    private ByteBuffer compressionBuffer;
++    private ByteBuffer decompressionBuffer;
+ 
+     public PagesSerde(BlockEncodingSerde blockEncodingSerde, Optional<Compressor> compressor, Optional<Decompressor> decompressor, Optional<SpillCipher> spillCipher)
+     {
+@@ -66,7 +68,11 @@ public class PagesSerde
+         byte markers = PageCodecMarker.none();
+ 
+         if (compressor.isPresent()) {
+-            ByteBuffer compressionBuffer = ByteBuffer.allocate(compressor.get().maxCompressedLength(uncompressedSize));
++            int maxCompressedLength = compressor.get().maxCompressedLength(uncompressedSize);
++            if (compressionBuffer == null || compressionBuffer.capacity() < maxCompressedLength) {
++                compressionBuffer = ByteBuffer.allocate(maxCompressedLength);
++            }
++            compressionBuffer.clear();
+             compressor.get().compress(slice.toByteBuffer(), compressionBuffer);
+             compressionBuffer.flip();
+             if ((((double) compressionBuffer.remaining()) / uncompressedSize) <= MINIMUM_COMPRESSION_RATIO) {
+@@ -103,8 +109,10 @@ public class PagesSerde
+             checkState(decompressor.isPresent(), "Page is compressed, but decompressor is missing");
+ 
+             int uncompressedSize = serializedPage.getUncompressedSizeInBytes();
+-            ByteBuffer decompressionBuffer = ByteBuffer.allocate(uncompressedSize);
+-
++            if (decompressionBuffer == null || decompressionBuffer.capacity() < uncompressedSize) {
++                decompressionBuffer = ByteBuffer.allocate(uncompressedSize);
++            }
++            decompressionBuffer.clear();
+             decompressor.get().decompress(slice.toByteBuffer(), decompressionBuffer);
+             decompressionBuffer.flip();
+             checkState(decompressionBuffer.remaining() == uncompressedSize);

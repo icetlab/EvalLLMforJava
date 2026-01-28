@@ -1,0 +1,33 @@
+diff --git a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+index 679b59249d..acb36ebaea 100644
+--- a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
++++ b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+@@ -33,6 +33,9 @@ public final class Checksums {
+     private Checksums() {
+     }
+ 
++    // Thread-local scratch buffer for bulk reads of direct ByteBuffers
++    private static final ThreadLocal<byte[]> BUFFER = ThreadLocal.withInitial(() -> new byte[1024]);
++
+     public static void update(Checksum checksum, ByteBuffer buffer, int length) {
+         update(checksum, buffer, 0, length);
+     }
+@@ -42,8 +45,16 @@ public final class Checksums {
+             checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);
+         } else {
+             int start = buffer.position() + offset;
+-            for (int i = start; i < start + length; i++)
+-                checksum.update(buffer.get(i));
++            // Bulk-copy into a thread-local byte[] and update in one call
++            ByteBuffer slice = buffer.duplicate();
++            slice.position(start).limit(start + length);
++            byte[] temp = BUFFER.get();
++            if (temp.length < length) {
++                temp = new byte[length];
++                BUFFER.set(temp);
++            }
++            slice.get(temp, 0, length);
++            checksum.update(temp, 0, length);
+         }
+     }
+     

@@ -1,0 +1,11 @@
+I’ve optimized removeExpiredProducers to avoid intermediate list allocations by removing entries in-place via iterators, updating the producer count only once. This reduces GC pressure and improves throughput when expiring many entries.
+
+```json
+[
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "public void removeExpiredProducers(long currentTimeMs) {\n        List<Long> keys = producers.entrySet().stream()\n                .filter(entry -> isProducerExpired(currentTimeMs, entry.getValue()))\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        removeProducerIds(keys);\n\n        List<Long> verificationKeys = verificationStates.entrySet().stream()\n                .filter(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs())\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        verificationKeys.forEach(verificationStates::remove);\n    }",
+    "replace": "public void removeExpiredProducers(long currentTimeMs) {\n        // Remove expired producers without intermediate collections\n        Iterator<Map.Entry<Long, ProducerStateEntry>> iter = producers.entrySet().iterator();\n        while (iter.hasNext()) {\n            Map.Entry<Long, ProducerStateEntry> entry = iter.next();\n            if (isProducerExpired(currentTimeMs, entry.getValue()))\n                iter.remove();\n        }\n        producerIdCount = producers.size();\n\n        // Remove expired verification entries in-place\n        Iterator<Map.Entry<Long, VerificationStateEntry>> vIter = verificationStates.entrySet().iterator();\n        while (vIter.hasNext()) {\n            Map.Entry<Long, VerificationStateEntry> entry = vIter.next();\n            if (currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs())\n                vIter.remove();\n        }\n    }"
+  }
+]
+```

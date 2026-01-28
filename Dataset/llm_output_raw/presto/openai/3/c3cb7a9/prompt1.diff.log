@@ -1,0 +1,16 @@
+I’ve optimized the construction of `unGroupedOrderChannels` and `unGroupedOrdering` to avoid creating intermediate Guava iterables, reducing object churn and iteration overhead by building them directly with `ArrayList`. I also added the necessary import.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java",
+    "search": "import javax.annotation.Nullable;\n\nimport java.util.List;\nimport java.util.Map;\nimport java.util.Objects;\nimport java.util.Optional;\nimport java.util.OptionalInt;\nimport java.util.concurrent.atomic.AtomicReference;\nimport java.util.function.BiPredicate;\nimport java.util.stream.Stream;",
+    "replace": "import javax.annotation.Nullable;\n\nimport java.util.List;\nimport java.util.ArrayList;\nimport java.util.Map;\nimport java.util.Objects;\nimport java.util.Optional;\nimport java.util.OptionalInt;\nimport java.util.concurrent.atomic.AtomicReference;\nimport java.util.function.BiPredicate;\nimport java.util.stream.Stream;"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java",
+    "search": "List<Integer> unGroupedPartitionChannels = partitionChannels.stream()\n                .filter(channel -> !preGroupedChannels.contains(channel))\n                .collect(toImmutableList());\n        List<Integer> preSortedChannels = sortChannels.stream()\n                .limit(preSortedChannelPrefix)\n                .collect(toImmutableList());\n\n        List<Integer> unGroupedOrderChannels = ImmutableList.copyOf(concat(unGroupedPartitionChannels, sortChannels));\n        List<SortOrder> unGroupedOrdering = ImmutableList.copyOf(concat(nCopies(unGroupedPartitionChannels.size(), ASC_NULLS_LAST), sortOrder));",
+    "replace": "List<Integer> unGroupedPartitionChannels = partitionChannels.stream()\n                .filter(channel -> !preGroupedChannels.contains(channel))\n                .collect(toImmutableList());\n        List<Integer> preSortedChannels = sortChannels.stream()\n                .limit(preSortedChannelPrefix)\n                .collect(toImmutableList());\n\n        // Build unGroupedOrderChannels directly to avoid intermediate iterables\n        List<Integer> unGroupedOrderChannels = new ArrayList<>(unGroupedPartitionChannels.size() + sortChannels.size());\n        unGroupedOrderChannels.addAll(unGroupedPartitionChannels);\n        unGroupedOrderChannels.addAll(sortChannels);\n        // Build unGroupedOrdering directly to avoid intermediate iterables\n        List<SortOrder> unGroupedOrdering = new ArrayList<>(unGroupedPartitionChannels.size() + sortOrder.size());\n        for (int i = 0; i < unGroupedPartitionChannels.size(); i++) {\n            unGroupedOrdering.add(ASC_NULLS_LAST);\n        }\n        unGroupedOrdering.addAll(sortOrder);"
+  }
+]
+```

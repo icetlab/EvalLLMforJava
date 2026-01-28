@@ -1,0 +1,70 @@
+diff --git a/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java b/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java
+index 0db8a4ce34..15800a757f 100644
+--- a/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java
++++ b/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java
+@@ -44,33 +44,44 @@ public class HttpRequestEncoder extends HttpObjectEncoder<HttpRequest> {
+         String uri = request.uri();
+ 
+         if (uri.isEmpty()) {
+-            uri += SLASH;
++            buf.writeByte(SLASH);
++            buf.writeByte(SP);
++            request.protocolVersion().encode(buf);
++            buf.writeBytes(CRLF);
++            return;
++        }
++        
++        int start = uri.indexOf("://");
++        if (start == -1 || uri.charAt(0) == SLASH) {
++            // Relative URI or already starts with slash - write as-is
++            buf.writeCharSequence(uri, CharsetUtil.UTF_8);
+         } else {
+-            int start = uri.indexOf("://");
+-            if (start != -1 && uri.charAt(0) != SLASH) {
+-                int startIndex = start + 3;
+-                // Correctly handle query params.
+-                // See https://github.com/netty/netty/issues/2732
+-                int index = uri.indexOf(QUESTION_MARK, startIndex);
+-                if (index == -1) {
+-                    if (uri.lastIndexOf(SLASH) <= startIndex) {
+-                        uri += SLASH;
+-                    }
++            int startIndex = start + 3;
++            int queryIndex = uri.indexOf(QUESTION_MARK, startIndex);
++            
++            // Find the last slash before query params (or end of string)
++            int lastSlashBeforeQuery = (queryIndex == -1) 
++                ? uri.lastIndexOf(SLASH) 
++                : uri.lastIndexOf(SLASH, queryIndex);
++                
++            if (lastSlashBeforeQuery <= startIndex) {
++                // Need to insert slash
++                if (queryIndex == -1) {
++                    // No query params - append slash at end
++                    buf.writeCharSequence(uri, CharsetUtil.UTF_8);
++                    buf.writeByte(SLASH);
+                 } else {
+-                    if (uri.lastIndexOf(SLASH, index) <= startIndex) {
+-                        int len = uri.length();
+-                        StringBuilder sb = new StringBuilder(len + 1);
+-                        sb.append(uri, 0, index)
+-                          .append(SLASH)
+-                          .append(uri, index, len);
+-                        uri = sb.toString();
+-                    }
++                    // Has query params - insert slash before query
++                    buf.writeCharSequence(uri, 0, queryIndex, CharsetUtil.UTF_8);
++                    buf.writeByte(SLASH);
++                    buf.writeCharSequence(uri, queryIndex, uri.length(), CharsetUtil.UTF_8);
+                 }
++            } else {
++                // Already has slash in path - write as-is
++                buf.writeCharSequence(uri, CharsetUtil.UTF_8);
+             }
+         }
+ 
+-        buf.writeCharSequence(uri, CharsetUtil.UTF_8);
+-
+         buf.writeByte(SP);
+         request.protocolVersion().encode(buf);
+         buf.writeBytes(CRLF);

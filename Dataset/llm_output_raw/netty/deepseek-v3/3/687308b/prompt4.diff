@@ -1,0 +1,77 @@
+diff --git a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
+index da5080ff85..7eaa8d8ddd 100644
+--- a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
++++ b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
+@@ -120,14 +120,24 @@ public class QueryStringEncoder {
+      * @param s The String to encode
+      */
+     private void encodeNonUtf8Component(CharSequence s) {
++        // First check if the entire string doesn't need encoding
++        if (canAppendWithoutEncoding(s)) {
++            uriBuilder.append(s);
++            return;
++        }
++        
+         //Don't allocate memory until needed
+         char[] buf = null;
+ 
+         for (int i = 0, len = s.length(); i < len;) {
+             char c = s.charAt(i);
+             if (dontNeedEncoding(c)) {
+-                uriBuilder.append(c);
+-                i++;
++                // Find the longest safe sequence to append
++                int start = i;
++                do {
++                    i++;
++                } while (i < len && dontNeedEncoding(s.charAt(i)));
++                uriBuilder.append(s, start, i);
+             } else {
+                 int index = 0;
+                 if (buf == null) {
+@@ -153,11 +163,23 @@ public class QueryStringEncoder {
+      * @see ByteBufUtil#writeUtf8(io.netty.buffer.ByteBuf, CharSequence, int, int)
+      */
+     private void encodeUtf8Component(CharSequence s) {
++        // First check if the entire string doesn't need encoding (all ASCII safe chars)
++        if (canAppendWithoutEncoding(s)) {
++            uriBuilder.append(s);
++            return;
++        }
++        
+         for (int i = 0, len = s.length(); i < len; i++) {
+             char c = s.charAt(i);
+             if (c < 0x80) {
+                 if (dontNeedEncoding(c)) {
+-                    uriBuilder.append(c);
++                    // Find the longest sequence of safe ASCII characters
++                    int start = i;
++                    do {
++                        i++;
++                    } while (i < len && (c = s.charAt(i)) < 0x80 && dontNeedEncoding(c));
++                    uriBuilder.append(s, start, i);
++                    i--; // Adjust for loop increment
+                 } else {
+                     appendEncoded(c);
+                 }
+@@ -228,4 +250,20 @@ public class QueryStringEncoder {
+         return ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9'
+                 || ch == '-' || ch == '_' || ch == '.' || ch == '*';
+     }
++
++    /**
++     * Checks if the entire string can be appended without any encoding.
++     * This is an optimization to avoid character-by-character processing.
++     *
++     * @param s the string to check
++     * @return true if no characters need encoding, false otherwise
++     */
++    private boolean canAppendWithoutEncoding(CharSequence s) {
++        for (int i = 0, len = s.length(); i < len; i++) {
++            if (!dontNeedEncoding(s.charAt(i))) {
++                return false;
++            }
++        }
++        return true;
++    }
+ }

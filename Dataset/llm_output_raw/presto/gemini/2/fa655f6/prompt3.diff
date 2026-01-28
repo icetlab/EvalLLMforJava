@@ -1,0 +1,196 @@
+diff --git a/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java b/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java
+index ea2cf982de..736f3e3035 100644
+--- a/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java
++++ b/presto-common/src/main/java/com/facebook/presto/common/block/SingleMapBlock.java
+@@ -165,19 +165,15 @@ public class SingleMapBlock
+         int hashTableOffset = offset / 2 * HASH_MULTIPLIER;
+         int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;
+         int position = computePosition(hashCode, hashTableSize);
++        try {
+             while (true) {
+                 int keyPosition = hashTable[hashTableOffset + position];
+                 if (keyPosition == -1) {
+                     return -1;
+                 }
+                 Boolean match;
+-            try {
+                 // assuming maps with indeterminate keys are not supported
+                 match = (Boolean) mapBlock.keyBlockNativeEquals.invoke(mapBlock.getRawKeyBlock(), offset / 2 + keyPosition, nativeValue);
+-            }
+-            catch (Throwable throwable) {
+-                throw handleThrowable(throwable);
+-            }
+                 checkNotIndeterminate(match);
+                 if (match) {
+                     return keyPosition * 2 + 1;
+@@ -188,6 +184,10 @@ public class SingleMapBlock
+                 }
+             }
+         }
++        catch (Throwable throwable) {
++            throw handleThrowable(throwable);
++        }
++    }
+ 
+     // The next 5 seekKeyExact functions are the same as seekKey
+     // except MethodHandle.invoke is replaced with invokeExact.
+@@ -212,19 +212,15 @@ public class SingleMapBlock
+         int hashTableOffset = offset / 2 * HASH_MULTIPLIER;
+         int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;
+         int position = computePosition(hashCode, hashTableSize);
++        try {
+             while (true) {
+                 int keyPosition = hashTable[hashTableOffset + position];
+                 if (keyPosition == -1) {
+                     return -1;
+                 }
+                 Boolean match;
+-            try {
+                 // assuming maps with indeterminate keys are not supported
+                 match = (Boolean) mapBlock.keyBlockNativeEquals.invokeExact(mapBlock.getRawKeyBlock(), offset / 2 + keyPosition, nativeValue);
+-            }
+-            catch (Throwable throwable) {
+-                throw handleThrowable(throwable);
+-            }
+                 checkNotIndeterminate(match);
+                 if (match) {
+                     return keyPosition * 2 + 1;
+@@ -235,6 +231,10 @@ public class SingleMapBlock
+                 }
+             }
+         }
++        catch (Throwable throwable) {
++            throw handleThrowable(throwable);
++        }
++    }
+ 
+     public int seekKeyExact(boolean nativeValue)
+     {
+@@ -256,19 +256,15 @@ public class SingleMapBlock
+         int hashTableOffset = offset / 2 * HASH_MULTIPLIER;
+         int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;
+         int position = computePosition(hashCode, hashTableSize);
++        try {
+             while (true) {
+                 int keyPosition = hashTable[hashTableOffset + position];
+                 if (keyPosition == -1) {
+                     return -1;
+                 }
+                 Boolean match;
+-            try {
+                 // assuming maps with indeterminate keys are not supported
+                 match = (Boolean) mapBlock.keyBlockNativeEquals.invokeExact(mapBlock.getRawKeyBlock(), offset / 2 + keyPosition, nativeValue);
+-            }
+-            catch (Throwable throwable) {
+-                throw handleThrowable(throwable);
+-            }
+                 checkNotIndeterminate(match);
+                 if (match) {
+                     return keyPosition * 2 + 1;
+@@ -279,6 +275,10 @@ public class SingleMapBlock
+                 }
+             }
+         }
++        catch (Throwable throwable) {
++            throw handleThrowable(throwable);
++        }
++    }
+ 
+     public int seekKeyExact(double nativeValue)
+     {
+@@ -300,19 +300,15 @@ public class SingleMapBlock
+         int hashTableOffset = offset / 2 * HASH_MULTIPLIER;
+         int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;
+         int position = computePosition(hashCode, hashTableSize);
++        try {
+             while (true) {
+                 int keyPosition = hashTable[hashTableOffset + position];
+                 if (keyPosition == -1) {
+                     return -1;
+                 }
+                 Boolean match;
+-            try {
+                 // assuming maps with indeterminate keys are not supported
+                 match = (Boolean) mapBlock.keyBlockNativeEquals.invokeExact(mapBlock.getRawKeyBlock(), offset / 2 + keyPosition, nativeValue);
+-            }
+-            catch (Throwable throwable) {
+-                throw handleThrowable(throwable);
+-            }
+                 checkNotIndeterminate(match);
+                 if (match) {
+                     return keyPosition * 2 + 1;
+@@ -323,6 +319,10 @@ public class SingleMapBlock
+                 }
+             }
+         }
++        catch (Throwable throwable) {
++            throw handleThrowable(throwable);
++        }
++    }
+ 
+     public int seekKeyExact(Slice nativeValue)
+     {
+@@ -344,19 +344,15 @@ public class SingleMapBlock
+         int hashTableOffset = offset / 2 * HASH_MULTIPLIER;
+         int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;
+         int position = computePosition(hashCode, hashTableSize);
++        try {
+             while (true) {
+                 int keyPosition = hashTable[hashTableOffset + position];
+                 if (keyPosition == -1) {
+                     return -1;
+                 }
+                 Boolean match;
+-            try {
+                 // assuming maps with indeterminate keys are not supported
+                 match = (Boolean) mapBlock.keyBlockNativeEquals.invokeExact(mapBlock.getRawKeyBlock(), offset / 2 + keyPosition, nativeValue);
+-            }
+-            catch (Throwable throwable) {
+-                throw handleThrowable(throwable);
+-            }
+                 checkNotIndeterminate(match);
+                 if (match) {
+                     return keyPosition * 2 + 1;
+@@ -367,6 +363,10 @@ public class SingleMapBlock
+                 }
+             }
+         }
++        catch (Throwable throwable) {
++            throw handleThrowable(throwable);
++        }
++    }
+ 
+     public int seekKeyExact(Block nativeValue)
+     {
+@@ -388,19 +388,15 @@ public class SingleMapBlock
+         int hashTableOffset = offset / 2 * HASH_MULTIPLIER;
+         int hashTableSize = positionCount / 2 * HASH_MULTIPLIER;
+         int position = computePosition(hashCode, hashTableSize);
++        try {
+             while (true) {
+                 int keyPosition = hashTable[hashTableOffset + position];
+                 if (keyPosition == -1) {
+                     return -1;
+                 }
+                 Boolean match;
+-            try {
+                 // assuming maps with indeterminate keys are not supported
+                 match = (Boolean) mapBlock.keyBlockNativeEquals.invokeExact(mapBlock.getRawKeyBlock(), offset / 2 + keyPosition, nativeValue);
+-            }
+-            catch (Throwable throwable) {
+-                throw handleThrowable(throwable);
+-            }
+                 checkNotIndeterminate(match);
+                 if (match) {
+                     return keyPosition * 2 + 1;
+@@ -411,6 +407,10 @@ public class SingleMapBlock
+                 }
+             }
+         }
++        catch (Throwable throwable) {
++            throw handleThrowable(throwable);
++        }
++    }
+ 
+     private static RuntimeException handleThrowable(Throwable throwable)
+     {

@@ -1,0 +1,11 @@
+This change optimizes the `array_distinct` function for small arrays (size 0, 1, and 2) by handling them with specialized, more efficient logic. This avoids the overhead of creating a `TypedSet` and a `BlockBuilder`. For arrays of size 0 or 1, which are inherently distinct, the original array is returned directly. For arrays of size 2, the two elements are compared; if they are distinct, the original array is returned, otherwise, a new block with the single unique element is returned. For larger arrays, the original, more general implementation is retained.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java",
+    "search": "    public static Block distinct(Type type, Block array)\n    {\n        if (array.getPositionCount() == 0) {\n            return array;\n        }\n\n        TypedSet typedSet = new TypedSet(type, array.getPositionCount());\n        BlockBuilder distinctElementBlockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), array.getPositionCount());\n        for (int i = 0; i < array.getPositionCount(); i++) {\n            if (!typedSet.contains(array, i)) {\n                typedSet.add(array, i);\n                type.appendTo(array, i, distinctElementBlockBuilder);\n            }\n        }\n\n        return distinctElementBlockBuilder.build();\n    }",
+    "replace": "    public static Block distinct(Type type, Block array)\n    {\n        int positionCount = array.getPositionCount();\n        if (positionCount <= 1) {\n            return array;\n        }\n\n        if (positionCount == 2) {\n            if (type.equalTo(array, 0, array, 1)) {\n                return array.getSingleValueBlock(0);\n            }\n            return array;\n        }\n\n        TypedSet typedSet = new TypedSet(type, positionCount);\n        BlockBuilder distinctElementBlockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), positionCount);\n        for (int i = 0; i < positionCount; i++) {\n            if (!typedSet.contains(array, i)) {\n                typedSet.add(array, i);\n                type.appendTo(array, i, distinctElementBlockBuilder);\n            }\n        }\n\n        return distinctElementBlockBuilder.build();\n    }"
+  }
+]
+```

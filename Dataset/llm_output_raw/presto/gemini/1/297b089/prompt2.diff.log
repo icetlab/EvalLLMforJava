@@ -1,0 +1,29 @@
+The primary performance issue is in the `prepareForNextRead` method of `SliceDirectSelectiveStreamReader`. This method reads value lengths into `lengthVector` and then iterates over this vector to calculate the `totalLength` and `maxLength`.
+
+My improvements address this in two ways:
+
+1.  **Removal of Unused `maxLength` Calculation**: The `useBatchMode` method is hardcoded to return `true`. Consequently, the code path that uses `maxLength` is never executed, making its calculation redundant. Removing the `maxLength` computation from the loops simplifies the code and eliminates unnecessary `Math.max` calls, providing a minor performance boost.
+
+2.  **Prevention of Integer Overflow**: The `totalLength` was calculated using an `int` accumulator, which could lead to integer overflow if the sum of lengths exceeds `Integer.MAX_VALUE`. This is a correctness issue that could lead to unexpected behavior or errors. I've changed the accumulation to use a `long` variable and then safely cast it back to an `int` using `toIntExact()`. This ensures that any overflow is caught and handled properly with an exception, improving the robustness of the reader.
+
+These changes together make the length vector processing more efficient and correct.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java",
+    "search": "        int totalLength = 0;\n        int maxLength = 0;",
+    "replace": "        int totalLength = 0;"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java",
+    "search": "            if (useBatchMode(positionCount, totalPositions)) {\n                for (int i = 0; i < nonNullCount; i++) {\n                    totalLength += lengthVector[i];\n                    maxLength = Math.max(maxLength, lengthVector[i]);\n                }\n            }\n            else {\n                int positionIndex = 0;\n                int lengthIndex = 0;\n                for (int i = 0; i < totalPositions; i++) {\n                    boolean isNotNull = nullCount == 0 || !isNullVector[i];\n                    if (i == positions[positionIndex]) {\n                        if (isNotNull) {\n                            totalLength += lengthVector[lengthIndex];\n                            maxLength = Math.max(maxLength, lengthVector[lengthIndex]);\n                            lengthIndex++;\n                        }\n                        positionIndex++;\n                    }\n                    else if (isNotNull) {\n                        lengthIndex++;\n                    }\n                }\n            }",
+    "replace": "            if (useBatchMode(positionCount, totalPositions)) {\n                long sum = 0;\n                for (int i = 0; i < nonNullCount; i++) {\n                    sum += lengthVector[i];\n                }\n                totalLength = toIntExact(sum);\n            }\n            else {\n                long sum = 0;\n                int positionIndex = 0;\n                int lengthIndex = 0;\n                for (int i = 0; i < totalPositions; i++) {\n                    boolean isNotNull = nullCount == 0 || !isNullVector[i];\n                    if (i == positions[positionIndex]) {\n                        if (isNotNull) {\n                            sum += lengthVector[lengthIndex];\n                            lengthIndex++;\n                        }\n                        positionIndex++;\n                    }\n                    else if (isNotNull) {\n                        lengthIndex++;\n                    }\n                }\n                totalLength = toIntExact(sum);\n            }"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java",
+    "search": "            else {\n                dataLength = maxLength;\n            }",
+    "replace": "            else {\n                dataLength = 0;\n            }"
+  }
+]
+```

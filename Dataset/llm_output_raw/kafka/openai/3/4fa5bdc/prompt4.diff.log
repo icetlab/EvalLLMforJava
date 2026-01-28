@@ -1,0 +1,16 @@
+I have optimized the ACL matching logic to eliminate intermediate collection creation in the find method and replaced per-call Set allocations for implied operations with lightweight Seq literals.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "class AclSets(sets: Set[AclEntry]*) {\n    def find(p: AclEntry => Boolean): Option[AclEntry] = sets.flatMap(_.find(p)).headOption\n    def isEmpty: Boolean = !sets.exists(_.nonEmpty)\n  }",
+    "replace": "class AclSets(sets: Set[AclEntry]*) {\n    def find(p: AclEntry => Boolean): Option[AclEntry] = {\n      val it = sets.iterator\n      while (it.hasNext) {\n        val s = it.next()\n        val elemIt = s.iterator\n        while (elemIt.hasNext) {\n          val acl = elemIt.next()\n          if (p(acl)) return Some(acl)\n        }\n      }\n      None\n    }\n    def isEmpty: Boolean = !sets.exists(_.nonEmpty)\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "def allowAclExists(acls: AclSets): Boolean = {\n      // Check if there are any Allow ACLs which would allow this operation.\n      // Allowing read, write, delete, or alter implies allowing describe.\n      // See #{org.apache.kafka.common.acl.AclOperation} for more details about ACL inheritance.\n      val allowOps = operation match {\n        case DESCRIBE => Set[AclOperation](DESCRIBE, READ, WRITE, DELETE, ALTER)\n        case DESCRIBE_CONFIGS => Set[AclOperation](DESCRIBE_CONFIGS, ALTER_CONFIGS)\n        case _ => Set[AclOperation](operation)\n      }\n      allowOps.exists(operation => matchingAclExists(operation, resource, principal, host, ALLOW, acls))\n    }",
+    "replace": "def allowAclExists(acls: AclSets): Boolean = {\n      // Check if there are any Allow ACLs which would allow this operation.\n      // Allowing read, write, delete, or alter implies allowing describe.\n      // See #{org.apache.kafka.common.acl.AclOperation} for more details about ACL inheritance.\n      val allowOps = operation match {\n        case DESCRIBE => Seq(DESCRIBE, READ, WRITE, DELETE, ALTER)\n        case DESCRIBE_CONFIGS => Seq(DESCRIBE_CONFIGS, ALTER_CONFIGS)\n        case _ => Seq(operation)\n      }\n      allowOps.exists(op => matchingAclExists(op, resource, principal, host, ALLOW, acls))\n    }"
+  }
+]
+```

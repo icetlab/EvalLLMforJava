@@ -1,0 +1,20 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
+index 30e0088e35..6e98b77424 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
+@@ -361,7 +361,6 @@ public class OptimizedPartitionedOutputOperator
+         // There could be queries that shuffles data with up to 1000 columns so we need to set the maxOutstandingArrays a high number.
+         private final ArrayAllocator arrayAllocator = new SimpleArrayAllocator(5000);
+         private final BlockFlattener flattener = new BlockFlattener(arrayAllocator);
+-        private final Closer blockLeaseCloser = Closer.create();
+ 
+         private final PartitionBuffer[] partitionBuffers;
+         private final List<Type> sourceTypes;
+@@ -458,6 +457,7 @@ public class OptimizedPartitionedOutputOperator
+             }
+ 
+             // Decode the page just once. The decoded blocks will be fed to each PartitionBuffer object to set up AbstractBlockEncodingBuffer.
++            Closer blockLeaseCloser = Closer.create();
+             for (int i = 0; i < decodedBlocks.length; i++) {
+                 decodedBlocks[i] = decodeBlock(flattener, blockLeaseCloser, page.getBlock(i));
+             }

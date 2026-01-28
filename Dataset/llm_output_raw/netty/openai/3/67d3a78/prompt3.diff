@@ -1,0 +1,54 @@
+diff --git a/common/src/main/java/io/netty/util/internal/PlatformDependent0.java b/common/src/main/java/io/netty/util/internal/PlatformDependent0.java
+index 3c6012601f..205827683d 100644
+--- a/common/src/main/java/io/netty/util/internal/PlatformDependent0.java
++++ b/common/src/main/java/io/netty/util/internal/PlatformDependent0.java
+@@ -439,10 +439,25 @@ final class PlatformDependent0 {
+         final long baseOffset2 = BYTE_ARRAY_BASE_OFFSET + startPos2;
+         final int remainingBytes = length & 7;
+         final long end = baseOffset1 + remainingBytes;
+-        for (long i = baseOffset1 - 8 + length, j = baseOffset2 - 8 + length; i >= end; i -= 8, j -= 8) {
++
++        long i = baseOffset1 - 8 + length;
++        long j = baseOffset2 - 8 + length;
++        // process 16 bytes per iteration
++        while (i - 8 >= end) {
++            if (UNSAFE.getLong(bytes1, i) != UNSAFE.getLong(bytes2, j) ||
++                UNSAFE.getLong(bytes1, i - 8) != UNSAFE.getLong(bytes2, j - 8)) {
++                return false;
++            }
++            i -= 16;
++            j -= 16;
++        }
++        // process remaining 8 bytes if any
++        if (i >= end) {
+             if (UNSAFE.getLong(bytes1, i) != UNSAFE.getLong(bytes2, j)) {
+                 return false;
+             }
++            i -= 8;
++            j -= 8;
+         }
+         switch (remainingBytes) {
+         case 7:
+@@ -475,8 +490,21 @@ final class PlatformDependent0 {
+         final long baseOffset2 = BYTE_ARRAY_BASE_OFFSET + startPos2;
+         final int remainingBytes = length & 7;
+         final long end = baseOffset1 + remainingBytes;
+-        for (long i = baseOffset1 - 8 + length, j = baseOffset2 - 8 + length; i >= end; i -= 8, j -= 8) {
++
++        long i = baseOffset1 - 8 + length;
++        long j = baseOffset2 - 8 + length;
++        // process 16 bytes per iteration
++        while (i - 8 >= end) {
++            result |= UNSAFE.getLong(bytes1, i) ^ UNSAFE.getLong(bytes2, j) |
++                      UNSAFE.getLong(bytes1, i - 8) ^ UNSAFE.getLong(bytes2, j - 8);
++            i -= 16;
++            j -= 16;
++        }
++        // process remaining 8 bytes if any
++        if (i >= end) {
+             result |= UNSAFE.getLong(bytes1, i) ^ UNSAFE.getLong(bytes2, j);
++            i -= 8;
++            j -= 8;
+         }
+         switch (remainingBytes) {
+             case 7:

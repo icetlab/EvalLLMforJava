@@ -1,0 +1,94 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
+index 30e0088e35..f1b8b95741 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java
+@@ -463,8 +463,11 @@ public class OptimizedPartitionedOutputOperator
+             }
+ 
+             // Copy the data to their destination partitions and flush when the buffer is full.
++            // Process partitions with data first to improve cache locality
+             for (int i = 0; i < partitionBuffers.length; i++) {
+-                partitionBuffers[i].appendData(decodedBlocks, fixedWidthRowSize, variableWidthChannels, outputBuffer);
++                if (partitionBuffers[i].positionCount > 0) {
++                    partitionBuffers[i].appendData(decodedBlocks, fixedWidthRowSize, variableWidthChannels, outputBuffer);
++                }
+             }
+ 
+             // Return all borrowed arrays
+@@ -559,15 +562,16 @@ public class OptimizedPartitionedOutputOperator
+             this.lifespan = requireNonNull(lifespan, "lifespan is null");
+         }
+ 
+-        private void resetPositions(int positionCount)
++        private void resetPositions(int maxPositionCount)
+         {
+-            positions = ensureCapacity(positions, positionCount);
++            positions = ensureCapacity(positions, maxPositionCount);
+             this.positionCount = 0;
+         }
+ 
+         private void addPosition(int position)
+         {
+-            positions[positionCount++] = position;
++            positions[positionCount] = position;
++            positionCount++;
+         }
+ 
+         private void appendData(DecodedBlockNode[] decodedBlocks, int fixedWidthRowSize, List<Integer> variableWidthChannels, OutputBuffer outputBuffer)
+@@ -637,12 +641,14 @@ public class OptimizedPartitionedOutputOperator
+ 
+             serializedRowSizes = ensureCapacity(serializedRowSizes, positionCount, SMALL, INITIALIZE);
+ 
+-            for (int i : variableWidthChannels) {
+-                blockEncodingBuffers[i].accumulateSerializedRowSizes(serializedRowSizes);
++            // Initialize with fixed width size first
++            for (int i = 0; i < positionCount; i++) {
++                serializedRowSizes[i] = fixedWidthRowSize;
+             }
+ 
+-            for (int i = 0; i < positionCount; i++) {
+-                serializedRowSizes[i] += fixedWidthRowSize;
++            // Accumulate variable width sizes
++            for (int i : variableWidthChannels) {
++                blockEncodingBuffers[i].accumulateSerializedRowSizes(serializedRowSizes);
+             }
+         }
+ 
+@@ -651,8 +657,12 @@ public class OptimizedPartitionedOutputOperator
+             int bytesRemaining = capacity - getSerializedBuffersSizeInBytes();
+ 
+             if (variableWidthChannels.isEmpty()) {
+-                int maxPositionsFit = max(bytesRemaining / fixedWidthRowSize, 1);
+-                if (maxPositionsFit <= positionCount - startPosition) {
++                int maxPositionsFit = bytesRemaining / fixedWidthRowSize;
++                if (maxPositionsFit <= 0) {
++                    bufferFull = true;
++                    return 1;  // At least one position must fit
++                }
++                if (maxPositionsFit < positionCount - startPosition) {
+                     bufferFull = true;
+                     return maxPositionsFit;
+                 }
+@@ -660,16 +670,18 @@ public class OptimizedPartitionedOutputOperator
+             }
+ 
+             verify(serializedRowSizes != null);
++            int batchSize = 0;
+             for (int i = startPosition; i < positionCount; i++) {
+                 bytesRemaining -= serializedRowSizes[i];
+-
+-                if (bytesRemaining <= 0) {
++                if (bytesRemaining < 0) {
+                     bufferFull = true;
+-                    return max(i - startPosition, 1);
++                    batchSize = i - startPosition;
++                    return batchSize == 0 ? 1 : batchSize;
+                 }
++                batchSize++;
+             }
+ 
+-            return positionCount - startPosition;
++            return batchSize;
+         }
+ 
+         private void flush(OutputBuffer outputBuffer)

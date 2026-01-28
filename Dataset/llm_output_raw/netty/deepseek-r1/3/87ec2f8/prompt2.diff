@@ -1,0 +1,17 @@
+diff --git a/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java b/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java
+index e7afab3672..219a0a59c1 100644
+--- a/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java
++++ b/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java
+@@ -760,6 +760,12 @@ public final class ByteBufUtil {
+         if (len == 0) {
+             return StringUtil.EMPTY_STRING;
+         }
++        if (src.nioBufferCount() == 1) {
++            ByteBuffer nioBuffer = src.nioBuffer(readerIndex, len);
++            if (nioBuffer.hasArray()) {
++                return new String(nioBuffer.array(), nioBuffer.arrayOffset() + nioBuffer.position(), len, charset);
++            }
++        }
+         final CharsetDecoder decoder = CharsetUtil.decoder(charset);
+         final int maxLength = (int) ((double) len * decoder.maxCharsPerByte());
+         CharBuffer dst = CHAR_BUFFERS.get();

@@ -1,0 +1,61 @@
+diff --git a/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java b/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
+index c40c836b..3ddd3934 100644
+--- a/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
++++ b/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java
+@@ -107,30 +107,23 @@ public class BitSliceIndexBase {
+     batchSize = Math.min(batchSize, 65536);
+ 
+ 
+-    List<int[]> batches = new ArrayList<>();
++    List<CompletableFuture<R>> futures = new ArrayList<>();
+ 
+     final BatchIterator batchIterator = foundSet.getBatchIterator();
+     while (batchIterator.hasNext()) {
+       int[] buffer = new int[batchSize];
+       int cardinality = batchIterator.nextBatch(buffer);
+       if (cardinality > 0) {
++        final int[] batch;
+         if (cardinality == batchSize) {
+-          batches.add(buffer);
++          batch = buffer;
+         } else {
+-          int[] buff = new int[cardinality];
+-          System.arraycopy(buffer, 0, buff, 0, cardinality);
+-          batches.add(buff);
+-        }
+-      }
++          batch = java.util.Arrays.copyOf(buffer, cardinality);
+         }
+-
+-    List<CompletableFuture<R>> futures = new ArrayList<>();
+-    for (int[] batch : batches) {
+-      CompletableFuture<R> future = invokeAsync(() -> {
+-        return func.apply(batch);
+-      }, null, pool);
++        CompletableFuture<R> future = invokeAsync(() -> func.apply(batch), null, pool);
+         futures.add(future);
+       }
++    }
+     return futures;
+   }
+ 
+@@ -319,6 +312,8 @@ public class BitSliceIndexBase {
+     long n = F.getLongCardinality() - k;
+     if (n > 0) {
+       // TODO: make faster
++      if (n > Integer.MAX_VALUE) {
++        // Fallback for large n, though it is unlikely.
+         IntIterator i = F.getIntIterator();
+         MutableRoaringBitmap turnoff = new MutableRoaringBitmap();
+         while (i.hasNext() && n > 0) {
+@@ -326,6 +321,10 @@ public class BitSliceIndexBase {
+           --n;
+         }
+         F.andNot(turnoff);
++      } else {
++        MutableRoaringBitmap turnoff = F.limit((int) n);
++        F.andNot(turnoff);
++      }
+     }
+ 
+     if (F.getCardinality() != k)

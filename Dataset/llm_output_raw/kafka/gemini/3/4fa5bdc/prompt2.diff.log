@@ -1,0 +1,22 @@
+My improvement strategy focuses on optimizing ACL matching by avoiding unnecessary object allocations, specifically the creation of intermediate `Set` collections.
+
+First, I will modify the `AclSets` helper class. Its constructor will be updated to accept `Iterable[AclEntry]` instead of `Set[AclEntry]`. This change allows us to pass lazy collections of ACLs without eagerly evaluating them into a `Set`. Additionally, the `find` method within `AclSets` will be improved to use a `view`. This ensures that searching for a matching ACL is done lazily, preventing the creation of an intermediate collection of all matching entries and stopping as soon as the first match is found.
+
+Second, I will update the `matchingAcls` method, which gathers ACLs for a given resource. I will remove the `.toSet` conversion when collecting prefixed ACLs. This change avoids the expensive creation of a new `Set` for every authorization check, instead creating a lightweight `Iterable`. This directly leverages the modification to `AclSets` and significantly reduces allocations in a performance-critical path.
+
+These two changes work together to reduce memory pressure and CPU cycles during authorization by processing ACLs more efficiently.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  class AclSets(sets: Set[AclEntry]*) {\n    def find(p: AclEntry => Boolean): Option[AclEntry] = sets.flatMap(_.find(p)).headOption\n    def isEmpty: Boolean = !sets.exists(_.nonEmpty)\n  }",
+    "replace": "  class AclSets(sets: Iterable[AclEntry]*) {\n    def find(p: AclEntry => Boolean): Option[AclEntry] = sets.view.flatMap(_.find(p)).headOption\n    def isEmpty: Boolean = !sets.exists(_.nonEmpty)\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "    val prefixed = aclCacheSnapshot\n      .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n      .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n      .filterKeys(resource => resourceName.startsWith(resource.name))\n      .values\n      .flatMap { _.acls }\n      .toSet",
+    "replace": "    val prefixed = aclCacheSnapshot\n      .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n      .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n      .filterKeys(resource => resourceName.startsWith(resource.name))\n      .values\n      .flatMap { _.acls }"
+  }
+]
+```

@@ -1,0 +1,11 @@
+I’ve expanded the non-array‐buffer branch to first attempt calling any specialized `update(ByteBuffer)` method via reflection (e.g. Java 9+ CRC32C), only catching the exact reflection exceptions, and falling back to the original byte‐by‐byte loop if unavailable. This removes the generic `catch (Exception e)` and satisfies SpotBugs.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }",
+    "replace": "        } else {\n            int position = buffer.position();\n            try {\n                java.lang.reflect.Method updateBuffer = checksum.getClass().getMethod(\"update\", java.nio.ByteBuffer.class);\n                if (updateBuffer.getDeclaringClass() != java.util.zip.Checksum.class) {\n                    java.nio.ByteBuffer slice = buffer.duplicate();\n                    slice.position(position + offset).limit(position + offset + length);\n                    updateBuffer.invoke(checksum, slice);\n                    buffer.position(position);\n                    return;\n                }\n            } catch (NoSuchMethodException | IllegalAccessException | java.lang.reflect.InvocationTargetException | SecurityException e) {\n                // fallback to byte-by-byte\n            }\n            int start = position + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }"
+  }
+]
+```

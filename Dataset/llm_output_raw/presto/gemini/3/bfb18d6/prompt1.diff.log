@@ -1,0 +1,31 @@
+The overall improvement intent is to enhance the performance and correctness of the geospatial functions. The changes focus on reducing object allocations, avoiding unnecessary processing, and using more efficient iteration patterns. Specifically:
+
+1.  **Efficient Iteration:** In `buildPointsBlock`, the logic is updated to use `geometry.apply(CoordinateFilter)`. This avoids creating a large intermediate `Coordinate[]` array when extracting points from a geometry, reducing memory pressure and improving performance for geometries with many vertices.
+2.  **Reduced Object Allocation:** In `stUnion`, the check for empty geometry slices is changed from `slice.getInput().available() == 0` to `slice.length() == 0`. This avoids the allocation of a new `SliceInput` object on each iteration.
+3.  **Early Filtering of Empty Geometries:** The `flattenCollection` helper function is simplified to filter out all types of empty geometries at the beginning. This prevents empty geometries from being passed to the union operator, reducing unnecessary processing.
+4.  **Bug Fix:** A bug in `readPointCoordinates` is fixed where it was not correctly checking for `NaN` in the y-coordinate of a point, improving the function's correctness.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "            double x = slice.readDouble();\n            double y = slice.readDouble();\n\n            if (Double.isNaN(x) || Double.isNaN(x)) {\n                throw new PrestoException(INVALID_FUNCTION_ARGUMENT, format(\"Invalid input to %s: empty point at index %s\", functionName, i + 1));\n            }",
+    "replace": "            double x = slice.readDouble();\n            double y = slice.readDouble();\n\n            if (Double.isNaN(x) || Double.isNaN(y)) {\n                throw new PrestoException(INVALID_FUNCTION_ARGUMENT, format(\"Invalid input to %s: empty point at index %s\", functionName, i + 1));\n            }"
+  },
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "        while (slicesIterator.hasNext()) {\n            Slice slice = slicesIterator.next();\n            // Ignore null inputs\n            if (slice.getInput().available() == 0) {\n                continue;\n            }",
+    "replace": "        while (slicesIterator.hasNext()) {\n            Slice slice = slicesIterator.next();\n            // Ignore null inputs\n            if (slice.length() == 0) {\n                continue;\n            }"
+  },
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "    private static Iterable<OGCGeometry> flattenCollection(OGCGeometry geometry)\n    {\n        if (geometry == null) {\n            return ImmutableList.of();\n        }\n        if (!(geometry instanceof OGCConcreteGeometryCollection)) {\n            return ImmutableList.of(geometry);\n        }\n        if (((OGCConcreteGeometryCollection) geometry).numGeometries() == 0) {\n            return ImmutableList.of();\n        }\n        return () -> new GeometryCollectionIterator(geometry);\n    }",
+    "replace": "    private static Iterable<OGCGeometry> flattenCollection(OGCGeometry geometry)\n    {\n        if (geometry == null || geometry.isEmpty()) {\n            return ImmutableList.of();\n        }\n        if (!(geometry instanceof OGCConcreteGeometryCollection)) {\n            return ImmutableList.of(geometry);\n        }\n        return () -> new GeometryCollectionIterator(geometry);\n    }"
+  },
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "    private static void buildPointsBlock(Geometry geometry, BlockBuilder blockBuilder)\n    {\n        GeometryType type = GeometryType.getForJtsGeometryType(geometry.getGeometryType());\n        if (type == GeometryType.POINT) {\n            GEOMETRY.writeSlice(blockBuilder, serialize(geometry));\n        }\n        else if (type == GeometryType.GEOMETRY_COLLECTION) {\n            GeometryCollection collection = (GeometryCollection) geometry;\n            for (int i = 0; i < collection.getNumGeometries(); i++) {\n                Geometry entry = collection.getGeometryN(i);\n                buildPointsBlock(entry, blockBuilder);\n            }\n        }\n        else {\n            GeometryFactory geometryFactory = geometry.getFactory();\n            Coordinate[] vertices = geometry.getCoordinates();\n            for (Coordinate coordinate : vertices) {\n                GEOMETRY.writeSlice(blockBuilder, serialize(geometryFactory.createPoint(coordinate)));\n            }\n        }\n    }",
+    "replace": "    private static void buildPointsBlock(Geometry geometry, BlockBuilder blockBuilder)\n    {\n        GeometryType type = GeometryType.getForJtsGeometryType(geometry.getGeometryType());\n        if (type == GeometryType.POINT) {\n            GEOMETRY.writeSlice(blockBuilder, serialize(geometry));\n        }\n        else if (type == GeometryType.GEOMETRY_COLLECTION) {\n            GeometryCollection collection = (GeometryCollection) geometry;\n            for (int i = 0; i < collection.getNumGeometries(); i++) {\n                Geometry entry = collection.getGeometryN(i);\n                buildPointsBlock(entry, blockBuilder);\n            }\n        }\n        else {\n            GeometryFactory geometryFactory = geometry.getFactory();\n            geometry.apply((Coordinate coordinate) ->\n                    GEOMETRY.writeSlice(blockBuilder, serialize(geometryFactory.createPoint(coordinate))));\n        }\n    }"
+  }
+]
+```

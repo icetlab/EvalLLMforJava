@@ -1,0 +1,16 @@
+The change pre-initializes the scheduled task queue in both constructors to eliminate repeated null-checks and lazy initialization overhead during scheduling and polling, improving throughput under heavy scheduling load.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "protected AbstractScheduledEventExecutor() {\n}",
+    "replace": "protected AbstractScheduledEventExecutor() {\n    // Pre-initialize the scheduled task queue to avoid null-checks and lazy init overhead\n    scheduledTaskQueue = new DefaultPriorityQueue<ScheduledFutureTask<?>>(\n            SCHEDULED_FUTURE_TASK_COMPARATOR,\n            // Use same initial capacity as java.util.PriorityQueue\n            11);\n}"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "protected AbstractScheduledEventExecutor(EventExecutorGroup parent) {\n        super(parent);\n    }",
+    "replace": "protected AbstractScheduledEventExecutor(EventExecutorGroup parent) {\n        super(parent);\n        // Pre-initialize the scheduled task queue to avoid null-checks and lazy init overhead\n        scheduledTaskQueue = new DefaultPriorityQueue<ScheduledFutureTask<?>>(\n                SCHEDULED_FUTURE_TASK_COMPARATOR,\n                // Use same initial capacity as java.util.PriorityQueue\n                11);\n    }"
+  }
+]
+```

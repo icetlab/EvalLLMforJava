@@ -1,0 +1,21 @@
+Looking at the compilation error, the issue is that `TypedSet.add(array, i)` returns `void`, not `boolean`. My previous change incorrectly assumed it returns a boolean indicating whether the element was added. I need to revert to using `contains()` and `add()` separately, but I can still optimize by caching the position count and potentially adding early exit optimization.
+
+However, looking more carefully at the benchmark, I see the goal is to optimize the performance. Let me check the actual `TypedSet` class to understand its API better. The compilation error shows that `add()` returns void, so I must fix this compilation issue first.
+
+The fix is to revert to the original pattern but keep the performance improvements I can still apply.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java",
+    "search": "    public static Block distinct(Type type, Block array)\n    {\n        if (array.getPositionCount() == 0) {\n            return array;\n        }\n\n        TypedSet typedSet = new TypedSet(type, array.getPositionCount());\n        BlockBuilder distinctElementBlockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), array.getPositionCount());\n        for (int i = 0; i < array.getPositionCount(); i++) {\n            if (!typedSet.contains(array, i)) {\n                typedSet.add(array, i);\n                type.appendTo(array, i, distinctElementBlockBuilder);\n            }\n        }\n\n        return distinctElementBlockBuilder.build();\n    }",
+    "replace": "    public static Block distinct(Type type, Block array)\n    {\n        int positionCount = array.getPositionCount();\n        if (positionCount == 0) {\n            return array;\n        }\n\n        TypedSet typedSet = new TypedSet(type, positionCount);\n        BlockBuilder distinctElementBlockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), positionCount);\n        for (int i = 0; i < positionCount; i++) {\n            if (!typedSet.contains(array, i)) {\n                typedSet.add(array, i);\n                type.appendTo(array, i, distinctElementBlockBuilder);\n            }\n        }\n\n        return distinctElementBlockBuilder.build();\n    }"
+  }
+]
+```
+
+This change fixes the compilation error by keeping the original logic while still providing some performance improvement by:
+1. Caching `array.getPositionCount()` to avoid repeated method calls
+2. Using the cached value consistently
+
+This should compile successfully and maintain the same functionality while offering minor performance improvement through reduced method calls.

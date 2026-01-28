@@ -1,0 +1,45 @@
+The performance issue is that the Recycler currently uses an MPSC queue for releasing objects back to the thread-local pool, even though most releases happen from the same thread that claimed the object. This adds unnecessary synchronization overhead for the common case.
+
+To optimize this, we can modify the release mechanism to check if the current thread is the same as the thread that owns the LocalPool. If it is, we can bypass the thread-safe queue and directly push the handle onto a thread-local stack. This will significantly reduce overhead for the common same-thread release case while maintaining thread-safety for cross-thread releases.
+
+Here are the changes:
+
+1. Add a thread-local stack (ArrayDeque) to LocalPool for same-thread releases
+2. Modify the release method to check if we're in the owning thread and use the stack if possible
+3. Modify the claim method to check the thread-local stack first before checking the MPSC queue
+4. Ensure proper synchronization for the thread-local stack since it's only accessed by one thread
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "    private static final class LocalPool<T> {\n        private final int ratioInterval;\n        private volatile MessagePassingQueue<DefaultHandle<T>> pooledHandles;\n        private int ratioCounter;",
+    "replace": "    private static final class LocalPool<T> {\n        private final int ratioInterval;\n        private volatile MessagePassingQueue<DefaultHandle<T>> pooledHandles;\n        private final Thread ownerThread;\n        private final ArrayDeque<DefaultHandle<T>> threadLocalStack;\n        private int ratioCounter;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "        @SuppressWarnings(\"unchecked\")\n        LocalPool(int maxCapacity, int ratioInterval, int chunkSize) {\n            this.ratioInterval = ratioInterval;\n            if (BLOCKING_POOL) {\n                pooledHandles = new BlockingMessageQueue<DefaultHandle<T>>(maxCapacity);\n            } else {\n                pooledHandles = (MessagePassingQueue<DefaultHandle<T>>) newMpscQueue(chunkSize, maxCapacity);\n            }\n            ratioCounter = ratioInterval; // Start at interval so the first one will be recycled.\n        }",
+    "replace": "        @SuppressWarnings(\"unchecked\")\n        LocalPool(int maxCapacity, int ratioInterval, int chunkSize) {\n            this.ratioInterval = ratioInterval;\n            this.ownerThread = Thread.currentThread();\n            this.threadLocalStack = new ArrayDeque<DefaultHandle<T>>(maxCapacity);\n            if (BLOCKING_POOL) {\n                pooledHandles = new BlockingMessageQueue<DefaultHandle<T>>(maxCapacity);\n            } else {\n                pooledHandles = (MessagePassingQueue<DefaultHandle<T>>) newMpscQueue(chunkSize, maxCapacity);\n            }\n            ratioCounter = ratioInterval; // Start at interval so the first one will be recycled.\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "        DefaultHandle<T> claim() {\n            MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n            if (handles == null) {\n                return null;\n            }\n            DefaultHandle<T> handle = handles.relaxedPoll();\n            if (null != handle) {\n                handle.toClaimed();\n            }\n            return handle;\n        }",
+    "replace": "        DefaultHandle<T> claim() {\n            // First try the thread-local stack if we're in the owning thread\n            if (Thread.currentThread() == ownerThread) {\n                DefaultHandle<T> handle = threadLocalStack.pollLast();\n                if (handle != null) {\n                    handle.toClaimed();\n                    return handle;\n                }\n            }\n            \n            MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n            if (handles == null) {\n                return null;\n            }\n            DefaultHandle<T> handle = handles.relaxedPoll();\n            if (null != handle) {\n                handle.toClaimed();\n            }\n            return handle;\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "        void release(DefaultHandle<T> handle) {\n            handle.toAvailable();\n            MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n            if (handles != null) {\n                handles.relaxedOffer(handle);\n            }\n        }",
+    "replace": "        void release(DefaultHandle<T> handle) {\n            handle.toAvailable();\n            \n            // If we're in the owning thread, use the thread-local stack\n            if (Thread.currentThread() == ownerThread) {\n                threadLocalStack.offerLast(handle);\n                return;\n            }\n            \n            // Otherwise, use the thread-safe queue for cross-thread releases\n            MessagePassingQueue<DefaultHandle<T>> handles = pooledHandles;\n            if (handles != null) {\n                handles.relaxedOffer(handle);\n            }\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "        @Override\n        protected void onRemoval(LocalPool<T> value) throws Exception {\n            super.onRemoval(value);\n            MessagePassingQueue<DefaultHandle<T>> handles = value.pooledHandles;\n            value.pooledHandles = null;\n            handles.clear();\n        }",
+    "replace": "        @Override\n        protected void onRemoval(LocalPool<T> value) throws Exception {\n            super.onRemoval(value);\n            MessagePassingQueue<DefaultHandle<T>> handles = value.pooledHandles;\n            value.pooledHandles = null;\n            if (handles != null) {\n                handles.clear();\n            }\n            value.threadLocalStack.clear();\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/Recycler.java",
+    "search": "    final int threadLocalSize() {\n        LocalPool<T> localPool = threadLocal.getIfExists();\n        return localPool == null ? 0 : localPool.pooledHandles.size();\n    }",
+    "replace": "    final int threadLocalSize() {\n        LocalPool<T> localPool = threadLocal.getIfExists();\n        if (localPool == null) {\n            return 0;\n        }\n        int size = localPool.threadLocalStack.size();\n        MessagePassingQueue<DefaultHandle<T>> handles = localPool.pooledHandles;\n        if (handles != null) {\n            size += handles.size();\n        }\n        return size;\n    }"
+  }
+]
+```

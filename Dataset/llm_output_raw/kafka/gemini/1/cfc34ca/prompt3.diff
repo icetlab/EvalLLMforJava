@@ -1,0 +1,110 @@
+diff --git a/core/src/main/scala/kafka/log/LogManager.scala b/core/src/main/scala/kafka/log/LogManager.scala
+index fc1e7195d7..7980323465 100755
+--- a/core/src/main/scala/kafka/log/LogManager.scala
++++ b/core/src/main/scala/kafka/log/LogManager.scala
+@@ -447,7 +447,7 @@ class LogManager(logDirs: Seq[File],
+       val pool = Executors.newFixedThreadPool(numRecoveryThreadsPerDataDir)
+       threadPools.append(pool)
+ 
+-      val logsInDir = localLogsByDir.getOrElse(dir.toString, Map()).values
++      val logsInDir = localLogsByDir.getOrElse(dir.getAbsolutePath, Map()).values
+ 
+       val jobsForDir = logsInDir.map { log =>
+         val runnable: Runnable = () => {
+@@ -467,10 +467,23 @@ class LogManager(logDirs: Seq[File],
+ 
+         // update the last flush point
+         debug(s"Updating recovery points at $dir")
+-        checkpointRecoveryOffsetsAndCleanSnapshot(dir, localLogsByDir.getOrElse(dir.toString, Map()).values.toSeq)
++        checkpointRecoveryOffsetsAndCleanSnapshot(dir, localLogsByDir.getOrElse(dir.getAbsolutePath, Map()).values.toSeq)
+ 
+         debug(s"Updating log start offsets at $dir")
+-        checkpointLogStartOffsetsInDir(dir)
++        for {
++          partitionToLog <- localLogsByDir.get(dir.getAbsolutePath)
++          checkpoint <- logStartOffsetCheckpoints.get(dir)
++        } {
++          try {
++            val logStartOffsets = partitionToLog.collect {
++              case (k, log) if log.logStartOffset > log.logSegments.head.baseOffset => k -> log.logStartOffset
++            }
++            checkpoint.write(logStartOffsets)
++          } catch {
++            case e: IOException =>
++              logDirFailureChannel.maybeAddOfflineLogDir(dir.getAbsolutePath, s"Disk error while writing to logStartOffset file in directory $dir", e)
++          }
++        }
+ 
+         // mark that the shutdown was clean by creating marker file
+         debug(s"Writing clean shutdown marker at $dir")
+@@ -568,9 +581,10 @@ class LogManager(logDirs: Seq[File],
+    * to avoid recovering the whole log on startup.
+    */
+   def checkpointLogRecoveryOffsets(): Unit = {
+-    logsByDir.foreach { case (dir, partitionToLogMap) =>
+-      liveLogDirs.find(_.getAbsolutePath.equals(dir)).foreach { f =>
+-        checkpointRecoveryOffsetsAndCleanSnapshot(f, partitionToLogMap.values.toSeq)
++    val byDir = logsByDir
++    liveLogDirs.foreach { dir =>
++      byDir.get(dir.getAbsolutePath).foreach { partitionToLogMap =>
++        checkpointRecoveryOffsetsAndCleanSnapshot(dir, partitionToLogMap.values.toSeq)
+       }
+     }
+   }
+@@ -580,7 +594,23 @@ class LogManager(logDirs: Seq[File],
+    * to avoid exposing data that have been deleted by DeleteRecordsRequest
+    */
+   def checkpointLogStartOffsets(): Unit = {
+-    liveLogDirs.foreach(checkpointLogStartOffsetsInDir)
++    val byDir = logsByDir
++    liveLogDirs.foreach { dir =>
++      for {
++        partitionToLog <- byDir.get(dir.getAbsolutePath)
++        checkpoint <- logStartOffsetCheckpoints.get(dir)
++      } {
++        try {
++          val logStartOffsets = partitionToLog.collect {
++            case (k, log) if log.logStartOffset > log.logSegments.head.baseOffset => k -> log.logStartOffset
++          }
++          checkpoint.write(logStartOffsets)
++        } catch {
++          case e: IOException =>
++            logDirFailureChannel.maybeAddOfflineLogDir(dir.getAbsolutePath, s"Disk error while writing to logStartOffset file in directory $dir", e)
++        }
++      }
++    }
+   }
+ 
+   /**
+@@ -995,17 +1025,18 @@ class LogManager(logDirs: Seq[File],
+   def allLogs: Iterable[Log] = currentLogs.values ++ futureLogs.values
+ 
+   def logsByTopic(topic: String): Seq[Log] = {
+-    (currentLogs.toList ++ futureLogs.toList).collect {
++    (currentLogs.iterator ++ futureLogs.iterator).collect {
+       case (topicPartition, log) if topicPartition.topic == topic => log
+-    }
++    }.toSeq
+   }
+ 
+   /**
+    * Map of log dir to logs by topic and partitions in that dir
+    */
+   private def logsByDir: Map[String, Map[TopicPartition, Log]] = {
+-    (this.currentLogs.toList ++ this.futureLogs.toList).toMap
+-      .groupBy { case (_, log) => log.parentDir }
++    (currentLogs.iterator ++ futureLogs.iterator).toSeq
++      .groupBy(_._2.parentDir)
++      .map { case (dir, tpLogs) => dir -> tpLogs.toMap }
+   }
+ 
+   // logDir should be an absolute path
+@@ -1023,7 +1054,7 @@ class LogManager(logDirs: Seq[File],
+   private def flushDirtyLogs(): Unit = {
+     debug("Checking for dirty logs to flush...")
+ 
+-    for ((topicPartition, log) <- currentLogs.toList ++ futureLogs.toList) {
++    for ((topicPartition, log) <- currentLogs.iterator ++ futureLogs.iterator) {
+       try {
+         val timeSinceLastFlush = time.milliseconds - log.lastFlushTime
+         debug(s"Checking if flush is needed on ${topicPartition.topic} flush interval ${log.config.flushMs}" +

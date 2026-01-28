@@ -1,0 +1,25 @@
+diff --git a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+index 58860be864..00269d6af0 100644
+--- a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
++++ b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+@@ -63,8 +63,18 @@ object AclAuthorizer {
+   }
+ 
+   class AclSets(sets: Set[AclEntry]*) {
+-    def find(p: AclEntry => Boolean): Option[AclEntry] = sets.flatMap(_.find(p)).headOption
+-    def isEmpty: Boolean = !sets.exists(_.nonEmpty)
++    def find(p: AclEntry => Boolean): Option[AclEntry] = {
++      for (s <- sets; acl <- s) {
++        if (p(acl)) return Some(acl)
++      }
++      None
++    }
++    def isEmpty: Boolean = {
++      for (s <- sets) {
++        if (s.nonEmpty) return false
++      }
++      true
++    }
+   }
+ 
+   val NoAcls = VersionedAcls(Set.empty, ZkVersion.UnknownVersion)

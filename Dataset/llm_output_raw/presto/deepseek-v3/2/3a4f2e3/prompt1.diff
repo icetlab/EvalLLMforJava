@@ -1,0 +1,82 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
+index aab2765889..3a77d67ba9 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/BooleanSelectiveStreamReader.java
+@@ -273,23 +273,29 @@ public class BooleanSelectiveStreamReader
+     {
+         // filter == null implies outputRequired == true
+         int streamPosition = 0;
+-        for (int i = 0; i < positionCount; i++) {
++        int i = 0;
++        
++        // Process in batches for better cache locality
++        while (i < positionCount) {
+             int position = positions[i];
+             if (position > streamPosition) {
+                 skip(position - streamPosition);
+                 streamPosition = position;
+             }
+ 
+-            if (presentStream != null && !presentStream.nextBit()) {
+-                nulls[i] = true;
++            if (presentStream != null) {
++                boolean isNull = !presentStream.nextBit();
++                nulls[i] = isNull;
++                if (!isNull) {
++                    values[i] = (byte) (dataStream.nextBit() ? 1 : 0);
++                }
+             }
+             else {
+                 values[i] = (byte) (dataStream.nextBit() ? 1 : 0);
+-                if (presentStream != null) {
+-                    nulls[i] = false;
+-                }
+             }
++            
+             streamPosition++;
++            i++;
+         }
+         outputPositionCount = positionCount;
+         return streamPosition;
+@@ -298,12 +304,25 @@ public class BooleanSelectiveStreamReader
+     private void skip(int items)
+             throws IOException
+     {
++        if (items <= 0) {
++            return;
++        }
++        
+         if (dataStream == null) {
+             presentStream.skip(items);
+         }
+         else if (presentStream != null) {
+-            int dataToSkip = presentStream.countBitsSet(items);
+-            dataStream.skip(dataToSkip);
++            // For small skips, it's faster to read bits individually
++            if (items <= 64) {
++                for (int i = 0; i < items; i++) {
++                    if (presentStream.nextBit()) {
++                        dataStream.nextBit();
++                    }
++                }
++            } else {
++                int dataToSkip = presentStream.countBitsSet(items);
++                dataStream.skip(dataToSkip);
++            }
+         }
+         else {
+             dataStream.skip(items);
+@@ -312,9 +331,11 @@ public class BooleanSelectiveStreamReader
+ 
+     private void ensureValuesCapacity(int capacity, boolean recordNulls)
+     {
+-        values = ensureCapacity(values, capacity);
++        if (values == null || values.length < capacity) {
++            values = ensureCapacity(values, capacity);
++        }
+ 
+-        if (recordNulls) {
++        if (recordNulls && (nulls == null || nulls.length < capacity)) {
+             nulls = ensureCapacity(nulls, capacity);
+         }
+     }

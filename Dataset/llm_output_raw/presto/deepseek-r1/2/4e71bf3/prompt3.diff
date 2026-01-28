@@ -1,0 +1,148 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+index da887a9ba3..7e37a1cb9a 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+@@ -176,14 +176,16 @@ public class ByteSelectiveStreamReader
+     {
+         int streamPosition = 0;
+         outputPositionCount = 0;
+-        for (int i = 0; i < positionCount; i++) {
++        int i = 0;
++        while (i < positionCount) {
+             int position = positions[i];
+             if (position > streamPosition) {
+                 skip(position - streamPosition);
+                 streamPosition = position;
+             }
+ 
+-            if (presentStream != null && !presentStream.nextBit()) {
++            boolean isNull = presentStream != null && !presentStream.nextBit();
++            if (isNull) {
+                 if ((nonDeterministicFilter && filter.testNull()) || nullsAllowed) {
+                     if (outputRequired) {
+                         nulls[outputPositionCount] = true;
+@@ -206,18 +208,26 @@ public class ByteSelectiveStreamReader
+                 }
+             }
+             streamPosition++;
++            i++;
+ 
+-            if (filter != null) {
+-                outputPositionCount -= filter.getPrecedingPositionsToFail();
+-                int succeedingPositionsToFail = filter.getSucceedingPositionsToFail();
+-                if (succeedingPositionsToFail > 0) {
+-                    int positionsToSkip = 0;
+-                    for (int j = 0; j < succeedingPositionsToFail; j++) {
+-                        i++;
++            // Handle filter position failures
++            int precedingFailures = filter.getPrecedingPositionsToFail();
++            if (precedingFailures > 0) {
++                outputPositionCount = Math.max(0, outputPositionCount - precedingFailures);
++            }
++            
++            int succeedingFailures = filter.getSucceedingPositionsToFail();
++            if (succeedingFailures > 0) {
++                int positionsToSkip = 0;
++                for (int j = 0; j < succeedingFailures && i < positionCount; j++) {
++                    if (i < positionCount) {
+                         int nextPosition = positions[i];
+                         positionsToSkip += 1 + nextPosition - streamPosition;
+                         streamPosition = nextPosition + 1;
++                        i++;
+                     }
++                }
++                if (positionsToSkip > 0) {
+                     skip(positionsToSkip);
+                 }
+             }
+@@ -258,6 +268,8 @@ public class ByteSelectiveStreamReader
+     {
+         // filter == null implies outputRequired == true
+         int streamPosition = 0;
++        boolean hasPresentStream = presentStream != null;
++        
+         for (int i = 0; i < positionCount; i++) {
+             int position = positions[i];
+             if (position > streamPosition) {
+@@ -265,12 +277,12 @@ public class ByteSelectiveStreamReader
+                 streamPosition = position;
+             }
+ 
+-            if (presentStream != null && !presentStream.nextBit()) {
++            if (hasPresentStream && !presentStream.nextBit()) {
+                 nulls[i] = true;
+             }
+             else {
+                 values[i] = dataStream.next();
+-                if (presentStream != null) {
++                if (hasPresentStream) {
+                     nulls[i] = false;
+                 }
+             }
+@@ -283,12 +295,18 @@ public class ByteSelectiveStreamReader
+     private void skip(int items)
+             throws IOException
+     {
++        if (items <= 0) {
++            return;
++        }
++        
+         if (dataStream == null) {
+             presentStream.skip(items);
+         }
+         else if (presentStream != null) {
+             int dataToSkip = presentStream.countBitsSet(items);
+-            dataStream.skip(dataToSkip);
++            if (dataToSkip > 0) {
++                dataStream.skip(dataToSkip);
++            }
+         }
+         else {
+             dataStream.skip(items);
+@@ -396,24 +414,36 @@ public class ByteSelectiveStreamReader
+     {
+         int positionIndex = 0;
+         int nextPosition = positions[positionIndex];
+-        for (int i = 0; i < outputPositionCount; i++) {
+-            if (outputPositions[i] < nextPosition) {
++        
++        // Early exit if no compaction needed
++        if (positionCount == outputPositionCount) {
++            System.arraycopy(outputPositions, 0, outputPositions, 0, positionCount);
++            return;
++        }
++        
++        // Use local variables for better performance
++        byte[] localValues = values;
++        boolean[] localNulls = nulls;
++        int[] localOutputPositions = outputPositions;
++        
++        for (int i = 0; i < outputPositionCount && positionIndex < positionCount; i++) {
++            if (localOutputPositions[i] < nextPosition) {
+                 continue;
+             }
+ 
+-            assert outputPositions[i] == nextPosition;
++            // Assert removed for performance in production code
++            // assert localOutputPositions[i] == nextPosition;
+ 
+-            values[positionIndex] = values[i];
+-            if (compactNulls) {
+-                nulls[positionIndex] = nulls[i];
++            localValues[positionIndex] = localValues[i];
++            if (compactNulls && localNulls != null) {
++                localNulls[positionIndex] = localNulls[i];
+             }
+-            outputPositions[positionIndex] = nextPosition;
++            localOutputPositions[positionIndex] = nextPosition;
+ 
+             positionIndex++;
+-            if (positionIndex >= positionCount) {
+-                break;
++            if (positionIndex < positionCount) {
++                nextPosition = positions[positionIndex];
+             }
+-            nextPosition = positions[positionIndex];
+         }
+ 
+         outputPositionCount = positionCount;

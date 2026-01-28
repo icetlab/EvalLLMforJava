@@ -1,0 +1,19 @@
+The `ST_Intersects` function can be optimized by first checking for the intersection of the geometries' bounding boxes (envelopes). This is a common spatial optimization technique. If the envelopes do not intersect, the geometries themselves cannot intersect, allowing for a quick `false` return without performing the more computationally expensive full geometry intersection check.
+
+This optimization involves:
+1.  Deserializing only the envelopes of the two input geometries. This is significantly faster than deserializing the entire geometry data.
+2.  Performing a lightweight check to see if these envelopes intersect.
+3.  If they do not intersect, the function returns `false` immediately.
+4.  Only if the envelopes do intersect does the function proceed with the full, more costly, geometry deserialization and intersection test.
+
+This change will provide a significant performance improvement for cases where geometries are not close to each other, a scenario specifically tested in the provided benchmarks.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "    @SqlNullable\n    @Description(\"Returns TRUE if the Geometries spatially intersect in 2D - (share any portion of space) and FALSE if they don't (they are Disjoint)\")\n    @ScalarFunction(\"ST_Intersects\")\n    @SqlType(StandardTypes.BOOLEAN)\n    public static Boolean stIntersects(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)\n    {\n        OGCGeometry leftGeometry = deserialize(left);\n        OGCGeometry rightGeometry = deserialize(right);\n        verifySameSpatialReference(leftGeometry, rightGeometry);\n        return leftGeometry.intersects(rightGeometry);\n    }",
+    "replace": "    @SqlNullable\n    @Description(\"Returns TRUE if the Geometries spatially intersect in 2D - (share any portion of space) and FALSE if they don't (they are Disjoint)\")\n    @ScalarFunction(\"ST_Intersects\")\n    @SqlType(StandardTypes.BOOLEAN)\n    public static Boolean stIntersects(@SqlType(GEOMETRY_TYPE_NAME) Slice left, @SqlType(GEOMETRY_TYPE_NAME) Slice right)\n    {\n        Envelope leftEnvelope = deserializeEnvelope(left);\n        Envelope rightEnvelope = deserializeEnvelope(right);\n        if (leftEnvelope == null || rightEnvelope == null ||\n                (leftEnvelope.getXMax() < rightEnvelope.getXMin() ||\n                        leftEnvelope.getXMin() > rightEnvelope.getXMax() ||\n                        leftEnvelope.getYMax() < rightEnvelope.getYMin() ||\n                        leftEnvelope.getYMin() > rightEnvelope.getYMax())) {\n            return false;\n        }\n\n        OGCGeometry leftGeometry = deserialize(left);\n        OGCGeometry rightGeometry = deserialize(right);\n        verifySameSpatialReference(leftGeometry, rightGeometry);\n        return leftGeometry.intersects(rightGeometry);\n    }"
+  }
+]
+```

@@ -1,0 +1,54 @@
+diff --git a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java
+index 01b747b3f2..d336558f20 100644
+--- a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java
++++ b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java
+@@ -351,13 +351,9 @@ public class QueryStringDecoder {
+             return s.substring(from, toExcluded);
+         }
+ 
+-        CharsetDecoder decoder = CharsetUtil.decoder(charset);
+-
+         // Each encoded byte takes 3 characters (e.g. "%20")
+         int decodedCapacity = (toExcluded - firstEscaped) / 3;
+-        ByteBuffer byteBuf = ByteBuffer.allocate(decodedCapacity);
+-        CharBuffer charBuf = CharBuffer.allocate(decodedCapacity);
+-
++        byte[] bytes = new byte[decodedCapacity];
+         StringBuilder strBuf = new StringBuilder(len);
+         strBuf.append(s, from, firstEscaped);
+ 
+@@ -368,31 +364,17 @@ public class QueryStringDecoder {
+                 continue;
+             }
+ 
+-            byteBuf.clear();
++            int nBytes = 0;
+             do {
+                 if (i + 3 > toExcluded) {
+                     throw new IllegalArgumentException("unterminated escape sequence at index " + i + " of: " + s);
+                 }
+-                byteBuf.put(decodeHexByte(s, i + 1));
++                bytes[nBytes++] = decodeHexByte(s, i + 1);
+                 i += 3;
+             } while (i < toExcluded && s.charAt(i) == '%');
+             i--;
+ 
+-            byteBuf.flip();
+-            charBuf.clear();
+-            CoderResult result = decoder.reset().decode(byteBuf, charBuf, true);
+-            try {
+-                if (!result.isUnderflow()) {
+-                    result.throwException();
+-                }
+-                result = decoder.flush(charBuf);
+-                if (!result.isUnderflow()) {
+-                    result.throwException();
+-                }
+-            } catch (CharacterCodingException ex) {
+-                throw new IllegalStateException(ex);
+-            }
+-            strBuf.append(charBuf.flip());
++            strBuf.append(new String(bytes, 0, nBytes, charset));
+         }
+         return strBuf.toString();
+     }

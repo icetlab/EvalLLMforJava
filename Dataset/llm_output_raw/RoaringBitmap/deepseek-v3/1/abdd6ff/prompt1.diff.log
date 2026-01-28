@@ -1,0 +1,49 @@
+Looking at the provided code, I can identify several performance improvement opportunities:
+
+1. **Memory allocation optimization**: Avoid unnecessary array copying in `parallelExec` method
+2. **Loop optimization**: Reduce repeated method calls in loops
+3. **Bit operation optimization**: Use more efficient bit operations
+4. **Avoid unnecessary object creation**: Reduce temporary object allocations
+5. **Stream optimization**: Replace streams with loops for better performance in hot paths
+
+Here are the specific improvements:
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "  protected <R> List<CompletableFuture<R>> parallelExec(Function<int[], R> func,\n                              int parallelism,\n                              ImmutableRoaringBitmap foundSet,\n                              ExecutorService pool) {\n    int batchSize = foundSet.getCardinality() / parallelism;\n    // fix when batchSize < parallelism\n    batchSize = Math.max(batchSize, parallelism);\n\n    // todo RoaringBitmap's batchIterator return max 2^16\n    batchSize = Math.min(batchSize, 65536);\n\n\n    List<int[]> batches = new ArrayList<>();\n\n    final BatchIterator batchIterator = foundSet.getBatchIterator();\n    while (batchIterator.hasNext()) {\n      int[] buffer = new int[batchSize];\n      int cardinality = batchIterator.nextBatch(buffer);\n      if (cardinality > 0) {\n        if (cardinality == batchSize) {\n          batches.add(buffer);\n        } else {\n          int[] buff = new int[cardinality];\n          System.arraycopy(buffer, 0, buff, 0, cardinality);\n          batches.add(buff);\n        }\n      }\n    }",
+    "replace": "  protected <R> List<CompletableFuture<R>> parallelExec(Function<int[], R> func,\n                              int parallelism,\n                              ImmutableRoaringBitmap foundSet,\n                              ExecutorService pool) {\n    int cardinality = foundSet.getCardinality();\n    int batchSize = cardinality / parallelism;\n    // fix when batchSize < parallelism\n    batchSize = Math.max(batchSize, parallelism);\n\n    // todo RoaringBitmap's batchIterator return max 2^16\n    batchSize = Math.min(batchSize, 65536);\n\n    List<int[]> batches = new ArrayList<>((cardinality + batchSize - 1) / batchSize);\n\n    final BatchIterator batchIterator = foundSet.getBatchIterator();\n    while (batchIterator.hasNext()) {\n      int[] buffer = new int[batchSize];\n      int batchCardinality = batchIterator.nextBatch(buffer);\n      if (batchCardinality > 0) {\n        if (batchCardinality == batchSize) {\n          batches.add(buffer);\n        } else {\n          int[] buff = new int[batchCardinality];\n          System.arraycopy(buffer, 0, buff, 0, batchCardinality);\n          batches.add(buff);\n        }\n      }\n    }"
+  },
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "  public Pair<Integer, Boolean> getValue(int columnId) {\n    boolean exists = this.ebM.contains(columnId);\n    if (!exists) {\n      return Pair.newPair(0, false);\n    }\n    int value = 0;\n    for (int i = 0; i < this.bitCount(); i++) {\n      if (this.bA[i].contains(columnId)) {\n        value |= (1 << i);\n      }\n    }\n    return Pair.newPair(value, true);\n  }",
+    "replace": "  public Pair<Integer, Boolean> getValue(int columnId) {\n    if (!this.ebM.contains(columnId)) {\n      return Pair.newPair(0, false);\n    }\n    int value = 0;\n    int bitCount = this.bitCount();\n    for (int i = 0; i < bitCount; i++) {\n      if (this.bA[i].contains(columnId)) {\n        value |= (1 << i);\n      }\n    }\n    return Pair.newPair(value, true);\n  }"
+  },
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "  public Pair<Long, Long> sum(ImmutableRoaringBitmap foundSet) {\n    if (null == foundSet || foundSet.isEmpty()) {\n      return Pair.newPair(0L, 0L);\n    }\n    long count = foundSet.getLongCardinality();\n\n    Long sum = IntStream.range(0, this.bitCount())\n        .mapToLong(x -> (long) (1 << x) * ImmutableRoaringBitmap.andCardinality(this.bA[x], foundSet))\n        .sum();\n\n    return Pair.newPair(sum, count);\n  }",
+    "replace": "  public Pair<Long, Long> sum(ImmutableRoaringBitmap foundSet) {\n    if (null == foundSet || foundSet.isEmpty()) {\n      return Pair.newPair(0L, 0L);\n    }\n    long count = foundSet.getLongCardinality();\n    long sum = 0L;\n    int bitCount = this.bitCount();\n    for (int i = 0; i < bitCount; i++) {\n      sum += (long) (1 << i) * ImmutableRoaringBitmap.andCardinality(this.bA[i], foundSet);\n    }\n    return Pair.newPair(sum, count);\n  }"
+  },
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "  public List<Pair<Integer, Integer>> toPairList() {\n    List<Pair<Integer, Integer>> pairList = new ArrayList<>();\n    this.ebM.forEach((IntConsumer) cid -> {\n      pairList.add(Pair.newPair(cid, this.getValue(cid).getKey()));\n    });\n    return pairList;\n  }",
+    "replace": "  public List<Pair<Integer, Integer>> toPairList() {\n    int size = (int) Math.min(this.ebM.getLongCardinality(), Integer.MAX_VALUE);\n    List<Pair<Integer, Integer>> pairList = new ArrayList<>(size);\n    this.ebM.forEach((IntConsumer) cid -> {\n      pairList.add(Pair.newPair(cid, this.getValue(cid).getKey()));\n    });\n    return pairList;\n  }"
+  },
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "  public List<Pair<Integer, Integer>> toPairList(ImmutableRoaringBitmap foundSet) {\n    List<Pair<Integer, Integer>> pairList = new ArrayList<>();\n    ImmutableRoaringBitmap bitmap = ImmutableRoaringBitmap.and(this.ebM, foundSet);\n    bitmap.forEach((IntConsumer) cid -> {\n      pairList.add(Pair.newPair(cid, this.getValue(cid).getKey()));\n    });\n    return pairList;\n  }",
+    "replace": "  public List<Pair<Integer, Integer>> toPairList(ImmutableRoaringBitmap foundSet) {\n    ImmutableRoaringBitmap bitmap = ImmutableRoaringBitmap.and(this.ebM, foundSet);\n    int size = (int) Math.min(bitmap.getLongCardinality(), Integer.MAX_VALUE);\n    List<Pair<Integer, Integer>> pairList = new ArrayList<>(size);\n    bitmap.forEach((IntConsumer) cid -> {\n      pairList.add(Pair.newPair(cid, this.getValue(cid).getKey()));\n    });\n    return pairList;\n  }"
+  },
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "    for (int i = this.bitCount() - 1; i >= 0; i--) {\n      MutableRoaringBitmap X = ImmutableRoaringBitmap.or(G, ImmutableRoaringBitmap.and(E, this.bA[i]));\n      long n = X.getLongCardinality();\n      if (n > k) {\n        E = ImmutableRoaringBitmap.and(E, this.bA[i]);\n      } else if (n < k) {\n        G = X;\n        E = ImmutableRoaringBitmap.andNot(E, this.bA[i]);\n      } else {\n        E = ImmutableRoaringBitmap.and(E, this.bA[i]);\n        break;\n      }\n    }",
+    "replace": "    int bitCount = this.bitCount();\n    for (int i = bitCount - 1; i >= 0; i--) {\n      MutableRoaringBitmap X = ImmutableRoaringBitmap.or(G, ImmutableRoaringBitmap.and(E, this.bA[i]));\n      long n = X.getLongCardinality();\n      if (n > k) {\n        E = ImmutableRoaringBitmap.and(E, this.bA[i]);\n      } else if (n < k) {\n        G = X;\n        E = ImmutableRoaringBitmap.andNot(E, this.bA[i]);\n      } else {\n        E = ImmutableRoaringBitmap.and(E, this.bA[i]);\n        break;\n      }\n    }"
+  },
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "  public ImmutableRoaringBitmap rangeEQ(ImmutableRoaringBitmap foundSet, int predicate) {\n    // Start with set of columns with values set.\n    ImmutableRoaringBitmap eqBitmap = this.ebM;\n\n    if (foundSet != null) {\n      eqBitmap = ImmutableRoaringBitmap.and(eqBitmap, foundSet);\n    }\n\n    // https://github.com/RoaringBitmap/RoaringBitmap/issues/549\n    ImmutableRoaringBitmap result = compareUsingMinMax(BitmapSliceIndex.Operation.EQ, predicate, 0, foundSet);\n    if (result != null) {\n      return result;\n    }\n\n    for (int i = this.bA.length - 1; i >= 0; i--) {\n      ImmutableRoaringBitmap slice = this.bA[i];\n      int bit = (predicate >> i) & 1;\n      if (bit == 1) {\n        eqBitmap = ImmutableRoaringBitmap.and(eqBitmap, slice);\n      } else {\n        eqBitmap = ImmutableRoaringBitmap.andNot(eqBitmap, slice);\n      }\n    }\n    return eqBitmap;\n  }",
+    "replace": "  public ImmutableRoaringBitmap rangeEQ(ImmutableRoaringBitmap foundSet, int predicate) {\n    // https://github.com/RoaringBitmap/RoaringBitmap/issues/549\n    ImmutableRoaringBitmap result = compareUsingMinMax(BitmapSliceIndex.Operation.EQ, predicate, 0, foundSet);\n    if (result != null) {\n      return result;\n    }\n\n    // Start with set of columns with values set.\n    ImmutableRoaringBitmap eqBitmap = this.ebM;\n    if (foundSet != null) {\n      eqBitmap = ImmutableRoaringBitmap.and(eqBitmap, foundSet);\n    }\n\n    for (int i = this.bA.length - 1; i >= 0; i--) {\n      int bit = (predicate >> i) & 1;\n      if (bit == 1) {\n        eqBitmap = ImmutableRoaringBitmap.and(eqBitmap, this.bA[i]);\n      } else {\n        eqBitmap = ImmutableRoaringBitmap.andNot(eqBitmap, this.bA[i]);\n      }\n    }\n    return eqBitmap;\n  }"
+  }
+]
+```

@@ -1,0 +1,21 @@
+I’ve introduced a Java 9 fast‐path for `Checksum.update(ByteBuffer)` via reflection, falling back to the byte‐by‐byte loop when unavailable, and renamed the reflective method field to an uppercase constant to satisfy Checkstyle.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "import java.util.zip.Checksum;",
+    "replace": "import java.util.zip.Checksum;\nimport java.lang.reflect.Method;\nimport java.lang.reflect.InvocationTargetException;"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "public final class Checksums {",
+    "replace": "public final class Checksums {\n    private static final Method UPDATE_BYTEBUFFER_METHOD;\n\n    static {\n        Method method = null;\n        try {\n            method = Checksum.class.getMethod(\"update\", ByteBuffer.class);\n        } catch (NoSuchMethodException e) {\n            // ignore if not available\n        }\n        UPDATE_BYTEBUFFER_METHOD = method;\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "} else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }",
+    "replace": "} else if (UPDATE_BYTEBUFFER_METHOD != null) {\n            ByteBuffer duplicate = buffer.duplicate();\n            int start = buffer.position() + offset;\n            duplicate.position(start);\n            duplicate.limit(start + length);\n            try {\n                UPDATE_BYTEBUFFER_METHOD.invoke(checksum, duplicate);\n            } catch (IllegalAccessException | InvocationTargetException e) {\n                throw new RuntimeException(e);\n            }\n        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }"
+  }
+]
+```

@@ -1,0 +1,18 @@
+diff --git a/common/src/main/java/io/netty/util/Recycler.java b/common/src/main/java/io/netty/util/Recycler.java
+index dd7b2d73be..7f23240b14 100644
+--- a/common/src/main/java/io/netty/util/Recycler.java
++++ b/common/src/main/java/io/netty/util/Recycler.java
+@@ -292,8 +292,11 @@ public abstract class Recycler<T> {
+         }
+ 
+         DefaultHandle<T> newHandle() {
+-            if (++ratioCounter >= ratioInterval) {
+-                ratioCounter = 0;
++            if (ratioInterval == 0) {
++                return new DefaultHandle<T>(this);
++            }
++            if (--ratioCounter <= 0) {
++                ratioCounter = ratioInterval;
+                 return new DefaultHandle<T>(this);
+             }
+             return null;

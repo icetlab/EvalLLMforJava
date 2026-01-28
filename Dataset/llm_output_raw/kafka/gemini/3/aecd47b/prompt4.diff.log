@@ -1,0 +1,23 @@
+The overall improvement is to leverage the `java.util.zip.Checksum.update(ByteBuffer)` method introduced in Java 9 for better performance with non-array-backed `ByteBuffer`s, especially direct buffers. This avoids slow, byte-by-byte access which is particularly inefficient for direct buffers.
+
+The change is implemented using reflection to maintain compatibility with Java 8, where this method is not available. A `static final` field is initialized in a static block to cache the `Method` handle for `Checksum.update(ByteBuffer)`. This is done only once at class loading time to avoid reflection overhead during each call. If the method is not found (when running on Java 8), the field remains `null`, and the code falls back to the original byte-by-byte implementation. When the method is available (on Java 9+), it is invoked on a slice of the input buffer to process the requested data range, significantly improving performance for direct `ByteBuffer`s without altering the buffer's state from the caller's perspective.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "import java.nio.ByteBuffer;\nimport java.util.zip.Checksum;",
+    "replace": "import java.lang.reflect.InvocationTargetException;\nimport java.lang.reflect.Method;\nimport java.nio.ByteBuffer;\nimport java.util.zip.Checksum;"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "public final class Checksums {\n\n    private Checksums() {\n    }",
+    "replace": "public final class Checksums {\n\n    private static final Method CHECKSUM_UPDATE_METHOD;\n\n    static {\n        Method method = null;\n        try {\n            method = Checksum.class.getMethod(\"update\", ByteBuffer.class);\n        } catch (NoSuchMethodException e) {\n            // Not available on Java 8\n        }\n        CHECKSUM_UPDATE_METHOD = method;\n    }\n\n    private Checksums() {\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }",
+    "replace": "    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else if (CHECKSUM_UPDATE_METHOD != null) {\n            int pos = buffer.position();\n            try {\n                buffer.position(pos + offset);\n                ByteBuffer slice = buffer.slice();\n                slice.limit(length);\n                CHECKSUM_UPDATE_METHOD.invoke(checksum, slice);\n            } catch (IllegalAccessException | InvocationTargetException e) {\n                // Should not happen\n                throw new RuntimeException(e);\n            } finally {\n                buffer.position(pos);\n            }\n        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }"
+  }
+]
+```

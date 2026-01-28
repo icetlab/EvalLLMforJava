@@ -1,0 +1,16 @@
+I have replaced the field‐level Closer with a method‐local Closer in partitionPage, ensuring that each page’s leases are closed immediately and not accumulated across pages. This corrects resource handling, returns arrays to the allocator promptly, and improves performance and memory usage.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java",
+    "search": "private final BlockFlattener flattener = new BlockFlattener(arrayAllocator);\n        private final Closer blockLeaseCloser = Closer.create();",
+    "replace": "private final BlockFlattener flattener = new BlockFlattener(arrayAllocator);"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java",
+    "search": "// Decode the page just once. The decoded blocks will be fed to each PartitionBuffer object to set up AbstractBlockEncodingBuffer.\n            for (int i = 0; i < decodedBlocks.length; i++) {\n                decodedBlocks[i] = decodeBlock(flattener, blockLeaseCloser, page.getBlock(i));\n            }",
+    "replace": "// Decode the page just once. The decoded blocks will be fed to each PartitionBuffer object to set up AbstractBlockEncodingBuffer.\n            Closer blockLeaseCloser = Closer.create();\n            for (int i = 0; i < decodedBlocks.length; i++) {\n                decodedBlocks[i] = decodeBlock(flattener, blockLeaseCloser, page.getBlock(i));\n            }"
+  }
+]
+```

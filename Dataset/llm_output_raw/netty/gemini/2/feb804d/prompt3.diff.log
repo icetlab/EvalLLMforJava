@@ -1,0 +1,22 @@
+The performance issue is most prominent in the `scheduleCancelLotsOutsideLoop` benchmark. When a scheduled task is cancelled, the current implementation removes it from the scheduled task queue. This removal can be an O(N) operation for a priority queue if it requires a linear scan to find the element, where N is the number of tasks in the queue. When many tasks are scheduled and then cancelled, this leads to an O(N^2) complexity, which is very slow.
+
+My improvement strategy consists of two parts:
+1.  In `ScheduledFutureTask.cancel()`, I will remove the logic that removes the task from the `scheduledTaskQueue`. This avoids the expensive O(N) removal operation. The task will remain in the queue even after being cancelled.
+2.  To prevent cancelled tasks from being executed or bloating the queue indefinitely, I will modify `AbstractScheduledEventExecutor.pollScheduledTask()` to check if a task at the head of the queue is cancelled. If it is, the task is discarded, and the method proceeds to check the next task. This lazily cleans up cancelled tasks as they become due.
+
+This approach changes the complexity of scheduling and cancelling N tasks from O(N^2) to O(N log N), significantly improving performance, especially when dealing with a large number of short-lived scheduled tasks.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "    protected final Runnable pollScheduledTask(long nanoTime) {\n        assert inEventLoop();\n\n        Queue<ScheduledFutureTask<?>> scheduledTaskQueue = this.scheduledTaskQueue;\n        ScheduledFutureTask<?> scheduledTask = scheduledTaskQueue == null ? null : scheduledTaskQueue.peek();\n        if (scheduledTask == null || scheduledTask.deadlineNanos() - nanoTime > 0) {\n            return null;\n        }\n        scheduledTaskQueue.remove();\n        return scheduledTask;\n    }",
+    "replace": "    protected final Runnable pollScheduledTask(long nanoTime) {\n        assert inEventLoop();\n\n        Queue<ScheduledFutureTask<?>> scheduledTaskQueue = this.scheduledTaskQueue;\n        if (scheduledTaskQueue == null) {\n            return null;\n        }\n\n        for (;;) {\n            ScheduledFutureTask<?> scheduledTask = scheduledTaskQueue.peek();\n            if (scheduledTask == null || scheduledTask.deadlineNanos() - nanoTime > 0) {\n                return null;\n            }\n            scheduledTaskQueue.remove();\n            if (!scheduledTask.isCancelled()) {\n                return scheduledTask;\n            }\n        }\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java",
+    "search": "    @Override\n    public boolean cancel(boolean mayInterruptIfRunning) {\n        boolean canceled = super.cancel(mayInterruptIfRunning);\n        if (canceled) {\n            ((AbstractScheduledEventExecutor) executor()).removeScheduled(this);\n        }\n        return canceled;\n    }",
+    "replace": "    @Override\n    public boolean cancel(boolean mayInterruptIfRunning) {\n        boolean canceled = super.cancel(mayInterruptIfRunning);\n        if (canceled) {\n            // Don't remove from the queue as this may be an O(N) operation. This is fine as the poll method\n            // will skip cancelled tasks.\n        }\n        return canceled;\n    }"
+  }
+]
+```

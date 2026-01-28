@@ -1,0 +1,42 @@
+diff --git a/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java b/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java
+index c8c40a5d24..906b1f74ba 100644
+--- a/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java
++++ b/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java
+@@ -1442,8 +1442,15 @@ public abstract class AbstractByteBuf extends ByteBuf {
+      * if the buffer was released before.
+      */
+     protected final void ensureAccessible() {
+-        if (checkAccessible && refCnt() == 0) {
+-            throw new IllegalReferenceCountException(0);
++        if (checkAccessible) {
++            // Use non-volatile read for best-effort check to avoid volatile read overhead
++            // and enable better JIT optimization. This matches the best-effort nature
++            // of the check (race conditions are possible anyway).
++            int cnt = this instanceof AbstractReferenceCountedByteBuf ? 
++                      ((AbstractReferenceCountedByteBuf) this).refCnt0() : refCnt();
++            if (cnt == 0) {
++                throw new IllegalReferenceCountException(0);
++            }
+         }
+     }
+ 
+diff --git a/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java b/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
+index d624d855f4..da4d706118 100644
+--- a/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
++++ b/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java
+@@ -37,6 +37,15 @@ public abstract class AbstractReferenceCountedByteBuf extends AbstractByteBuf {
+         refCntUpdater.set(this, 1);
+     }
+ 
++    /**
++     * Non-volatile read of refCnt for best-effort accessibility check.
++     * This avoids volatile read overhead in hot paths while maintaining
++     * the same best-effort guarantee as ensureAccessible().
++     */
++    final int refCnt0() {
++        return refCnt;
++    }
++
+     @Override
+     public int refCnt() {
+         return refCnt;

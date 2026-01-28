@@ -1,0 +1,17 @@
+The overall improvement strategy is to optimize the `array_distinct` function by avoiding the creation of a new array `Block` when the input array contains no duplicate elements.
+
+The original implementation always constructed a new `Block`, even for arrays that were already distinct. This incurred unnecessary costs for `BlockBuilder` creation, element copying, and final `Block` construction.
+
+The improved implementation performs a single pass over the input array. It speculatively builds a new block with unique elements. If any duplicates are found during this pass, a flag is set. After checking all elements, if no duplicates were found, the original array `Block` is returned, discarding the speculatively built one. This avoids the expensive final `build()` call and allocation of a new `Block` object for arrays that are already distinct. For arrays with duplicates, the performance is nearly identical to the original implementation.
+
+Additionally, a small optimization is included to handle arrays of size 0 or 1 more efficiently by returning them directly, as they are inherently distinct.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/ArrayDistinctFunction.java",
+    "search": "    public static Block distinct(Type type, Block array)\n    {\n        if (array.getPositionCount() == 0) {\n            return array;\n        }\n\n        TypedSet typedSet = new TypedSet(type, array.getPositionCount());\n        BlockBuilder distinctElementBlockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), array.getPositionCount());\n        for (int i = 0; i < array.getPositionCount(); i++) {\n            if (!typedSet.contains(array, i)) {\n                typedSet.add(array, i);\n                type.appendTo(array, i, distinctElementBlockBuilder);\n            }\n        }\n\n        return distinctElementBlockBuilder.build();\n    }",
+    "replace": "    public static Block distinct(Type type, Block array)\n    {\n        if (array.getPositionCount() <= 1) {\n            return array;\n        }\n\n        TypedSet typedSet = new TypedSet(type, array.getPositionCount());\n        BlockBuilder distinctElementBlockBuilder = type.createBlockBuilder(new BlockBuilderStatus(), array.getPositionCount());\n        boolean hasDuplicates = false;\n        for (int i = 0; i < array.getPositionCount(); i++) {\n            if (typedSet.contains(array, i)) {\n                hasDuplicates = true;\n            }\n            else {\n                typedSet.add(array, i);\n                type.appendTo(array, i, distinctElementBlockBuilder);\n            }\n        }\n\n        if (!hasDuplicates) {\n            return array;\n        }\n\n        return distinctElementBlockBuilder.build();\n    }"
+  }
+]
+```

@@ -1,0 +1,95 @@
+diff --git a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+index 350f609b45..f0a4ef2fb3 100644
+--- a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
++++ b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+@@ -42,6 +42,7 @@ import java.util.List;
+ import static com.esri.core.geometry.Geometry.Type.Unknown;
+ import static com.esri.core.geometry.GeometryEngine.geometryToEsriShape;
+ import static com.facebook.presto.geospatial.GeometryUtils.isEsriNaN;
++import static com.facebook.presto.geospatial.GeometryUtils.translateToAVNaN;
+ import static com.google.common.base.Verify.verify;
+ import static java.lang.Math.toIntExact;
+ import static java.util.Objects.requireNonNull;
+@@ -101,6 +102,12 @@ public class GeometrySerde
+     private static void writeSimpleGeometry(DynamicSliceOutput output, GeometryType type, OGCGeometry geometry)
+     {
+         output.appendByte(type.code());
++        if (type == GeometryType.POINT) {
++            Point point = (Point) geometry.getEsriGeometry();
++            output.appendDouble(translateToAVNaN(point.getX()));
++            output.appendDouble(translateToAVNaN(point.getY()));
++            return;
++        }
+         Geometry esriGeometry = requireNonNull(geometry.getEsriGeometry(), "esriGeometry is null");
+         byte[] shape = geometryToEsriShape(esriGeometry);
+         output.appendBytes(shape);
+@@ -147,6 +154,16 @@ public class GeometrySerde
+ 
+     private static OGCGeometry readSimpleGeometry(BasicSliceInput input, Slice inputSlice, GeometryType type, int length)
+     {
++        if (type == GeometryType.POINT) {
++            double x = input.readDouble();
++            double y = input.readDouble();
++            if (isEsriNaN(x) || isEsriNaN(y)) {
++                Point p = new Point();
++                p.setEmpty();
++                return new OGCPoint(p, null);
++            }
++            return new OGCPoint(new Point(x, y), null);
++        }
+         int currentPosition = toIntExact(input.position());
+         ByteBuffer geometryBuffer = inputSlice.toByteBuffer(currentPosition, length).slice();
+         input.setPosition(currentPosition + length);
+@@ -257,9 +274,6 @@ public class GeometrySerde
+ 
+     private static Envelope getPointEnvelope(BasicSliceInput input)
+     {
+-        // skip type injected by esri
+-        input.readInt();
+-
+         double x = input.readDouble();
+         double y = input.readDouble();
+         if (isEsriNaN(x) || isEsriNaN(y)) {
+diff --git a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java
+index 0030a0bf84..0685a1b0d5 100644
+--- a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java
++++ b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java
+@@ -58,7 +58,7 @@ public class JtsGeometrySerde
+     {
+         switch (type) {
+             case POINT:
+-                return readPoint(input, true);
++                return readPoint(input);
+             case MULTI_POINT:
+                 return readMultiPoint(input);
+             case LINE_STRING:
+@@ -76,11 +76,8 @@ public class JtsGeometrySerde
+         }
+     }
+ 
+-    private static Point readPoint(SliceInput input, boolean skipType)
++    private static Point readPoint(SliceInput input)
+     {
+-        if (skipType) {
+-            skipEsriType(input);
+-        }
+         Coordinate coordinates = readCoordinate(input);
+         if (isEsriNaN(coordinates.x) || isEsriNaN(coordinates.y)) {
+             return GEOMETRY_FACTORY.createPoint();
+@@ -95,7 +92,7 @@ public class JtsGeometrySerde
+         int pointCount = input.readInt();
+         Point[] points = new Point[pointCount];
+         for (int i = 0; i < pointCount; i++) {
+-            points[i] = readPoint(input, false);
++            points[i] = readPoint(input);
+         }
+         return GEOMETRY_FACTORY.createMultiPoint(points);
+     }
+@@ -280,7 +277,6 @@ public class JtsGeometrySerde
+     private static void writePoint(Point point, SliceOutput output)
+     {
+         output.writeByte(GeometryType.POINT.code());
+-        output.writeInt(EsriShapeType.POINT.code);
+         if (!point.isEmpty()) {
+             writeCoordinate(point.getCoordinate(), output);
+         }

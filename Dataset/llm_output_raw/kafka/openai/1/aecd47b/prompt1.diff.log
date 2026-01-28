@@ -1,0 +1,11 @@
+I’ve optimized the non-array-backed `ByteBuffer` path in `Checksums.update` to use bulk reads into a temporary buffer, reducing per-byte JNI/unsafe calls and improving throughput for direct buffers.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }",
+    "replace": "        } else {\n            // Bulk-update for non-array-backed buffers to reduce per-byte overhead\n            ByteBuffer duplicate = buffer.duplicate();\n            duplicate.position(buffer.position() + offset);\n            duplicate.limit(buffer.position() + offset + length);\n            int chunkSize = 4096;\n            byte[] temp = new byte[Math.min(length, chunkSize)];\n            while (duplicate.hasRemaining()) {\n                int read = Math.min(duplicate.remaining(), temp.length);\n                duplicate.get(temp, 0, read);\n                checksum.update(temp, 0, read);\n            }\n        }"
+  }
+]
+```

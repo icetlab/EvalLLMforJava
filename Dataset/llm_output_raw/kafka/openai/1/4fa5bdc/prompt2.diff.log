@@ -1,0 +1,16 @@
+I’ve updated the ACL matching code to avoid eager Set creation for prefixed entries by using a lazy view, and generalized AclSets to work over generic Iterables, eliminating unnecessary allocations during find and isEmpty.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "class AclSets(sets: Set[AclEntry]*) {\n    def find(p: AclEntry => Boolean): Option[AclEntry] = sets.flatMap(_.find(p)).headOption\n    def isEmpty: Boolean = !sets.exists(_.nonEmpty)\n  }",
+    "replace": "class AclSets(sets: Iterable[AclEntry]*) {\n    def find(p: AclEntry => Boolean): Option[AclEntry] = {\n      for (set <- sets) {\n        val found = set.find(p)\n        if (found.isDefined) return found\n      }\n      None\n    }\n    def isEmpty: Boolean = sets.forall(_.isEmpty)\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "      .values\n      .flatMap { _.acls }\n      .toSet",
+    "replace": "      .values\n      .view\n      .flatMap(_.acls)"
+  }
+]
+```

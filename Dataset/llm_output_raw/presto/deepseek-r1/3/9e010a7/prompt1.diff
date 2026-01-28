@@ -1,0 +1,123 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java b/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java
+index c586b38f12..441c2df83a 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java
+@@ -140,23 +140,19 @@ public final class MapToMapCast
+      */
+     private MethodHandle nullChecker(Class<?> javaType)
+     {
+-        if (javaType == Long.class) {
+-            return CHECK_LONG_IS_NOT_NULL;
+-        }
+-        else if (javaType == Double.class) {
+-            return CHECK_DOUBLE_IS_NOT_NULL;
+-        }
+-        else if (javaType == Boolean.class) {
+-            return CHECK_BOOLEAN_IS_NOT_NULL;
+-        }
+-        else if (javaType == Slice.class) {
+-            return CHECK_SLICE_IS_NOT_NULL;
+-        }
+-        else if (javaType == Block.class) {
+-            return CHECK_BLOCK_IS_NOT_NULL;
+-        }
+-        else {
+-            throw new IllegalArgumentException("Unknown java type " + javaType);
++        switch (javaType.getSimpleName()) {
++            case "Long":
++                return CHECK_LONG_IS_NOT_NULL;
++            case "Double":
++                return CHECK_DOUBLE_IS_NOT_NULL;
++            case "Boolean":
++                return CHECK_BOOLEAN_IS_NOT_NULL;
++            case "Slice":
++                return CHECK_SLICE_IS_NOT_NULL;
++            case "Block":
++                return CHECK_BLOCK_IS_NOT_NULL;
++            default:
++                throw new IllegalArgumentException("Unknown java type " + javaType);
+         }
+     }
+ 
+@@ -215,39 +211,58 @@ public final class MapToMapCast
+     {
+         checkState(toMapType.getTypeParameters().size() == 2, "Expect two type parameters for toMapType");
+         Type toKeyType = toMapType.getTypeParameters().get(0);
+-        TypedSet typedSet = new TypedSet(toKeyType, fromMap.getPositionCount() / 2, "map-to-map cast");
+-        BlockBuilder keyBlockBuilder = toKeyType.createBlockBuilder(null, fromMap.getPositionCount() / 2);
++        
++        int entryCount = fromMap.getPositionCount() / 2;
++        BlockBuilder mapBlockBuilder = toMapType.createBlockBuilder(null, 1);
++        BlockBuilder blockBuilder = mapBlockBuilder.beginBlockEntry();
++        
++        // Create a temporary block builder for duplicate detection
++        BlockBuilder tempKeyBlockBuilder = toKeyType.createBlockBuilder(null, 1);
++        BlockBuilder duplicateCheckBuilder = toKeyType.createBlockBuilder(null, entryCount);
++        
++        // Process keys and values in a single pass
+         for (int i = 0; i < fromMap.getPositionCount(); i += 2) {
++            // Clear the temporary builder
++            tempKeyBlockBuilder = toKeyType.createBlockBuilder(null, 1);
++            
++            // Process the key
+             try {
+-                keyProcessFunction.invokeExact(fromMap, i, properties, keyBlockBuilder);
++                keyProcessFunction.invokeExact(fromMap, i, properties, tempKeyBlockBuilder);
+             }
+             catch (Throwable t) {
+                 throw internalError(t);
+             }
+-        }
+-        Block keyBlock = keyBlockBuilder.build();
+-
+-        BlockBuilder mapBlockBuilder = toMapType.createBlockBuilder(null, 1);
+-        BlockBuilder blockBuilder = mapBlockBuilder.beginBlockEntry();
+-        for (int i = 0; i < fromMap.getPositionCount(); i += 2) {
+-            if (typedSet.add(keyBlock, i / 2)) {
+-                toKeyType.appendTo(keyBlock, i / 2, blockBuilder);
+-                if (fromMap.isNull(i + 1)) {
+-                    blockBuilder.appendNull();
+-                    continue;
+-                }
+-
+-                try {
+-                    valueProcessFunction.invokeExact(fromMap, i + 1, properties, blockBuilder);
+-                }
+-                catch (Throwable t) {
+-                    throw internalError(t);
++            
++            Block tempKeyBlock = tempKeyBlockBuilder.build();
++            
++            // Check for duplicates using the duplicate check builder
++            boolean isDuplicate = false;
++            for (int j = 0; j < duplicateCheckBuilder.getPositionCount(); j++) {
++                if (toKeyType.equalTo(tempKeyBlock, 0, duplicateCheckBuilder, j)) {
++                    isDuplicate = true;
++                    break;
+                 }
+             }
+-            else {
+-                // if there are duplicated keys, fail it!
++            
++            if (isDuplicate) {
+                 throw new PrestoException(INVALID_CAST_ARGUMENT, "duplicate keys");
+             }
++            
++            // Add to duplicate check and write to final block
++            toKeyType.appendTo(tempKeyBlock, 0, duplicateCheckBuilder);
++            toKeyType.appendTo(tempKeyBlock, 0, blockBuilder);
++            
++            if (fromMap.isNull(i + 1)) {
++                blockBuilder.appendNull();
++                continue;
++            }
++
++            try {
++                valueProcessFunction.invokeExact(fromMap, i + 1, properties, blockBuilder);
++            }
++            catch (Throwable t) {
++                throw internalError(t);
++            }
+         }
+ 
+         mapBlockBuilder.closeEntry();

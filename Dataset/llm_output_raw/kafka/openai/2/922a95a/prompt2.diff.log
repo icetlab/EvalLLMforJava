@@ -1,0 +1,11 @@
+I’ve removed the ISR read‐lock around follower appends so that `makeFollower()` (which takes the ISR write lock) won’t be blocked by an ongoing follower append. We still lock when appending to the future replica to guard directory swaps.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/cluster/Partition.scala",
+    "search": "private def doAppendRecordsToFollowerOrFutureReplica(records: MemoryRecords, isFuture: Boolean): Option[LogAppendInfo] = {\n    // The read lock is needed to handle race condition if request handler thread tries to\n    // remove future replica after receiving AlterReplicaLogDirsRequest.\n    inReadLock(leaderIsrUpdateLock) {\n      if (isFuture) {\n        // Note the replica may be undefined if it is removed by a non-ReplicaAlterLogDirsThread before\n        // this method is called\n        futureLog.map { _.appendAsFollower(records) }\n      } else {\n        // The read lock is needed to prevent the follower replica from being updated while ReplicaAlterDirThread\n        // is executing maybeDeleteAndSwapFutureReplica() to replace follower replica with the future replica.\n        Some(localLogOrException.appendAsFollower(records))\n      }\n    }\n  }",
+    "replace": "private def doAppendRecordsToFollowerOrFutureReplica(records: MemoryRecords, isFuture: Boolean): Option[LogAppendInfo] = {\n    if (isFuture) {\n      // Guard future log against concurrent alter-dir swaps\n      inReadLock(leaderIsrUpdateLock) {\n        futureLog.map { _.appendAsFollower(records) }\n      }\n    } else {\n      // Direct append for follower to avoid blocking makeFollower()\n      Some(localLogOrException.appendAsFollower(records))\n    }\n  }"
+  }
+]
+```

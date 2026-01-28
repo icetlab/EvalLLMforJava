@@ -1,0 +1,15 @@
+The primary performance issue in `SliceDirectSelectiveStreamReader` is in the `prepareForNextRead` method, specifically within the logic that calculates `totalLength` and `maxLength` from the `lengthVector`.
+
+When not in batch mode (`useBatchMode` returns `false`), the code iterates up to `totalPositions`, which can be very large for sparse reads. This loop is inefficient and has a potential `ArrayIndexOutOfBoundsException` because it doesn't check if all requested positions have been processed.
+
+My change addresses this by adding a check (`positionIndex < positionCount`) to the loop condition. This ensures the loop terminates as soon as all requested positions are processed, which can significantly reduce the number of iterations for sparse data where the requested positions are not near the end of the row group. This is both a performance optimization and a bug fix for the potential out-of-bounds access.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java",
+    "search": "                int positionIndex = 0;\n                int lengthIndex = 0;\n                for (int i = 0; i < totalPositions; i++) {\n                    boolean isNotNull = nullCount == 0 || !isNullVector[i];\n                    if (i == positions[positionIndex]) {\n                        if (isNotNull) {\n                            totalLength += lengthVector[lengthIndex];\n                            maxLength = Math.max(maxLength, lengthVector[lengthIndex]);\n                            lengthIndex++;\n                        }\n                        positionIndex++;\n                    }\n                    else if (isNotNull) {\n                        lengthIndex++;\n                    }\n                }",
+    "replace": "                int positionIndex = 0;\n                int lengthIndex = 0;\n                for (int i = 0; i < totalPositions && positionIndex < positionCount; i++) {\n                    boolean isNotNull = nullCount == 0 || !isNullVector[i];\n                    if (i == positions[positionIndex]) {\n                        if (isNotNull) {\n                            totalLength += lengthVector[lengthIndex];\n                            maxLength = Math.max(maxLength, lengthVector[lengthIndex]);\n                            lengthIndex++;\n                        }\n                        positionIndex++;\n                    }\n                    else if (isNotNull) {\n                        lengthIndex++;\n                    }\n                }"
+  }
+]
+```

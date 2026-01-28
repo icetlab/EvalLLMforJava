@@ -1,0 +1,151 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java
+index 79b56c6971..8e29e11cd2 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java
+@@ -404,10 +404,13 @@ public class SliceDirectSelectiveStreamReader
+     private int evaluateFilter(int[] positions, int positionCount)
+     {
+         int positionsIndex = 0;
++        int[] localLengthVector = lengthVector;
++        int[] localOutputPositions = outputPositions;
++        
+         for (int i = 0; i < positionCount; i++) {
+             int position = positions[i];
+-            if (filter.testLength(lengthVector[position])) {
+-                outputPositions[positionsIndex++] = position;  // compact positions on the fly
++            if (filter.testLength(localLengthVector[position])) {
++                localOutputPositions[positionsIndex++] = position;  // compact positions on the fly
+             }
+         }
+ 
+@@ -418,9 +421,9 @@ public class SliceDirectSelectiveStreamReader
+                 filteredPositionCount = positionsIndex;
+             }
+             else {
+-                int totalPositionCount = outputPositions[positionsIndex - 1] + 1;
+-                convertLengthVectorToOffsetVector(lengthVector, totalPositionCount, offsets);
+-                filteredPositionCount = testBytes(outputPositions, positionsIndex);
++                int totalPositionCount = localOutputPositions[positionsIndex - 1] + 1;
++                convertLengthVectorToOffsetVector(localLengthVector, totalPositionCount, offsets);
++                filteredPositionCount = testBytes(localOutputPositions, positionsIndex);
+             }
+         }
+ 
+@@ -461,13 +464,17 @@ public class SliceDirectSelectiveStreamReader
+     private int testBytes(int[] positions, int positionCount)
+     {
+         int positionsIndex = 0;
++        int[] localOffsets = offsets;
++        byte[] localData = data;
++        int[] localPositions = positions;
++        
+         for (int i = 0; i < positionCount; i++) {
+-            int position = positions[i];
++            int position = localPositions[i];
+ 
+-            int dataOffset = offsets[position];
+-            int length = offsets[position + 1] - dataOffset;
+-            if (filter.testBytes(data, dataOffset, length)) {
+-                positions[positionsIndex++] = position;
++            int dataOffset = localOffsets[position];
++            int length = localOffsets[position + 1] - dataOffset;
++            if (filter.testBytes(localData, dataOffset, length)) {
++                localPositions[positionsIndex++] = position;
+             }
+         }
+         return positionsIndex;
+@@ -649,20 +656,34 @@ public class SliceDirectSelectiveStreamReader
+             lengthStream.nextIntVector(nonNullCount, lengthVector, 0);
+ 
+             if (useBatchMode(positionCount, totalPositions)) {
++                // Use local variables for loop optimization
++                int localTotalLength = 0;
++                int localMaxLength = 0;
++                int[] localLengthVector = lengthVector;
+                 for (int i = 0; i < nonNullCount; i++) {
+-                    totalLength += lengthVector[i];
+-                    maxLength = Math.max(maxLength, lengthVector[i]);
++                    int length = localLengthVector[i];
++                    localTotalLength += length;
++                    if (length > localMaxLength) {
++                        localMaxLength = length;
++                    }
+                 }
++                totalLength = localTotalLength;
++                maxLength = localMaxLength;
+             }
+             else {
+                 int positionIndex = 0;
+                 int lengthIndex = 0;
++                int[] localLengthVector = lengthVector;
++                boolean[] localIsNullVector = isNullVector;
+                 for (int i = 0; i < totalPositions; i++) {
+-                    boolean isNotNull = nullCount == 0 || !isNullVector[i];
++                    boolean isNotNull = nullCount == 0 || !localIsNullVector[i];
+                     if (i == positions[positionIndex]) {
+                         if (isNotNull) {
+-                            totalLength += lengthVector[lengthIndex];
+-                            maxLength = Math.max(maxLength, lengthVector[lengthIndex]);
++                            int length = localLengthVector[lengthIndex];
++                            totalLength += length;
++                            if (length > maxLength) {
++                                maxLength = length;
++                            }
+                             lengthIndex++;
+                         }
+                         positionIndex++;
+@@ -710,31 +731,30 @@ public class SliceDirectSelectiveStreamReader
+ 
+     private boolean useBatchMode(int positionCount, int totalPositionCount)
+     {
+-        return true;
+         // maxCodePointCount < 0 means it's unbounded varchar VARCHAR.
+         // If the types are VARCHAR(N) or CHAR(N), the length of the string need to be calculated and truncated.
+-//        if (lengthStream == null || maxCodePointCount >= 0) {
+-//            return false;
+-//        }
+-//
+-//        double inputFilterRate = (double) (totalPositionCount - positionCount) / totalPositionCount;
+-//        if (filter == null) {  // readNoFilter
+-//            // When there is no filter, batch mode performs better for almost all inputFilterRate.
+-//            // But to limit data buffer size, we enable it for the range of [0.0f, 0.5f]
+-//            if (inputFilterRate >= 0.0f && inputFilterRate <= 0.5f) {
+-//                return true;
+-//            }
+-//
+-//            return false;
+-//        }
+-//        else { // readWithFilter
+-//            // When there is filter, batch mode performs better for almost all inputFilterRate except when inputFilterRate is around 0.1f.
+-//            // To limit data buffer size, we enable it for the range of [0.0f, 0.05f] and [0.15f, 0.5f]
+-//            if (inputFilterRate >= 0.0f && inputFilterRate <= 0.05f || inputFilterRate >= 0.15f && inputFilterRate <= 0.5f) {
+-//                return true;
+-//            }
+-//
+-//            return false;
+-//        }
++        if (lengthStream == null || maxCodePointCount >= 0) {
++            return false;
++        }
++
++        double inputFilterRate = (double) (totalPositionCount - positionCount) / totalPositionCount;
++        if (filter == null) {  // readNoFilter
++            // When there is no filter, batch mode performs better for almost all inputFilterRate.
++            // But to limit data buffer size, we enable it for the range of [0.0f, 0.5f]
++            if (inputFilterRate >= 0.0f && inputFilterRate <= 0.5f) {
++                return true;
++            }
++
++            return false;
++        }
++        else { // readWithFilter
++            // When there is filter, batch mode performs better for almost all inputFilterRate except when inputFilterRate is around 0.1f.
++            // To limit data buffer size, we enable it for the range of [0.0f, 0.05f] and [0.15f, 0.5f]
++            if (inputFilterRate >= 0.0f && inputFilterRate <= 0.05f || inputFilterRate >= 0.15f && inputFilterRate <= 0.5f) {
++                return true;
++            }
++
++            return false;
++        }
+     }
+ }

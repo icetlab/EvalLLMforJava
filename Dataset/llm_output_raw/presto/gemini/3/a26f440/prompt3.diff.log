@@ -1,0 +1,55 @@
+My improvement strategy focuses on two main areas: optimizing the merging of T-Digests and accelerating quantile calculations.
+
+First, I will improve the `merge(TDigest other)` method. The original implementation creates an empty `ArrayList` and then iterates through the other digest's centroids, adding them one by one. This can be made more efficient by using the `ArrayList` constructor that accepts a collection, which can pre-size the internal array and use a more optimized way to copy the elements. This reduces overhead associated with list resizing and repeated `add()` calls.
+
+Second, I will significantly improve the performance of the `getQuantile()` method, which is a key operation highlighted in the benchmarks. The original implementation performs a linear scan over the centroids to find the correct quantile. Since the centroids are sorted, this search can be replaced with a more efficient binary search. To facilitate this, I will introduce a pre-calculated array of cumulative weights for the centroids. This array will be maintained during merge operations and after deserialization, adding a small overhead to ingestion but providing a substantial speed-up for `getQuantile()` by reducing its complexity from O(N) to O(log N), where N is the number of centroids.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "private final double[] tempMean;",
+    "replace": "private final double[] tempMean;\n\n    // array for holding cumulative weights of centroids. Used for faster quantile queries.\n    private final double[] cumulative;"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "tempMean = new double[bufferSize];\n        order = new int[bufferSize];",
+    "replace": "tempMean = new double[bufferSize];\n        order = new int[bufferSize];\n        cumulative = new double[size];"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "sliceInput.readBytes(wrappedDoubleArray(r.mean), r.activeCentroids * SIZE_OF_DOUBLE);\n            sliceInput.close();",
+    "replace": "sliceInput.readBytes(wrappedDoubleArray(r.mean), r.activeCentroids * SIZE_OF_DOUBLE);\n            r.updateCumulative();\n            sliceInput.close();"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "List<Centroid> tmp = new ArrayList<>();\n        for (Centroid centroid : other.centroids()) {\n            tmp.add(centroid);\n        }",
+    "replace": "        List<Centroid> tmp = new ArrayList<>(other.centroids());"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "if (runBackwards) {\n            reverse(mean, 0, activeCentroids);\n            reverse(weight, 0, activeCentroids);\n        }\n\n        if (totalWeight > 0) {\n            min = Math.min(min, mean[0]);\n            max = max(max, mean[activeCentroids - 1]);\n        }",
+    "replace": "if (runBackwards) {\n            reverse(mean, 0, activeCentroids);\n            reverse(weight, 0, activeCentroids);\n        }\n\n        updateCumulative();\n\n        if (totalWeight > 0) {\n            min = Math.min(min, mean[0]);\n            max = max(max, mean[activeCentroids - 1]);\n        }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "if (index > totalWeight - 1) {\n            return max;\n        }",
+    "replace": "if (index > totalWeight - 1) {\n            return max;\n        }\n\n        // if the left centroid has more than one sample, we still know\n        // that one sample occurred at min so we can do some interpolation\n        if (weight[0] > 1 && index < weight[0] / 2) {\n            // there is a single sample at min so we interpolate with less weight\n            return min + (index - 1) / (weight[0] / 2 - 1) * (mean[0] - min);\n        }\n\n        if (index > totalWeight - 1) {\n            return max;\n        }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "// in between extremes we interpolate between centroids\n        double weightSoFar = weight[0] / 2;\n        for (int i = 0; i < n - 1; i++) {\n            // centroids i and i + 1 bracket our current point\n            double dw = (weight[i] + weight[i + 1]) / 2;\n            if (weightSoFar + dw > index) {\n                // check for unit weight\n                double leftUnit = 0;\n                if (weight[i] == 1) {\n                    if (index - weightSoFar < 0.5) {\n                        // within the singleton's sphere\n                        return mean[i];\n                    }\n                    else {\n                        leftUnit = 0.5;\n                    }\n                }\n                double rightUnit = 0;\n                if (weight[i + 1] == 1) {\n                    if (weightSoFar + dw - index <= 0.5) {\n                        // no interpolation needed near singleton\n                        return mean[i + 1];\n                    }\n                    rightUnit = 0.5;\n                }\n                double z1 = index - weightSoFar - leftUnit;\n                double z2 = weightSoFar + dw - index - rightUnit;\n                return weightedAverage(mean[i], z2, mean[i + 1], z1);\n            }\n            weightSoFar += dw;\n        }",
+    "replace": "// in between extremes we interpolate between centroids\n        int i = -1;\n        if (n > 1) {\n            // find the first centroid whose cumulative weight is greater than index\n            int low = 0;\n            int high = n - 1;\n            while (low <= high) {\n                int mid = low + (high - low) / 2;\n                double midWeight = mid > 0 ? (cumulative[mid - 1] + weight[mid] / 2.0) : (weight[mid] / 2.0);\n                if (midWeight >= index) {\n                    high = mid - 1;\n                }\n                else {\n                    low = mid + 1;\n                }\n            }\n            i = low;\n\n            if (i >= n) {\n                i = n - 1;\n            }\n\n            // We are in the interval between i-1 and i.\n            // We need to handle the case of i=0 (first interval) separately.\n            if (i > 0) {\n                double weightSoFar = (cumulative[i - 1] - weight[i - 1] / 2.0) + (weight[i - 1] + weight[i]) / 2.0;\n                double z1 = index - (cumulative[i - 1] - weight[i - 1] / 2.0);\n                double z2 = weightSoFar - index;\n                return weightedAverage(mean[i - 1], z2, mean[i], z1);\n            }\n        }\n\n        // Fallback or special handling for first interval\n        double weightSoFar = weight[0] / 2;\n        for (i = 0; i < n - 1; i++) {\n            // centroids i and i + 1 bracket our current point\n            double dw = (weight[i] + weight[i + 1]) / 2;\n            if (weightSoFar + dw > index) {\n                // check for unit weight\n                double leftUnit = 0;\n                if (weight[i] == 1) {\n                    if (index - weightSoFar < 0.5) {\n                        // within the singleton's sphere\n                        return mean[i];\n                    }\n                    else {\n                        leftUnit = 0.5;\n                    }\n                }\n                double rightUnit = 0;\n                if (weight[i + 1] == 1) {\n                    if (weightSoFar + dw - index <= 0.5) {\n                        // no interpolation needed near singleton\n                        return mean[i + 1];\n                    }\n                    rightUnit = 0.5;\n                }\n                double z1 = index - weightSoFar - leftUnit;\n                double z2 = weightSoFar + dw - index - rightUnit;\n                return weightedAverage(mean[i], z2, mean[i + 1], z1);\n            }\n            weightSoFar += dw;\n        }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "public long estimatedInMemorySizeInBytes()\n    {\n        return INSTANCE_SIZE + sizeOf(weight) + sizeOf(mean) + sizeOf(tempWeight) + sizeOf(tempMean) + sizeOf(order);\n    }",
+    "replace": "public long estimatedInMemorySizeInBytes()\n    {\n        return INSTANCE_SIZE + sizeOf(weight) + sizeOf(mean) + sizeOf(tempWeight) + sizeOf(tempMean) + sizeOf(order) + sizeOf(cumulative);\n    }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java",
+    "search": "public String toString()\n    {\n        return format(\"TDigest\\nCompression:%s\\nCentroid Count:%s\\nSize:%s\\nMin:%s Median:%s Max:%s\",\n                publicCompression, activeCentroids, totalWeight, min, getQuantile(0.5), max);\n    }",
+    "replace": "    private void updateCumulative()\n    {\n        if (activeCentroids > 0) {\n            cumulative[0] = weight[0];\n            for (int i = 1; i < activeCentroids; i++) {\n                cumulative[i] = cumulative[i - 1] + weight[i];\n            }\n        }\n    }\n\n    public String toString()\n    {\n        return format(\"TDigest\\nCompression:%s\\nCentroid Count:%s\\nSize:%s\\nMin:%s Median:%s Max:%s\",\n                publicCompression, activeCentroids, totalWeight, min, getQuantile(0.5), max);\n    }"
+  }
+]
+```

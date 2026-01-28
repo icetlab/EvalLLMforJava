@@ -1,0 +1,24 @@
+diff --git a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
+index da5080ff85..6a980b94d9 100644
+--- a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
++++ b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringEncoder.java
+@@ -83,6 +83,19 @@ public class QueryStringEncoder {
+     }
+ 
+     private void encodeComponent(CharSequence s) {
++        // fast-path: if all characters are unreserved, append in one go
++        int len = s.length();
++        boolean allUnreserved = true;
++        for (int i = 0; i < len; i++) {
++            if (!dontNeedEncoding(s.charAt(i))) {
++                allUnreserved = false;
++                break;
++            }
++        }
++        if (allUnreserved) {
++            uriBuilder.append(s);
++            return;
++        }
+         if (charset == null) {
+             encodeUtf8Component(s);
+         } else {

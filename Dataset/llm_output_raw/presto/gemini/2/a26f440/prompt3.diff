@@ -1,0 +1,119 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java b/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
+index ce0ca747f2..06d5ff24af 100644
+--- a/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
++++ b/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
+@@ -112,6 +112,8 @@ public class TDigest
+ 
+     private final double[] mean;
+ 
++    private final double[] meanCumulativeWeight;
++
+     private double unmergedWeight;
+ 
+     // this is the index of the next temporary centroid
+@@ -144,6 +146,7 @@ public class TDigest
+ 
+         weight = new double[size];
+         mean = new double[size];
++        meanCumulativeWeight = new double[size];
+         tempWeight = new double[bufferSize];
+         tempMean = new double[bufferSize];
+         order = new int[bufferSize];
+@@ -215,14 +218,28 @@ public class TDigest
+         checkArgument(other != null, "Cannot merge with a null t-digest");
+         checkArgument(this.publicCompression == other.getCompressionFactor(), "TDigests must have the same compression, found (%s, %s)", this.publicCompression,
+                 other.getCompressionFactor());
+-        List<Centroid> tmp = new ArrayList<>();
+-        for (Centroid centroid : other.centroids()) {
+-            tmp.add(centroid);
++        other.compress();
++
++        if (other.activeCentroids == 0) {
++            return;
++        }
++
++        int[] indices = new int[other.activeCentroids];
++        for (int i = 0; i < other.activeCentroids; i++) {
++            indices[i] = i;
++        }
++
++        // Fisher-Yates shuffle on indices
++        for (int i = indices.length - 1; i > 0; i--) {
++            int j = gen.nextInt(i + 1);
++            // swap
++            int temp = indices[i];
++            indices[i] = indices[j];
++            indices[j] = temp;
+         }
+ 
+-        shuffle(tmp, gen);
+-        for (Centroid centroid : tmp) {
+-            add(centroid.getMean(), centroid.getWeight());
++        for (int i : indices) {
++            add(other.mean[i], (long) other.weight[i]);
+         }
+     }
+ 
+@@ -319,6 +336,13 @@ public class TDigest
+             min = Math.min(min, mean[0]);
+             max = max(max, mean[activeCentroids - 1]);
+         }
++
++        if (activeCentroids > 0) {
++            meanCumulativeWeight[0] = weight[0] / 2;
++            for (int i = 1; i < activeCentroids; i++) {
++                meanCumulativeWeight[i] = meanCumulativeWeight[i - 1] + (weight[i - 1] + weight[i]) / 2;
++            }
++        }
+     }
+ 
+     /**
+@@ -498,11 +522,26 @@ public class TDigest
+         }
+ 
+         // in between extremes we interpolate between centroids
+-        double weightSoFar = weight[0] / 2;
+-        for (int i = 0; i < n - 1; i++) {
+-            // centroids i and i + 1 bracket our current point
++        // Find the first k > 0 such that meanCumulativeWeight[k] > index. The interpolation
++        // is then between centroids k-1 and k.
++        int k = -1;
++        int low = 1;
++        int high = n - 1;
++        while (low <= high) {
++            int mid = low + (high - low) / 2;
++            if (meanCumulativeWeight[mid] > index) {
++                k = mid;
++                high = mid - 1;
++            }
++            else {
++                low = mid + 1;
++            }
++        }
++
++        if (k != -1) {
++            int i = k - 1;
++            double weightSoFar = meanCumulativeWeight[i];
+             double dw = (weight[i] + weight[i + 1]) / 2;
+-            if (weightSoFar + dw > index) {
+             // check for unit weight
+             double leftUnit = 0;
+             if (weight[i] == 1) {
+@@ -526,8 +565,6 @@ public class TDigest
+             double z2 = weightSoFar + dw - index - rightUnit;
+             return weightedAverage(mean[i], z2, mean[i + 1], z1);
+         }
+-            weightSoFar += dw;
+-        }
+ 
+         checkArgument(weight[n - 1] > 1, "Expected weight[n - 1] > 1, but was %s", weight[n - 1]);
+         checkArgument(index <= totalWeight, "Expected index <= totalWeight, but index:%s > totalWeight:%s", index, totalWeight);
+@@ -610,7 +647,7 @@ public class TDigest
+ 
+     public long estimatedInMemorySizeInBytes()
+     {
+-        return INSTANCE_SIZE + sizeOf(weight) + sizeOf(mean) + sizeOf(tempWeight) + sizeOf(tempMean) + sizeOf(order);
++        return INSTANCE_SIZE + sizeOf(weight) + sizeOf(mean) + sizeOf(meanCumulativeWeight) + sizeOf(tempWeight) + sizeOf(tempMean) + sizeOf(order);
+     }
+ 
+     public Slice serialize()

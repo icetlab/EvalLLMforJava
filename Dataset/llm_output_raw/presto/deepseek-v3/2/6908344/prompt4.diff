@@ -1,0 +1,38 @@
+diff --git a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+index 350f609b45..03ac8707e9 100644
+--- a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
++++ b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+@@ -147,6 +147,33 @@ public class GeometrySerde
+ 
+     private static OGCGeometry readSimpleGeometry(BasicSliceInput input, Slice inputSlice, GeometryType type, int length)
+     {
++        if (type == GeometryType.POINT) {
++            // Skip shape type (4 bytes)
++            input.readInt();
++            double x = input.readDouble();
++            double y = input.readDouble();
++            if (isEsriNaN(x) || isEsriNaN(y)) {
++                return new OGCPoint(new Point(), null);
++            }
++            Point point = new Point(x, y);
++            return createFromEsriGeometry(point, false);
++        }
++        if (type == GeometryType.MULTI_POINT) {
++            // Skip shape type (4 bytes)
++            input.readInt();
++            // Skip envelope (4 doubles)
++            input.skip(4 * Double.BYTES);
++            int pointCount = input.readInt();
++            MultiPoint multiPoint = new MultiPoint();
++            for (int i = 0; i < pointCount; i++) {
++                double x = input.readDouble();
++                double y = input.readDouble();
++                if (!isEsriNaN(x) && !isEsriNaN(y)) {
++                    multiPoint.add(x, y);
++                }
++            }
++            return createFromEsriGeometry(multiPoint, true);
++        }
+         int currentPosition = toIntExact(input.position());
+         ByteBuffer geometryBuffer = inputSlice.toByteBuffer(currentPosition, length).slice();
+         input.setPosition(currentPosition + length);

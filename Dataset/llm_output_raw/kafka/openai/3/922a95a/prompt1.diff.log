@@ -1,0 +1,24 @@
+I’ve refactored small hot-paths to reduce redundant calls and allocations:
+
+1. Combined the three separate `checkAndComplete` calls in `DelayedOperations.checkAndCompleteAll` into a single loop to avoid repeated bytecode and improve readability.
+2. Introduced a local `checkLowWatermark` flag in `Partition.updateFollowerFetchState` to avoid calling `delayedOperations.numDelayedDelete` twice per invocation.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/cluster/Partition.scala",
+    "search": "def checkAndCompleteAll(): Unit = {\n    val requestKey = TopicPartitionOperationKey(topicPartition)\n    fetch.checkAndComplete(requestKey)\n    produce.checkAndComplete(requestKey)\n    deleteRecords.checkAndComplete(requestKey)\n  }",
+    "replace": "def checkAndCompleteAll(): Unit = {\n    val requestKey = TopicPartitionOperationKey(topicPartition)\n    Seq(fetch, produce, deleteRecords).foreach(_.checkAndComplete(requestKey))\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/cluster/Partition.scala",
+    "search": "// No need to calculate low watermark if there is no delayed DeleteRecordsRequest\n        val oldLeaderLW = if (delayedOperations.numDelayedDelete > 0) lowWatermarkIfLeader else -1L",
+    "replace": "// No need to calculate low watermark if there is no delayed DeleteRecordsRequest\n        val checkLowWatermark = delayedOperations.numDelayedDelete > 0\n        val oldLeaderLW = if (checkLowWatermark) lowWatermarkIfLeader else -1L"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/cluster/Partition.scala",
+    "search": "        val newLeaderLW = if (delayedOperations.numDelayedDelete > 0) lowWatermarkIfLeader else -1L",
+    "replace": "        val newLeaderLW = if (checkLowWatermark) lowWatermarkIfLeader else -1L"
+  }
+]
+```

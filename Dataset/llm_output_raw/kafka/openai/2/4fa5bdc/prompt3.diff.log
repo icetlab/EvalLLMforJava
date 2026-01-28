@@ -1,0 +1,11 @@
+I’ve optimized the prefixed‐range lookup in `matchingAcls` to avoid constructing intermediate submaps and filtering keys, instead using `iteratorFrom` with `takeWhile` to stop as soon as the prefix range ends. This reduces allocations and traversal costs for large ACL caches.
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "val wildcard = aclCacheSnapshot.get(new ResourcePattern(resourceType, ResourcePattern.WILDCARD_RESOURCE, PatternType.LITERAL))\n      .map(_.acls)\n      .getOrElse(Set.empty)\n\n    val literal = aclCacheSnapshot.get(new ResourcePattern(resourceType, resourceName, PatternType.LITERAL))\n      .map(_.acls)\n      .getOrElse(Set.empty)\n\n    val prefixed = aclCacheSnapshot\n      .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))\n      .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))\n      .filterKeys(resource => resourceName.startsWith(resource.name))\n      .values\n      .flatMap { _.acls }\n      .toSet\n\n    new AclSets(prefixed, wildcard, literal)",
+    "replace": "val wildcardPattern = new ResourcePattern(resourceType, ResourcePattern.WILDCARD_RESOURCE, PatternType.LITERAL)\n    val literalPattern = new ResourcePattern(resourceType, resourceName, PatternType.LITERAL)\n    val wildcard = aclCacheSnapshot.get(wildcardPattern).map(_.acls).getOrElse(Set.empty)\n    val literal = aclCacheSnapshot.get(literalPattern).map(_.acls).getOrElse(Set.empty)\n    val prefixedStart = new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED)\n    val prefixed = aclCacheSnapshot.iteratorFrom(prefixedStart)\n      .takeWhile { case (pattern, _) =>\n        pattern.resourceType == resourceType &&\n        pattern.patternType == PatternType.PREFIXED &&\n        resourceName.startsWith(pattern.name)\n      }\n      .flatMap(_._2.acls)\n      .toSet\n    new AclSets(prefixed, wildcard, literal)"
+  }
+]
+```

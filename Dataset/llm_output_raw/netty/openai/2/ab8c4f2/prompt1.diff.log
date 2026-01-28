@@ -1,0 +1,21 @@
+I’ve optimized dynamic table capacity checks and entry lookups by replacing redundant length() calls with direct size checks, reducing method overhead and simplifying loops.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java",
+    "search": "private void ensureCapacity(long headerSize) {\n        while (maxHeaderTableSize - size < headerSize) {\n            int index = length();\n            if (index == 0) {",
+    "replace": "private void ensureCapacity(long headerSize) {\n        while (size + headerSize > maxHeaderTableSize) {\n            if (size == 0) {"
+  },
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java",
+    "search": "private HeaderEntry getEntryInsensitive(CharSequence name, CharSequence value) {\n        if (length() == 0 || name == null || value == null) {",
+    "replace": "private HeaderEntry getEntryInsensitive(CharSequence name, CharSequence value) {\n        if (size == 0 || name == null || value == null) {"
+  },
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackEncoder.java",
+    "search": "private int getIndex(CharSequence name) {\n        if (length() == 0 || name == null) {",
+    "replace": "private int getIndex(CharSequence name) {\n        if (size == 0 || name == null) {"
+  }
+]
+```

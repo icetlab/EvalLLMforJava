@@ -1,0 +1,44 @@
+diff --git a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+index 350f609b45..19d509a212 100644
+--- a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
++++ b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+@@ -53,7 +53,8 @@ public class GeometrySerde
+     public static Slice serialize(OGCGeometry input)
+     {
+         requireNonNull(input, "input is null");
+-        DynamicSliceOutput output = new DynamicSliceOutput(100);
++        // bump initial capacity to reduce buffer expansions for larger geometries
++        DynamicSliceOutput output = new DynamicSliceOutput(1024);
+         writeGeometry(output, input);
+         return output.slice();
+     }
+diff --git a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java
+index 0030a0bf84..20dccd3690 100644
+--- a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java
++++ b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/JtsGeometrySerde.java
+@@ -93,11 +93,12 @@ public class JtsGeometrySerde
+         skipEsriType(input);
+         skipEnvelope(input);
+         int pointCount = input.readInt();
+-        Point[] points = new Point[pointCount];
++        // read raw coordinates directly to avoid per-point object allocation
++        Coordinate[] coords = new Coordinate[pointCount];
+         for (int i = 0; i < pointCount; i++) {
+-            points[i] = readPoint(input, false);
++            coords[i] = readCoordinate(input);
+         }
+-        return GEOMETRY_FACTORY.createMultiPoint(points);
++        return GEOMETRY_FACTORY.createMultiPoint(coords);
+     }
+ 
+     private static Geometry readPolyline(SliceInput input, boolean multitype)
+@@ -243,7 +244,8 @@ public class JtsGeometrySerde
+     public static Slice serialize(Geometry geometry)
+     {
+         requireNonNull(geometry, "input is null");
+-        DynamicSliceOutput output = new DynamicSliceOutput(100);
++        // bump initial capacity to reduce buffer expansions for larger geometries
++        DynamicSliceOutput output = new DynamicSliceOutput(1024);
+         writeGeometry(geometry, output);
+         return output.slice();
+     }

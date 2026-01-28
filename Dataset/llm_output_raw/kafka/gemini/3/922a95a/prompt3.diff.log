@@ -1,0 +1,25 @@
+I have analyzed the build failure. The error `value keySet is not a member of kafka.utils.Pool` indicates that my previous change to use `remoteReplicasMap.keySet` was incorrect for the `Pool` type. Although `kafka.utils.Pool` extends `scala.collection.mutable.Map`, which should provide a `keySet` method, there might be a compiler or type inference issue.
+
+To resolve this, I will revert to using the `keys` method, which is explicitly defined on the `Pool` class, and then convert the resulting `Iterable` to a `Set` using `.toSet`. This ensures that the set-based difference operations I introduced for performance remain efficient. The rest of my changes, which focus on reducing object allocations and optimizing collection conversions, remain valid and contribute to the overall performance improvement.
+
+Here is the corrected set of changes:
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/cluster/Partition.scala",
+    "search": "  def updateAssignmentAndIsr(assignment: Seq[Int],\n                             isr: Set[Int],\n                             addingReplicas: Seq[Int],\n                             removingReplicas: Seq[Int]): Unit = {\n    val replicaSet = assignment.toSet\n    val removedReplicas = remoteReplicasMap.keys -- replicaSet\n\n    assignment\n      .filter(_ != localBrokerId)\n      .foreach(id => remoteReplicasMap.getAndMaybePut(id, new Replica(id, topicPartition)))\n    removedReplicas.foreach(remoteReplicasMap.remove)\n    if (addingReplicas.nonEmpty || removingReplicas.nonEmpty)\n      assignmentState = OngoingReassignmentState(addingReplicas, removingReplicas, assignment)\n    else\n      assignmentState = SimpleAssignmentState(assignment)\n    inSyncReplicaIds = isr\n  }",
+    "replace": "  def updateAssignmentAndIsr(assignment: Seq[Int],\n                             isr: Set[Int],\n                             addingReplicas: Seq[Int],\n                             removingReplicas: Seq[Int]): Unit = {\n    val newReplicaIds = assignment.toSet\n    val currentRemoteReplicaIds = remoteReplicasMap.keys.toSet\n\n    val newRemoteReplicas = newReplicaIds - localBrokerId\n    val replicasToAdd = newRemoteReplicas -- currentRemoteReplicaIds\n    val replicasToRemove = currentRemoteReplicaIds -- newRemoteReplicas\n\n    replicasToAdd.foreach(id => remoteReplicasMap.put(id, new Replica(id, topicPartition)))\n    replicasToRemove.foreach(remoteReplicasMap.remove)\n\n    if (addingReplicas.nonEmpty || removingReplicas.nonEmpty)\n      assignmentState = OngoingReassignmentState(addingReplicas, removingReplicas, assignment)\n    else\n      assignmentState = SimpleAssignmentState(assignment)\n    inSyncReplicaIds = isr\n  }"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/cluster/Partition.scala",
+    "search": "      updateAssignmentAndIsr(\n        assignment = partitionState.replicas.asScala.iterator.map(_.toInt).toSeq,\n        isr = Set.empty[Int],\n        addingReplicas = partitionState.addingReplicas.asScala.map(_.toInt),\n        removingReplicas = partitionState.removingReplicas.asScala.map(_.toInt)\n      )",
+    "replace": "      updateAssignmentAndIsr(\n        assignment = partitionState.replicas.asScala.map(_.toInt),\n        isr = Set.empty[Int],\n        addingReplicas = partitionState.addingReplicas.asScala.map(_.toInt),\n        removingReplicas = partitionState.removingReplicas.asScala.map(_.toInt)\n      )"
+  },
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/cluster/Partition.scala",
+    "search": "    val candidateReplicaIds = inSyncReplicaIds - localBrokerId\n    val currentTimeMs = time.milliseconds()\n    val leaderEndOffset = localLogOrException.logEndOffset\n    candidateReplicaIds.filter(replicaId => isFollowerOutOfSync(replicaId, leaderEndOffset, currentTimeMs, maxLagMs))",
+    "replace": "    val currentTimeMs = time.milliseconds()\n    val leaderEndOffset = localLogOrException.logEndOffset\n    inSyncReplicaIds.filter {\n      replicaId => replicaId != localBrokerId && isFollowerOutOfSync(replicaId, leaderEndOffset, currentTimeMs, maxLagMs)\n    }"
+  }
+]
+```

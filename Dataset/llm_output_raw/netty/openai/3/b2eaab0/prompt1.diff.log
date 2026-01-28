@@ -1,0 +1,16 @@
+I’ve optimized the “safe” fallback loops in PlatformDependent by adding simple 8-byte unrolling, which should significantly improve throughput on large spans while preserving exact semantics (including negative/zero-length handling).
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "private static boolean equalsSafe(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        final int end = startPos1 + length;\n        for (; startPos1 < end; ++startPos1, ++startPos2) {\n            if (bytes1[startPos1] != bytes2[startPos2]) {\n                return false;\n            }\n        }\n        return true;\n    }",
+    "replace": "private static boolean equalsSafe(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        if (length <= 0) {\n            return true;\n        }\n        int end = startPos1 + length;\n        int i = startPos1;\n        int j = startPos2;\n        int limit = end - 7;\n        // Unrolled 8-byte checks\n        while (i < limit) {\n            if (bytes1[i]   != bytes2[j]   ||\n                bytes1[i+1] != bytes2[j+1] ||\n                bytes1[i+2] != bytes2[j+2] ||\n                bytes1[i+3] != bytes2[j+3] ||\n                bytes1[i+4] != bytes2[j+4] ||\n                bytes1[i+5] != bytes2[j+5] ||\n                bytes1[i+6] != bytes2[j+6] ||\n                bytes1[i+7] != bytes2[j+7]) {\n                return false;\n            }\n            i += 8;\n            j += 8;\n        }\n        // Tail\n        for (; i < end; i++, j++) {\n            if (bytes1[i] != bytes2[j]) {\n                return false;\n            }\n        }\n        return true;\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "private static boolean isZeroSafe(byte[] bytes, int startPos, int length) {\n        final int end = startPos + length;\n        for (; startPos < end; ++startPos) {\n            if (bytes[startPos] != 0) {\n                return false;\n            }\n        }\n        return true;\n    }",
+    "replace": "private static boolean isZeroSafe(byte[] bytes, int startPos, int length) {\n        if (length <= 0) {\n            return true;\n        }\n        int end = startPos + length;\n        int i = startPos;\n        int limit = end - 7;\n        // Unrolled 8-byte zero checks\n        while (i < limit) {\n            if (bytes[i]   != 0 ||\n                bytes[i+1] != 0 ||\n                bytes[i+2] != 0 ||\n                bytes[i+3] != 0 ||\n                bytes[i+4] != 0 ||\n                bytes[i+5] != 0 ||\n                bytes[i+6] != 0 ||\n                bytes[i+7] != 0) {\n                return false;\n            }\n            i += 8;\n        }\n        // Tail\n        for (; i < end; i++) {\n            if (bytes[i] != 0) {\n                return false;\n            }\n        }\n        return true;\n    }"
+  }
+]
+```

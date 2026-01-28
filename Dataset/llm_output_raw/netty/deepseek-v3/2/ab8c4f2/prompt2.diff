@@ -1,0 +1,16 @@
+diff --git a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
+index c077dbceff..96e8abff09 100644
+--- a/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
++++ b/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java
+@@ -154,7 +154,10 @@ final class HpackStaticTable {
+         // Note this assumes all entries for a given header field are sequential.
+         while (index <= length) {
+             HpackHeaderField entry = getEntry(index);
+-            if (equalsVariableTime(name, entry.name) && equalsVariableTime(value, entry.value)) {
++            if (!equalsVariableTime(name, entry.name)) {
++                break;
++            }
++            if (equalsVariableTime(value, entry.value)) {
+                 return index;
+             }
+             index++;

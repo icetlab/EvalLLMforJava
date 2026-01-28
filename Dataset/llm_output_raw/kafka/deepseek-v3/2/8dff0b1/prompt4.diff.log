@@ -1,0 +1,21 @@
+## Explanation of Performance Improvement
+
+The compilation error shows a type mismatch in the `acls` method: `Iterator[AclBinding]` cannot be converted to `java.lang.Iterable[AclBinding]` using `.asJava`. The issue is that `scala.collection.Iterator` doesn't have an `.asJava` method that converts to `java.lang.Iterable`. We need to use `JavaConverters` properly to convert the iterator to a Java iterable.
+
+Looking at the code, we need to:
+1. Import the proper JavaConverters for iterator conversion
+2. Use `.asJava` on a proper Scala collection, not on an iterator
+
+Actually, looking more carefully at the error and the code, the issue is that we're trying to call `.asJava` on an `Iterator[AclBinding]`, but we need a `java.lang.Iterable[AclBinding]`. We should collect the iterator results into a proper Scala collection first, then convert to Java.
+
+Here's the fix:
+
+```json
+[
+  {
+    "filepath": "../kafka/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala",
+    "search": "  override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n    inReadLock(lock) {\n      unorderedAcls.flatMap { case (resource, versionedAcls) =>\n        versionedAcls.acls.map(acl => new AclBinding(resource, acl.ace))\n            .filter(filter.matches)\n      }.asJava\n    }\n  }",
+    "replace": "  override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {\n    inReadLock(lock) {\n      aclCache.iterator.flatMap { case (resource, versionedAcls) =>\n        versionedAcls.acls.iterator.map(acl => new AclBinding(resource, acl.ace))\n            .filter(filter.matches)\n      }.toIterable.asJava\n    }\n  }"
+  }
+]
+```

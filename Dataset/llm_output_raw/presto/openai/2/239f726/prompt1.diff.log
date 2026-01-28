@@ -1,0 +1,26 @@
+I have applied micro‐optimizations in hotspot geometry routines to cache loop bounds, reduce repeated calls, and use Math.hypot for better performance in distance calculations. These changes are local to method implementations and maintain existing behavior and test compatibility.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "private static Point computePointsCentroid(MultiVertexGeometry multiVertex)\n    {\n        double xSum = 0;\n        double ySum = 0;\n        for (int i = 0; i < multiVertex.getPointCount(); i++) {",
+    "replace": "private static Point computePointsCentroid(MultiVertexGeometry multiVertex)\n    {\n        int pointCount = multiVertex.getPointCount();\n        if (pointCount == 0) {\n            return new Point();\n        }\n        double xSum = 0;\n        double ySum = 0;\n        for (int i = 0; i < pointCount; i++) {"
+  },
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "private static Point computeLineCentroid(Polyline polyline)\n    {\n        double xSum = 0;\n        double ySum = 0;\n        double weightSum = 0;\n        for (int i = 0; i < polyline.getPathCount(); i++) {\n            Point startPoint = polyline.getPoint(polyline.getPathStart(i));\n            Point endPoint = polyline.getPoint(polyline.getPathEnd(i) - 1);\n            double dx = endPoint.getX() - startPoint.getX();\n            double dy = endPoint.getY() - startPoint.getY();\n            double length = Math.sqrt(dx * dx + dy * dy);\n            weightSum += length;\n            xSum += (startPoint.getX() + endPoint.getX()) * length / 2;\n            ySum += (startPoint.getY() + endPoint.getY()) * length / 2;\n        }\n        return new Point(xSum / weightSum, ySum / weightSum);\n    }",
+    "replace": "private static Point computeLineCentroid(Polyline polyline)\n    {\n        int pathCount = polyline.getPathCount();\n        double xSum = 0;\n        double ySum = 0;\n        double weightSum = 0;\n        for (int i = 0; i < pathCount; i++) {\n            int start = polyline.getPathStart(i);\n            int end = polyline.getPathEnd(i);\n            Point startPoint = polyline.getPoint(start);\n            Point endPoint = polyline.getPoint(end - 1);\n            double dx = endPoint.getX() - startPoint.getX();\n            double dy = endPoint.getY() - startPoint.getY();\n            double length = Math.hypot(dx, dy);\n            weightSum += length;\n            double midX = (startPoint.getX() + endPoint.getX()) * 0.5;\n            double midY = (startPoint.getY() + endPoint.getY()) * 0.5;\n            xSum += midX * length;\n            ySum += midY * length;\n        }\n        return new Point(xSum / weightSum, ySum / weightSum);\n    }"
+  },
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "Point current = polygon.getPoint(i);\n            Point next = polygon.getPoint((i + 1) % polygon.getPointCount());",
+    "replace": "Point current = polygon.getPoint(i);\n            Point next = polygon.getPoint((i + 1) % pointCount);"
+  },
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "private static Point computeMultiPolygonCentroid(OGCMultiPolygon multiPolygon)\n    {\n        double xSum = 0;\n        double ySum = 0;\n        double weightSum = 0;\n        for (int i = 0; i < multiPolygon.numGeometries(); i++) {\n            Point centroid = computePolygonCentroid((Polygon) multiPolygon.geometryN(i).getEsriGeometry());\n            Polygon polygon = (Polygon) multiPolygon.geometryN(i).getEsriGeometry();\n            double weight = polygon.calculateArea2D();\n            weightSum += weight;\n            xSum += centroid.getX() * weight;\n            ySum += centroid.getY() * weight;\n        }\n        return new Point(xSum / weightSum, ySum / weightSum);\n    }",
+    "replace": "private static Point computeMultiPolygonCentroid(OGCMultiPolygon multiPolygon)\n    {\n        int geometryCount = multiPolygon.numGeometries();\n        double xSum = 0;\n        double ySum = 0;\n        double weightSum = 0;\n        for (int i = 0; i < geometryCount; i++) {\n            OGCGeometry geom = multiPolygon.geometryN(i);\n            Polygon polygon = (Polygon) geom.getEsriGeometry();\n            Point centroid = computePolygonCentroid(polygon);\n            double weight = polygon.calculateArea2D();\n            weightSum += weight;\n            xSum += centroid.getX() * weight;\n            ySum += centroid.getY() * weight;\n        }\n        return new Point(xSum / weightSum, ySum / weightSum);\n    }"
+  }
+]
+```

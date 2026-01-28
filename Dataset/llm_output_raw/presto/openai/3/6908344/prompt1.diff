@@ -1,0 +1,22 @@
+diff --git a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+index 350f609b45..8e036cdd91 100644
+--- a/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
++++ b/presto-geospatial-toolkit/src/main/java/com/facebook/presto/geospatial/GeometrySerde.java
+@@ -48,6 +48,8 @@ import static java.util.Objects.requireNonNull;
+ 
+ public class GeometrySerde
+ {
++    // cache the ESRI import operator to avoid repeated local() lookups
++    private static final OperatorImportFromESRIShape IMPORT_SHAPE = OperatorImportFromESRIShape.local();
+     private GeometrySerde() {}
+ 
+     public static Slice serialize(OGCGeometry input)
+@@ -150,7 +152,7 @@ public class GeometrySerde
+         int currentPosition = toIntExact(input.position());
+         ByteBuffer geometryBuffer = inputSlice.toByteBuffer(currentPosition, length).slice();
+         input.setPosition(currentPosition + length);
+-        Geometry esriGeometry = OperatorImportFromESRIShape.local().execute(0, Unknown, geometryBuffer);
++        Geometry esriGeometry = IMPORT_SHAPE.execute(0, Unknown, geometryBuffer);
+         return createFromEsriGeometry(esriGeometry, type.isMultitype());
+     }
+ 

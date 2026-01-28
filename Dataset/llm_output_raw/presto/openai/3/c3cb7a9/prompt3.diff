@@ -1,0 +1,23 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
+index 6813ba04fa..fa22d8c56a 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
+@@ -883,11 +883,14 @@ public class WindowOperator
+ 
+     private void sortPagesIndexIfNecessary(PagesIndexWithHashStrategies pagesIndexWithHashStrategies, List<Integer> orderChannels, List<SortOrder> ordering)
+     {
+-        if (pagesIndexWithHashStrategies.pagesIndex.getPositionCount() > 1 && !orderChannels.isEmpty()) {
++        PagesIndex pagesIndex = pagesIndexWithHashStrategies.pagesIndex;
++        PagesHashStrategy hashStrategy = pagesIndexWithHashStrategies.preSortedPartitionHashStrategy;
++        int positionCount = pagesIndex.getPositionCount();
++        if (positionCount > 1 && !orderChannels.isEmpty()) {
+             int startPosition = 0;
+-            while (startPosition < pagesIndexWithHashStrategies.pagesIndex.getPositionCount()) {
+-                int endPosition = findGroupEnd(pagesIndexWithHashStrategies.pagesIndex, pagesIndexWithHashStrategies.preSortedPartitionHashStrategy, startPosition);
+-                pagesIndexWithHashStrategies.pagesIndex.sort(orderChannels, ordering, startPosition, endPosition);
++            while (startPosition < positionCount) {
++                int endPosition = findGroupEnd(pagesIndex, hashStrategy, startPosition);
++                pagesIndex.sort(orderChannels, ordering, startPosition, endPosition);
+                 startPosition = endPosition;
+             }
+         }

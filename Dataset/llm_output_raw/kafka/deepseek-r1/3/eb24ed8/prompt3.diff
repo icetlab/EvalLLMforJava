@@ -1,0 +1,75 @@
+diff --git a/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java b/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java
+index 352d12d834..62ddf5efc6 100644
+--- a/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java
++++ b/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java
+@@ -28,6 +28,8 @@ import java.lang.invoke.MethodHandle;
+ import java.lang.invoke.MethodHandles;
+ import java.lang.invoke.MethodType;
+ import java.nio.ByteBuffer;
++import java.util.HashMap;
++import java.util.Map;
+ import java.util.zip.GZIPInputStream;
+ import java.util.zip.GZIPOutputStream;
+ 
+@@ -166,36 +168,37 @@ public enum CompressionType {
+      */
+     public abstract InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier);
+ 
++    private static final CompressionType[] ID_TO_TYPE = new CompressionType[5];
++    static {
++        for (CompressionType type : values()) {
++            ID_TO_TYPE[type.id] = type;
++        }
++    }
++
+     public static CompressionType forId(int id) {
+-        switch (id) {
+-            case 0:
+-                return NONE;
+-            case 1:
+-                return GZIP;
+-            case 2:
+-                return SNAPPY;
+-            case 3:
+-                return LZ4;
+-            case 4:
+-                return ZSTD;
+-            default:
+-                throw new IllegalArgumentException("Unknown compression type id: " + id);
++        if (id < 0 || id >= ID_TO_TYPE.length) {
++            throw new IllegalArgumentException("Unknown compression type id: " + id);
++        }
++        CompressionType type = ID_TO_TYPE[id];
++        if (type == null) {
++            throw new IllegalArgumentException("Unknown compression type id: " + id);
++        }
++        return type;
++    }
++
++    private static final Map<String, CompressionType> NAME_TO_TYPE = new HashMap<>();
++    static {
++        for (CompressionType type : values()) {
++            NAME_TO_TYPE.put(type.name, type);
+         }
+     }
+ 
+     public static CompressionType forName(String name) {
+-        if (NONE.name.equals(name))
+-            return NONE;
+-        else if (GZIP.name.equals(name))
+-            return GZIP;
+-        else if (SNAPPY.name.equals(name))
+-            return SNAPPY;
+-        else if (LZ4.name.equals(name))
+-            return LZ4;
+-        else if (ZSTD.name.equals(name))
+-            return ZSTD;
+-        else
++        CompressionType type = NAME_TO_TYPE.get(name);
++        if (type == null) {
+             throw new IllegalArgumentException("Unknown compression name: " + name);
++        }
++        return type;
+     }
+ 
+     // We should only have a runtime dependency on compression algorithms in case the native libraries don't support

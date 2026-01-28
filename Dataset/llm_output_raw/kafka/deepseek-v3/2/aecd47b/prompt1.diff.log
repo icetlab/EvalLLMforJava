@@ -1,0 +1,27 @@
+## Explanation of Performance Improvements
+
+The primary performance improvement focuses on optimizing the `Checksums.update()` method for non-array-backed ByteBuffers (direct buffers). Currently, it uses a loop with individual `get()` calls, which is inefficient. We can improve this by using bulk operations with a temporary array when the length is above a certain threshold, reducing method call overhead and enabling better JIT optimization.
+
+Additionally, we can optimize the `updateInt()` and `updateLong()` methods by using a small buffer approach to reduce the number of method calls to `checksum.update()`.
+
+Here are the specific changes:
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int start = buffer.position() + offset;\n            for (int i = start; i < start + length; i++)\n                checksum.update(buffer.get(i));\n        }\n    }",
+    "replace": "    public static void update(Checksum checksum, ByteBuffer buffer, int offset, int length) {\n        if (buffer.hasArray()) {\n            checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);\n        } else {\n            int start = buffer.position() + offset;\n            if (length > 8) {\n                // Use bulk operation with a temporary array for larger lengths\n                byte[] tmp = new byte[Math.min(length, 4096)];\n                ByteBuffer dup = buffer.duplicate();\n                dup.position(start);\n                int remaining = length;\n                while (remaining > 0) {\n                    int toCopy = Math.min(remaining, tmp.length);\n                    dup.get(tmp, 0, toCopy);\n                    checksum.update(tmp, 0, toCopy);\n                    remaining -= toCopy;\n                }\n            } else {\n                // Small length: use simple loop\n                for (int i = start; i < start + length; i++)\n                    checksum.update(buffer.get(i));\n            }\n        }\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "    public static void updateInt(Checksum checksum, int input) {\n        checksum.update((byte) (input >> 24));\n        checksum.update((byte) (input >> 16));\n        checksum.update((byte) (input >> 8));\n        checksum.update((byte) input /* >> 0 */);\n    }",
+    "replace": "    public static void updateInt(Checksum checksum, int input) {\n        byte[] bytes = new byte[4];\n        bytes[0] = (byte) (input >> 24);\n        bytes[1] = (byte) (input >> 16);\n        bytes[2] = (byte) (input >> 8);\n        bytes[3] = (byte) input;\n        checksum.update(bytes, 0, 4);\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java",
+    "search": "    public static void updateLong(Checksum checksum, long input) {\n        checksum.update((byte) (input >> 56));\n        checksum.update((byte) (input >> 48));\n        checksum.update((byte) (input >> 40));\n        checksum.update((byte) (input >> 32));\n        checksum.update((byte) (input >> 24));\n        checksum.update((byte) (input >> 16));\n        checksum.update((byte) (input >> 8));\n        checksum.update((byte) input /* >> 0 */);\n    }",
+    "replace": "    public static void updateLong(Checksum checksum, long input) {\n        byte[] bytes = new byte[8];\n        bytes[0] = (byte) (input >> 56);\n        bytes[1] = (byte) (input >> 48);\n        bytes[2] = (byte) (input >> 40);\n        bytes[3] = (byte) (input >> 32);\n        bytes[4] = (byte) (input >> 24);\n        bytes[5] = (byte) (input >> 16);\n        bytes[6] = (byte) (input >> 8);\n        bytes[7] = (byte) input;\n        checksum.update(bytes, 0, 8);\n    }"
+  }
+]
+```

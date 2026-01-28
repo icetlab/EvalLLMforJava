@@ -1,0 +1,113 @@
+diff --git a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+index 58860be864..8685703e56 100644
+--- a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
++++ b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+@@ -21,7 +21,7 @@ import java.util.concurrent.{CompletableFuture, CompletionStage}
+ 
+ import com.typesafe.scalalogging.Logger
+ import kafka.api.KAFKA_2_0_IV1
+-import kafka.security.authorizer.AclAuthorizer.{AclSets, ResourceOrdering, VersionedAcls}
++import kafka.security.authorizer.AclAuthorizer.{ResourceOrdering, VersionedAcls}
+ import kafka.security.authorizer.AclEntry.ResourceSeparator
+ import kafka.server.{KafkaConfig, KafkaServer}
+ import kafka.utils._
+@@ -62,11 +62,6 @@ object AclAuthorizer {
+     def exists: Boolean = zkVersion != ZkVersion.UnknownVersion
+   }
+ 
+-  class AclSets(sets: Set[AclEntry]*) {
+-    def find(p: AclEntry => Boolean): Option[AclEntry] = sets.flatMap(_.find(p)).headOption
+-    def isEmpty: Boolean = !sets.exists(_.nonEmpty)
+-  }
+-
+   val NoAcls = VersionedAcls(Set.empty, ZkVersion.UnknownVersion)
+   val WildcardHost = "*"
+ 
+@@ -295,20 +290,20 @@ class AclAuthorizer extends Authorizer with Logging {
+     val host = requestContext.clientAddress.getHostAddress
+     val operation = action.operation
+ 
+-    def isEmptyAclAndAuthorized(acls: AclSets): Boolean = {
+-      if (acls.isEmpty) {
++    def isEmptyAclAndAuthorized(prefixed: Iterable[AclEntry], wildcard: Iterable[AclEntry], literal: Iterable[AclEntry]): Boolean = {
++      if (prefixed.isEmpty && wildcard.isEmpty && literal.isEmpty) {
+         // No ACLs found for this resource, permission is determined by value of config allow.everyone.if.no.acl.found
+         authorizerLogger.debug(s"No acl found for resource $resource, authorized = $shouldAllowEveryoneIfNoAclIsFound")
+         shouldAllowEveryoneIfNoAclIsFound
+       } else false
+     }
+ 
+-    def denyAclExists(acls: AclSets): Boolean = {
++    def denyAclExists(prefixed: Iterable[AclEntry], wildcard: Iterable[AclEntry], literal: Iterable[AclEntry]): Boolean = {
+       // Check if there are any Deny ACLs which would forbid this operation.
+-      matchingAclExists(operation, resource, principal, host, DENY, acls)
++      matchingAclExists(operation, resource, principal, host, DENY, prefixed, wildcard, literal)
+     }
+ 
+-    def allowAclExists(acls: AclSets): Boolean = {
++    def allowAclExists(prefixed: Iterable[AclEntry], wildcard: Iterable[AclEntry], literal: Iterable[AclEntry]): Boolean = {
+       // Check if there are any Allow ACLs which would allow this operation.
+       // Allowing read, write, delete, or alter implies allowing describe.
+       // See #{org.apache.kafka.common.acl.AclOperation} for more details about ACL inheritance.
+@@ -317,14 +312,14 @@ class AclAuthorizer extends Authorizer with Logging {
+         case DESCRIBE_CONFIGS => Set[AclOperation](DESCRIBE_CONFIGS, ALTER_CONFIGS)
+         case _ => Set[AclOperation](operation)
+       }
+-      allowOps.exists(operation => matchingAclExists(operation, resource, principal, host, ALLOW, acls))
++      allowOps.exists(operation => matchingAclExists(operation, resource, principal, host, ALLOW, prefixed, wildcard, literal))
+     }
+ 
+     def aclsAllowAccess = {
+       //we allow an operation if no acls are found and user has configured to allow all users
+       //when no acls are found or if no deny acls are found and at least one allow acls matches.
+-      val acls = matchingAcls(resource.resourceType, resource.name)
+-      isEmptyAclAndAuthorized(acls) || (!denyAclExists(acls) && allowAclExists(acls))
++      val (prefixed, wildcard, literal) = matchingAcls(resource.resourceType, resource.name)
++      isEmptyAclAndAuthorized(prefixed, wildcard, literal) || (!denyAclExists(prefixed, wildcard, literal) && allowAclExists(prefixed, wildcard, literal))
+     }
+ 
+     // Evaluate if operation is allowed
+@@ -341,7 +336,7 @@ class AclAuthorizer extends Authorizer with Logging {
+     } else false
+   }
+ 
+-  private def matchingAcls(resourceType: ResourceType, resourceName: String): AclSets = {
++  private def matchingAcls(resourceType: ResourceType, resourceName: String): (Iterable[AclEntry], Set[AclEntry], Set[AclEntry]) = {
+     // save aclCache reference to a local val to get a consistent view of the cache during acl updates.
+     val aclCacheSnapshot = aclCache
+     val wildcard = aclCacheSnapshot.get(new ResourcePattern(resourceType, ResourcePattern.WILDCARD_RESOURCE, PatternType.LITERAL))
+@@ -358,9 +353,8 @@ class AclAuthorizer extends Authorizer with Logging {
+       .filterKeys(resource => resourceName.startsWith(resource.name))
+       .values
+       .flatMap { _.acls }
+-      .toSet
+ 
+-    new AclSets(prefixed, wildcard, literal)
++    (prefixed, wildcard, literal)
+   }
+ 
+   private def matchingAclExists(operation: AclOperation,
+@@ -368,13 +362,20 @@ class AclAuthorizer extends Authorizer with Logging {
+                                 principal: KafkaPrincipal,
+                                 host: String,
+                                 permissionType: AclPermissionType,
+-                                acls: AclSets): Boolean = {
+-    acls.find { acl =>
++                                prefixed: Iterable[AclEntry],
++                                wildcard: Iterable[AclEntry],
++                                literal: Iterable[AclEntry]): Boolean = {
++    val predicate = (acl: AclEntry) =>
+       acl.permissionType == permissionType &&
+         (acl.kafkaPrincipal == principal || acl.kafkaPrincipal == AclEntry.WildcardPrincipal) &&
+         (operation == acl.operation || acl.operation == AclOperation.ALL) &&
+         (acl.host == host || acl.host == AclEntry.WildcardHost)
+-    }.exists { acl =>
++
++    val found = prefixed.find(predicate)
++      .orElse(wildcard.find(predicate))
++      .orElse(literal.find(predicate))
++
++    found.exists { acl =>
+       authorizerLogger.debug(s"operation = $operation on resource = $resource from host = $host is $permissionType based on acl = $acl")
+       true
+     }

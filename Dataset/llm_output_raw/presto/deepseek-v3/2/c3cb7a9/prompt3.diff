@@ -1,0 +1,150 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java b/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
+index 6813ba04fa..5a5748df17 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/WindowOperator.java
+@@ -570,6 +570,7 @@ public class WindowOperator
+     private WorkProcessor<WindowPartition> pagesIndexToWindowPartitions(PagesIndexWithHashStrategies pagesIndexWithHashStrategies)
+     {
+         PagesIndex pagesIndex = pagesIndexWithHashStrategies.pagesIndex;
++        int positionCount = pagesIndex.getPositionCount();
+ 
+         // pagesIndex contains the full grouped & sorted data for one or more partitions
+ 
+@@ -582,7 +583,7 @@ public class WindowOperator
+             @Override
+             public ProcessState<WindowPartition> process()
+             {
+-                if (partitionStart == pagesIndex.getPositionCount()) {
++                if (partitionStart == positionCount) {
+                     return ProcessState.finished();
+                 }
+ 
+@@ -854,7 +855,9 @@ public class WindowOperator
+         PagesIndex pagesIndex = pagesIndexWithHashStrategies.pagesIndex;
+         PagesHashStrategy preGroupedPartitionHashStrategy = pagesIndexWithHashStrategies.preGroupedPartitionHashStrategy;
+         if (currentSpillGroupRowPage.isPresent()) {
+-            if (!preGroupedPartitionHashStrategy.rowEqualsRow(0, currentSpillGroupRowPage.get().extractChannels(pagesIndexWithHashStrategies.preGroupedPartitionChannels), startPosition, preGroupedPage)) {
++            Page spillGroupRowPage = currentSpillGroupRowPage.get();
++            Page spillGroupChannels = spillGroupRowPage.extractChannels(pagesIndexWithHashStrategies.preGroupedPartitionChannels);
++            if (!preGroupedPartitionHashStrategy.rowEqualsRow(0, spillGroupChannels, startPosition, preGroupedPage)) {
+                 return startPosition;
+             }
+         }
+@@ -899,7 +902,36 @@ public class WindowOperator
+         checkArgument(page.getPositionCount() > 0, "Must have at least one position");
+         checkPositionIndex(startPosition, page.getPositionCount(), "startPosition out of bounds");
+ 
+-        return findEndPosition(startPosition, page.getPositionCount(), (firstPosition, secondPosition) -> pagesHashStrategy.rowEqualsRow(firstPosition, page, secondPosition, page));
++        // Fast path: check if all remaining positions are equal
++        int positionCount = page.getPositionCount();
++        int current = startPosition + 1;
++        while (current < positionCount && pagesHashStrategy.rowEqualsRow(startPosition, page, current, page)) {
++            current++;
++        }
++        if (current < positionCount) {
++            // Not all equal, use binary search for the boundary
++            return findEndPosition(startPosition, positionCount, pagesHashStrategy, page);
++        }
++        return positionCount;
++    }
++
++    private static int findEndPosition(int startPosition, int endPosition, PagesHashStrategy pagesHashStrategy, Page page)
++    {
++        int left = startPosition;
++        int right = endPosition;
++
++        while (left + 1 < right) {
++            int middle = (left + right) >>> 1;
++
++            if (pagesHashStrategy.rowEqualsRow(startPosition, page, middle, page)) {
++                left = middle;
++            }
++            else {
++                right = middle;
++            }
++        }
++
++        return right;
+     }
+ 
+     // Assumes input grouped on relevant pagesHashStrategy columns
+@@ -908,7 +940,36 @@ public class WindowOperator
+         checkArgument(pagesIndex.getPositionCount() > 0, "Must have at least one position");
+         checkPositionIndex(startPosition, pagesIndex.getPositionCount(), "startPosition out of bounds");
+ 
+-        return findEndPosition(startPosition, pagesIndex.getPositionCount(), (firstPosition, secondPosition) -> pagesIndex.positionEqualsPosition(pagesHashStrategy, firstPosition, secondPosition));
++        // Fast path: check if all remaining positions are equal
++        int positionCount = pagesIndex.getPositionCount();
++        int current = startPosition + 1;
++        while (current < positionCount && pagesIndex.positionEqualsPosition(pagesHashStrategy, startPosition, current)) {
++            current++;
++        }
++        if (current < positionCount) {
++            // Not all equal, use binary search for the boundary
++            return findEndPosition(startPosition, positionCount, pagesIndex, pagesHashStrategy);
++        }
++        return positionCount;
++    }
++
++    private static int findEndPosition(int startPosition, int endPosition, PagesIndex pagesIndex, PagesHashStrategy pagesHashStrategy)
++    {
++        int left = startPosition;
++        int right = endPosition;
++
++        while (left + 1 < right) {
++            int middle = (left + right) >>> 1;
++
++            if (pagesIndex.positionEqualsPosition(pagesHashStrategy, startPosition, middle)) {
++                left = middle;
++            }
++            else {
++                right = middle;
++            }
++        }
++
++        return right;
+     }
+ 
+     /**
+@@ -923,21 +984,30 @@ public class WindowOperator
+         checkArgument(startPosition >= 0, "startPosition must be greater or equal than zero: %s", startPosition);
+         checkArgument(startPosition < endPosition, "startPosition (%s) must be less than endPosition (%s)", startPosition, endPosition);
+ 
+-        int left = startPosition;
+-        int right = endPosition;
++        // Fast path: check if all remaining positions are equal
++        int current = startPosition + 1;
++        while (current < endPosition && comparator.test(startPosition, current)) {
++            current++;
++        }
++        if (current < endPosition) {
++            // Not all equal, use binary search for the boundary
++            int left = startPosition;
++            int right = endPosition;
+ 
+-        while (left + 1 < right) {
+-            int middle = (left + right) >>> 1;
++            while (left + 1 < right) {
++                int middle = (left + right) >>> 1;
+ 
+-            if (comparator.test(startPosition, middle)) {
+-                left = middle;
+-            }
+-            else {
+-                right = middle;
++                if (comparator.test(startPosition, middle)) {
++                    left = middle;
++                }
++                else {
++                    right = middle;
++                }
+             }
+-        }
+ 
+-        return right;
++            return right;
++        }
++        return endPosition;
+     }
+ 
+     @Override

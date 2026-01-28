@@ -1,0 +1,61 @@
+diff --git a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java
+index 01b747b3f2..527aa877e9 100644
+--- a/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java
++++ b/codec-http/src/main/java/io/netty/handler/codec/http/QueryStringDecoder.java
+@@ -351,16 +351,15 @@ public class QueryStringDecoder {
+             return s.substring(from, toExcluded);
+         }
+ 
+-        CharsetDecoder decoder = CharsetUtil.decoder(charset);
+-
+         // Each encoded byte takes 3 characters (e.g. "%20")
+         int decodedCapacity = (toExcluded - firstEscaped) / 3;
+-        ByteBuffer byteBuf = ByteBuffer.allocate(decodedCapacity);
+-        CharBuffer charBuf = CharBuffer.allocate(decodedCapacity);
+-
+         StringBuilder strBuf = new StringBuilder(len);
+         strBuf.append(s, from, firstEscaped);
+ 
++        ByteBuffer byteBuf = null;
++        CharBuffer charBuf = null;
++        CharsetDecoder decoder = null;
++
+         for (int i = firstEscaped; i < toExcluded; i++) {
+             char c = s.charAt(i);
+             if (c != '%') {
+@@ -368,6 +367,9 @@ public class QueryStringDecoder {
+                 continue;
+             }
+ 
++            if (byteBuf == null) {
++                byteBuf = ByteBuffer.allocate(decodedCapacity);
++            }
+             byteBuf.clear();
+             do {
+                 if (i + 3 > toExcluded) {
+@@ -377,8 +379,16 @@ public class QueryStringDecoder {
+                 i += 3;
+             } while (i < toExcluded && s.charAt(i) == '%');
+             i--;
+-
+             byteBuf.flip();
++
++            if (charset.equals(CharsetUtil.UTF_8)) {
++                strBuf.append(new String(byteBuf.array(), byteBuf.arrayOffset() + byteBuf.position(),
++                                         byteBuf.remaining(), charset));
++            } else {
++                if (decoder == null) {
++                    decoder = CharsetUtil.decoder(charset);
++                    charBuf = CharBuffer.allocate(decodedCapacity);
++                }
+                 charBuf.clear();
+                 CoderResult result = decoder.reset().decode(byteBuf, charBuf, true);
+                 try {
+@@ -394,6 +404,7 @@ public class QueryStringDecoder {
+                 }
+                 strBuf.append(charBuf.flip());
+             }
++        }
+         return strBuf.toString();
+     }
+ 

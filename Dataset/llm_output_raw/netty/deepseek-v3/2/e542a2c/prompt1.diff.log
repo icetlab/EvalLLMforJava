@@ -1,0 +1,42 @@
+## Explanation
+
+The goal is to improve performance of the `AbstractByteBuf` and `AbstractReferenceCountedByteBuf` classes by optimizing critical operations. The main focus is on reducing method call overhead, eliminating redundant checks, and improving loop efficiency. Specifically:
+
+1. **Inline simple bounds checks** where possible to avoid method call overhead.
+2. **Optimize `setZero` and `writeZero` methods** by using more efficient loops and reducing conditional branches.
+3. **Improve `adjustMarkers` method** by simplifying logic and reducing assignments.
+4. **Optimize reference counting operations** in `AbstractReferenceCountedByteBuf` by reducing atomic operations and simplifying overflow checks.
+
+These changes should improve throughput and reduce latency for buffer operations, especially for small buffers and high-frequency operations.
+
+## Changes
+
+```json
+[
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "    @Override\n    public ByteBuf setZero(int index, int length) {\n        if (length == 0) {\n            return this;\n        }\n\n        checkIndex(index, length);\n\n        int nLong = length >>> 3;\n        int nBytes = length & 7;\n        for (int i = nLong; i > 0; i --) {\n            _setLong(index, 0);\n            index += 8;\n        }\n        if (nBytes == 4) {\n            _setInt(index, 0);\n            // Not need to update the index as we not will use it after this.\n        } else if (nBytes < 4) {\n            for (int i = nBytes; i > 0; i --) {\n                _setByte(index, (byte) 0);\n                index ++;\n            }\n        } else {\n            _setInt(index, 0);\n            index += 4;\n            for (int i = nBytes - 4; i > 0; i --) {\n                _setByte(index, (byte) 0);\n                index ++;\n            }\n        }\n        return this;\n    }",
+    "replace": "    @Override\n    public ByteBuf setZero(int index, int length) {\n        if (length == 0) {\n            return this;\n        }\n\n        checkIndex(index, length);\n\n        int nLong = length >>> 3;\n        int nBytes = length & 7;\n        for (int i = 0; i < nLong; i++) {\n            _setLong(index, 0);\n            index += 8;\n        }\n        if (nBytes == 4) {\n            _setInt(index, 0);\n        } else if (nBytes < 4) {\n            for (int i = 0; i < nBytes; i++) {\n                _setByte(index + i, (byte) 0);\n            }\n        } else {\n            _setInt(index, 0);\n            index += 4;\n            for (int i = 0; i < nBytes - 4; i++) {\n                _setByte(index + i, (byte) 0);\n            }\n        }\n        return this;\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "    @Override\n    public ByteBuf writeZero(int length) {\n        if (length == 0) {\n            return this;\n        }\n\n        ensureWritable(length);\n        int wIndex = writerIndex;\n        checkIndex0(wIndex, length);\n\n        int nLong = length >>> 3;\n        int nBytes = length & 7;\n        for (int i = nLong; i > 0; i --) {\n            _setLong(wIndex, 0);\n            wIndex += 8;\n        }\n        if (nBytes == 4) {\n            _setInt(wIndex, 0);\n            wIndex += 4;\n        } else if (nBytes < 4) {\n            for (int i = nBytes; i > 0; i --) {\n                _setByte(wIndex, (byte) 0);\n                wIndex++;\n            }\n        } else {\n            _setInt(wIndex, 0);\n            wIndex += 4;\n            for (int i = nBytes - 4; i > 0; i --) {\n                _setByte(wIndex, (byte) 0);\n                wIndex++;\n            }\n        }\n        writerIndex = wIndex;\n        return this;\n    }",
+    "replace": "    @Override\n    public ByteBuf writeZero(int length) {\n        if (length == 0) {\n            return this;\n        }\n\n        ensureWritable(length);\n        int wIndex = writerIndex;\n        checkIndex0(wIndex, length);\n\n        int nLong = length >>> 3;\n        int nBytes = length & 7;\n        for (int i = 0; i < nLong; i++) {\n            _setLong(wIndex, 0);\n            wIndex += 8;\n        }\n        if (nBytes == 4) {\n            _setInt(wIndex, 0);\n            wIndex += 4;\n        } else if (nBytes < 4) {\n            for (int i = 0; i < nBytes; i++) {\n                _setByte(wIndex + i, (byte) 0);\n            }\n            wIndex += nBytes;\n        } else {\n            _setInt(wIndex, 0);\n            wIndex += 4;\n            for (int i = 0; i < nBytes - 4; i++) {\n                _setByte(wIndex + i, (byte) 0);\n            }\n            wIndex += nBytes - 4;\n        }\n        writerIndex = wIndex;\n        return this;\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractByteBuf.java",
+    "search": "    protected final void adjustMarkers(int decrement) {\n        int markedReaderIndex = this.markedReaderIndex;\n        if (markedReaderIndex <= decrement) {\n            this.markedReaderIndex = 0;\n            int markedWriterIndex = this.markedWriterIndex;\n            if (markedWriterIndex <= decrement) {\n                this.markedWriterIndex = 0;\n            } else {\n                this.markedWriterIndex = markedWriterIndex - decrement;\n            }\n        } else {\n            this.markedReaderIndex = markedReaderIndex - decrement;\n            markedWriterIndex -= decrement;\n        }\n    }",
+    "replace": "    protected final void adjustMarkers(int decrement) {\n        int markedReaderIndex = this.markedReaderIndex;\n        if (markedReaderIndex <= decrement) {\n            this.markedReaderIndex = 0;\n            int markedWriterIndex = this.markedWriterIndex;\n            this.markedWriterIndex = markedWriterIndex <= decrement ? 0 : markedWriterIndex - decrement;\n        } else {\n            this.markedReaderIndex = markedReaderIndex - decrement;\n            this.markedWriterIndex -= decrement;\n        }\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java",
+    "search": "    private ByteBuf retain0(final int increment) {\n        int oldRef = refCntUpdater.getAndAdd(this, increment);\n        if (oldRef <= 0 || oldRef + increment < oldRef) {\n            // Ensure we don't resurrect (which means the refCnt was 0) and also that we encountered an overflow.\n            refCntUpdater.getAndAdd(this, -increment);\n            throw new IllegalReferenceCountException(oldRef, increment);\n        }\n        return this;\n    }",
+    "replace": "    private ByteBuf retain0(final int increment) {\n        int oldRef;\n        do {\n            oldRef = refCntUpdater.get(this);\n            if (oldRef <= 0 || oldRef > Integer.MAX_VALUE - increment) {\n                throw new IllegalReferenceCountException(oldRef, increment);\n            }\n        } while (!refCntUpdater.compareAndSet(this, oldRef, oldRef + increment));\n        return this;\n    }"
+  },
+  {
+    "filepath": "../netty/buffer/src/main/java/io/netty/buffer/AbstractReferenceCountedByteBuf.java",
+    "search": "    private boolean release0(int decrement) {\n        int oldRef = refCntUpdater.getAndAdd(this, -decrement);\n        if (oldRef == decrement) {\n            deallocate();\n            return true;\n        } else if (oldRef < decrement || oldRef - decrement > oldRef) {\n            // Ensure we don't over-release, and avoid underflow.\n            refCntUpdater.getAndAdd(this, decrement);\n            throw new IllegalReferenceCountException(oldRef, -decrement);\n        }\n        return false;\n    }",
+    "replace": "    private boolean release0(int decrement) {\n        int oldRef;\n        do {\n            oldRef = refCntUpdater.get(this);\n            if (oldRef < decrement) {\n                throw new IllegalReferenceCountException(oldRef, -decrement);\n            }\n            if (oldRef == decrement) {\n                if (refCntUpdater.compareAndSet(this, oldRef, 0)) {\n                    deallocate();\n                    return true;\n                }\n                // CAS failed, retry\n                continue;\n            }\n        } while (!refCntUpdater.compareAndSet(this, oldRef, oldRef - decrement));\n        return false;\n    }"
+  }
+]
+```

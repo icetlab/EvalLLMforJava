@@ -1,0 +1,29 @@
+My improvement strategy focuses on avoiding expensive cardinality calculations on `RunContainer` instances, as suggested by the performance issue.
+
+1.  In `RoaringBitmap.andNotCardinality`, the expression `c1.getCardinality() - c1.andCardinality(c2)` is replaced with `c1.andNot(c2).getCardinality()`. This change avoids calling `getCardinality()` on the original container `c1`. When `c1` is a `RunContainer` with many runs, its cardinality computation is costly. The new approach computes the difference container first and then its cardinality, which can be significantly more efficient.
+
+2.  In `RoaringBitmap.contains(long, long)`, the check for a full container, `getCardinality() != 1 << 16`, is replaced with `!isFull()`. The `isFull()` method is much faster for `RunContainer`s as it only needs to check for a single run spanning the entire range, whereas `getCardinality()` would iterate over all runs.
+
+3.  I also identified and fixed a bug in `RoaringBitmap.contains(RoaringBitmap subset)`. The logic to advance the container pointer for the superset bitmap was incorrectly using the subset's container collection. This has been corrected to use its own container collection, ensuring correctness.
+
+These changes together enhance performance by reducing unnecessary computations and also improve the correctness of the library.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java",
+    "search": "        final Container c1 = x1.highLowContainer.getContainerAtIndex(pos1);\n        final Container c2 = x2.highLowContainer.getContainerAtIndex(pos2);\n        cardinality += c1.getCardinality() - c1.andCardinality(c2);",
+    "replace": "        final Container c1 = x1.highLowContainer.getContainerAtIndex(pos1);\n        final Container c2 = x2.highLowContainer.getContainerAtIndex(pos2);\n        cardinality += c1.andNot(c2).getCardinality();"
+  },
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java",
+    "search": "      if (highLowContainer.getContainerAtIndex(i).getCardinality() != 1 << 16) {\n        return false;\n      }",
+    "replace": "      if (!highLowContainer.getContainerAtIndex(i).isFull()) {\n        return false;\n      }"
+  },
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringBitmap.java",
+    "search": "      } else if (s1 - s2 > 0) {\n        return false;\n      } else {\n        pos1 = subset.highLowContainer.advanceUntil(s2, pos1);\n      }",
+    "replace": "      } else if (s1 > s2) {\n        return false;\n      } else {\n        pos1 = this.highLowContainer.advanceUntil(s2, pos1);\n      }"
+  }
+]
+```

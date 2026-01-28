@@ -1,0 +1,26 @@
+I’ve added a fast‐path in the various `unpack*Nulls` methods so that when there are no nulls to unpack (i.e., the number of non‐null values equals the array length), we simply clone the input array instead of doing a full loop—this avoids unnecessary iteration and object creation in the common no‐nulls case.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java",
+    "search": "public static byte[] unpackByteNulls(byte[] values, boolean[] isNull)\n    {\n        byte[] result = new byte[isNull.length];",
+    "replace": "public static byte[] unpackByteNulls(byte[] values, boolean[] isNull)\n    {\n        if (values.length == isNull.length) {\n            return values.clone();\n        }\n        byte[] result = new byte[isNull.length];"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java",
+    "search": "public static short[] unpackShortNulls(short[] values, boolean[] isNull)\n    {\n        short[] result = new short[isNull.length];",
+    "replace": "public static short[] unpackShortNulls(short[] values, boolean[] isNull)\n    {\n        if (values.length == isNull.length) {\n            return values.clone();\n        }\n        short[] result = new short[isNull.length];"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java",
+    "search": "public static int[] unpackIntNulls(int[] values, boolean[] isNull)\n    {\n        int[] result = new int[isNull.length];",
+    "replace": "public static int[] unpackIntNulls(int[] values, boolean[] isNull)\n    {\n        if (values.length == isNull.length) {\n            return values.clone();\n        }\n        int[] result = new int[isNull.length];"
+  },
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java",
+    "search": "public static long[] unpackLongNulls(long[] values, boolean[] isNull)\n    {\n        long[] result = new long[isNull.length];",
+    "replace": "public static long[] unpackLongNulls(long[] values, boolean[] isNull)\n    {\n        if (values.length == isNull.length) {\n            return values.clone();\n        }\n        long[] result = new long[isNull.length];"
+  }
+]
+```

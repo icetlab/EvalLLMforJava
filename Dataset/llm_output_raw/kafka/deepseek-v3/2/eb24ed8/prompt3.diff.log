@@ -1,0 +1,32 @@
+Looking at the provided code, I can see several opportunities for performance improvements:
+
+1. **Method lookup caching**: The `findConstructor` method is called multiple times for Snappy and Zstd, but the results could be cached to avoid repeated reflection overhead.
+2. **String comparison optimization**: The `forName` method uses multiple string comparisons that could be optimized with a switch statement or a map lookup.
+3. **Switch statement optimization**: The `forId` method uses a switch statement which is already efficient, but could be made more concise.
+
+However, I need to be careful not to change the public API or break existing functionality. The main performance improvements I can make are:
+
+1. Cache the MethodHandle lookups to avoid repeated reflection
+2. Optimize the `forName` method to use a switch statement for better performance
+
+Here are my proposed changes:
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "    private static MethodHandle findConstructor(String className, MethodType methodType) {\n        try {\n            return MethodHandles.publicLookup().findConstructor(Class.forName(className), methodType);\n        } catch (ReflectiveOperationException e) {\n            throw new RuntimeException(e);\n        }\n    }",
+    "replace": "    private static MethodHandle findConstructor(String className, MethodType methodType) {\n        try {\n            return MethodHandles.publicLookup().findConstructor(Class.forName(className), methodType);\n        } catch (ReflectiveOperationException e) {\n            throw new RuntimeException(e);\n        }\n    }\n\n    private static final Map<String, CompressionType> NAME_TO_TYPE = new HashMap<>();\n    static {\n        for (CompressionType type : CompressionType.values()) {\n            NAME_TO_TYPE.put(type.name, type);\n        }\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "    public static CompressionType forName(String name) {\n        if (NONE.name.equals(name))\n            return NONE;\n        else if (GZIP.name.equals(name))\n            return GZIP;\n        else if (SNAPPY.name.equals(name))\n            return SNAPPY;\n        else if (LZ4.name.equals(name))\n            return LZ4;\n        else if (ZSTD.name.equals(name))\n            return ZSTD;\n        else\n            throw new IllegalArgumentException(\"Unknown compression name: \" + name);\n    }",
+    "replace": "    public static CompressionType forName(String name) {\n        CompressionType type = NAME_TO_TYPE.get(name);\n        if (type == null) {\n            throw new IllegalArgumentException(\"Unknown compression name: \" + name);\n        }\n        return type;\n    }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "import java.lang.invoke.MethodHandle;\nimport java.lang.invoke.MethodHandles;\nimport java.lang.invoke.MethodType;\nimport java.nio.ByteBuffer;\nimport java.util.zip.GZIPInputStream;\nimport java.util.zip.GZIPOutputStream;",
+    "replace": "import java.lang.invoke.MethodHandle;\nimport java.lang.invoke.MethodHandles;\nimport java.lang.invoke.MethodType;\nimport java.nio.ByteBuffer;\nimport java.util.HashMap;\nimport java.util.Map;\nimport java.util.zip.GZIPInputStream;\nimport java.util.zip.GZIPOutputStream;"
+  }
+]
+```

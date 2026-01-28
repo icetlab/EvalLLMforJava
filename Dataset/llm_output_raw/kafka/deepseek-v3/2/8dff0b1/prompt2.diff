@@ -1,0 +1,26 @@
+diff --git a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+index e5b4945e17..6d8dc90048 100644
+--- a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
++++ b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+@@ -260,10 +260,17 @@ class AclAuthorizer extends Authorizer with Logging {
+ 
+   override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {
+     inReadLock(lock) {
+-      unorderedAcls.flatMap { case (resource, versionedAcls) =>
+-        versionedAcls.acls.map(acl => new AclBinding(resource, acl.ace))
+-            .filter(filter.matches)
+-      }.asJava
++      val result = new java.util.ArrayList[AclBinding]
++      unorderedAcls.foreach { case (resource, versionedAcls) =>
++        if (filter.patternFilter.matches(resource)) {
++          versionedAcls.acls.foreach { acl =>
++            if (filter.entryFilter.matches(acl.ace)) {
++              result.add(new AclBinding(resource, acl.ace))
++            }
++          }
++        }
++      }
++      result
+     }
+   }
+ 

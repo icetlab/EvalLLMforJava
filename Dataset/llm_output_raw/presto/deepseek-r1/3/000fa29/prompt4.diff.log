@@ -1,0 +1,176 @@
+The unit test failures indicate that the changes to `PartitionBuffer.positions` array resizing logic introduced a bug. The issue is likely that when we're reusing and growing the positions array dynamically, we need to ensure it has sufficient capacity before using it in various operations. Looking at the code, I can see two critical issues:
+
+1. In `resetPositions`, we're not accounting for the fact that `positions` array is used in `appendData` where it's passed to `setupDecodedBlocksAndPositions` for each block encoding buffer.
+2. The positions array needs to be large enough to hold all positions for the partition, not just what we've added so far during batch processing.
+
+Let me fix this by modifying the approach: Instead of dynamically growing the positions array during `addPosition`, we should allocate it once we know how many positions this partition will have for the current page. We can do this by collecting positions in a temporary list and then copying to the array.
+
+However, looking more closely at the code flow:
+- In `partitionPage`, we first call `resetPositions` and `addPosition` for each position
+- Then in `appendData`, we use the `positions` array with `positionCount` entries
+
+The simplest fix that maintains correctness while improving memory usage is to allocate the positions array to exactly the size needed (`positionCount`) after we've collected all positions, not before. But we need to collect positions first.
+
+Actually, looking at the test failures and the error messages (mismatched hash values), it seems the positions aren't being recorded correctly. Let me revert to a safer approach: pre-allocate the positions array but only to the actual number of positions that will be added to this partition, not the full page size.
+
+But wait, we don't know how many positions a partition will get until we've processed all positions. So we need two passes or a different data structure.
+
+Given the test failures, let's implement a compromise approach:
+1. Use a small initial positions array
+2. Grow it as needed when adding positions
+3. But ensure we allocate enough space for the entire batch before using it in `appendData`
+
+Actually, looking at the code again, I think the issue might be simpler. The `positions` array is being passed to `setupDecodedBlocksAndPositions` which expects an array with `positionCount` valid entries. Our dynamic growth approach might leave the array with insufficient capacity.
+
+Let me implement a fix that:
+1. Allocates positions array to the exact size needed (`positionCount`) after we know how many positions the partition has
+2. But to avoid allocating full page size upfront, we'll use a temporary list during collection
+
+Wait, that would require changing the data structure. Let me check if there's a simpler fix.
+
+Actually, I notice something: in the original code, `resetPositions` was called with `positionCount` (the page's position count), and it allocated the array to that size. This is wasteful. But we can't just allocate a small array because we don't know how many positions we'll add.
+
+Let me propose a different approach: Use an incremental approach where we resize the array as needed, but ensure it's large enough when we use it. Since we call `addPosition` for each position, we can grow the array there.
+
+The test failures suggest something is wrong with the positions being recorded. Let me re-examine the logic...
+
+Actually, I think I see the issue. When we grow the array in `addPosition`, we're using `ensureCapacity` which might not initialize the new elements. But that should be fine since we're writing to them immediately.
+
+Wait, looking at the test output more carefully: The tests are failing with hash mismatches, which suggests the data being partitioned is wrong. This could happen if:
+1. Positions are being recorded incorrectly
+2. Or the positions array has wrong values when passed to `setupDecodedBlocksAndPositions`
+
+Let me trace through the logic more carefully. After calling `addPosition` for all positions, `positionCount` should be the number of positions added. Then in `appendData`, we use `positions[0..positionCount-1]`.
+
+I think the issue might be with array growth. Let me check the `ensureCapacity` function from the imports. It's from `com.facebook.presto.array.Arrays.ensureCapacity`. Looking at the usage pattern in the original code, it seems to handle growth properly.
+
+Given the time constraints and test failures, let me propose a simpler fix that maintains correctness while still improving memory usage for the common case where partitions get few rows:
+
+We'll allocate the positions array to a reasonable initial size (like 16 or 32) and grow it by doubling when needed. This is a common pattern that should work correctly.
+
+Actually, looking more closely at the test failures and the original code, I realize there's another issue: The `positions` array might be reused across pages. When we start a new page, we call `resetPositions` which sets `positionCount = 0` but doesn't clear or reallocate the array if it's already large enough from previous pages.
+
+This could cause issues if the new page has fewer positions for this partition but we're using an array that still contains old values beyond `positionCount`.
+
+Wait, but we only use `positions[0..positionCount-1]`, so old values beyond that shouldn't matter.
+
+Given the complexity and test failures, let me take a different approach. Instead of trying to optimize the positions array allocation, let me focus on a different performance improvement that won't break tests.
+
+Actually, looking at the benchmark code, I see there are other potential optimizations. But for now, let me revert to the original positions array logic since it's causing test failures, and instead optimize something else that's safe.
+
+But wait, the requirement is to fix the positions array memory waste. Let me try one more approach: allocate the positions array to the exact size needed, but do it after we know the size.
+
+Actually, I can see in the code that we first collect all positions (calling `addPosition` for each position in the page that belongs to this partition), then we process them. So we know the exact size (`positionCount`) after collection but before processing.
+
+But `addPosition` needs to store positions as we collect them. We need storage during collection.
+
+One approach: Use a temporary list during collection, then copy to array. But that adds overhead.
+
+Actually, let me re-examine the original code more carefully. The issue with the original is:
+```java
+positions = ensureCapacity(positions, positionCount);  // positionCount here is page position count
+this.positionCount = 0;
+```
+
+It allocates for the full page size even if the partition gets few rows.
+
+My fix was:
+```java
+if (positions == null || positions.length < 4) {
+    positions = ensureCapacity(positions, 4);
+}
+this.positionCount = 0;
+```
+
+And grow in `addPosition`. This should work in theory, but tests are failing.
+
+Let me check if there's an issue with the `ensureCapacity` call in `addPosition`. We're using `max(positions.length * 2, 1)` which could be 0 if positions.length is 0.
+
+Actually, `positions` should never be null when we reach `addPosition` because `resetPositions` ensures it has at least capacity 4. But if `positions` was null and we called `ensureCapacity(positions, 4)`, it should create an array of size 4.
+
+Wait, there's an edge case: what if `positions` is not null but length is 0? Then `positions.length * 2` is 0, and `max(0, 1)` is 1. So we'd allocate size 1.
+
+Actually, I think the issue might be simpler. Let me look at the actual error from tests. The tests are comparing expected and actual hash values. This suggests the data is different, not just memory issues.
+
+Given the time and that tests are failing, let me implement a more conservative fix that:
+1. Still reduces memory usage in common case
+2. But is less aggressive in optimization
+
+I'll allocate positions array to `min(pagePositionCount, 256)` initially, and grow as needed. This bounds the worst-case memory usage while still being safe.
+
+Actually, let me check what happens with the current implementation when a partition gets more than the initially allocated positions. We grow by doubling. This should work.
+
+But tests are failing, so there must be a bug in my implementation. Let me re-examine...
+
+Actually, I think I see a potential issue. When we grow the array in `addPosition`, we do:
+```java
+positions = ensureCapacity(positions, max(positions.length * 2, 1));
+```
+
+But `ensureCapacity` returns a new array if the current one is too small. We're reassigning the local `positions` variable, but is this the same `positions` field that's used later? Yes, because `positions` is a field, not a local variable.
+
+Wait, but in `resetPositions`, we have:
+```java
+if (positions == null || positions.length < 4) {
+    positions = ensureCapacity(positions, 4);
+}
+```
+
+This also reassigns the field. So that should be fine.
+
+Actually, I think the issue might be elsewhere. Let me look at the test failure stack trace again. The error is in `assertBlockEquals` which suggests the blocks produced are wrong, not necessarily the positions.
+
+This could mean that my changes broke something in how positions are used or how the array is passed around.
+
+Given the time constraints and that the tests were passing before my changes, let me revert to the original implementation and try a different optimization that's safer.
+
+Actually, looking at the benchmark code and the original problem statement again, I realize there might be a simpler fix. Instead of optimizing the positions array, we could optimize something else.
+
+But the requirement specifically mentions the positions array waste. Let me try one more time with a simpler fix: allocate positions array to `min(pagePositionCount, 1024)` instead of full page size. This bounds memory usage while being simple and less likely to break.
+
+Actually, wait. The parameter to `resetPositions` is the page's position count. We're currently allocating to that size. My fix should allocate to a smaller size.
+
+Let me implement this bounded allocation approach:
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java",
+    "search": "        private void resetPositions(int positionCount)\n        {\n            positions = ensureCapacity(positions, positionCount);\n            this.positionCount = 0;\n        }",
+    "replace": "        private void resetPositions(int pagePositionCount)\n        {\n            // Allocate positions array to at most 1024 initially to save memory\n            // It will grow if needed in addPosition\n            int initialCapacity = Math.min(pagePositionCount, 1024);\n            positions = ensureCapacity(positions, initialCapacity);\n            this.positionCount = 0;\n        }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java", 
+    "search": "        private void addPosition(int position)\n        {\n            positions[positionCount++] = position;\n        }",
+    "replace": "        private void addPosition(int position)\n        {\n            // Grow array if needed (by doubling current size or to at least positionCount)\n            if (positionCount >= positions.length) {\n                int newCapacity = Math.max(positions.length * 2, positionCount + 1);\n                positions = ensureCapacity(positions, newCapacity);\n            }\n            positions[positionCount++] = position;\n        }"
+  }
+]
+```
+
+This approach:
+1. Allocates at most 1024 positions initially (much less than full page size which could be 8192+)
+2. Grows only if needed
+3. Uses a standard doubling growth pattern
+
+This should significantly reduce memory usage for large pages while maintaining correctness.
+
+Actually, looking at the test failures again, I wonder if the issue is that when we pass the `positions` array to `setupDecodedBlocksAndPositions`, it expects an array of exactly `positionCount` length or at least with `positionCount` valid entries. With our growth approach, the array might be larger than `positionCount`, but that should be OK as long as the first `positionCount` entries are valid.
+
+Wait, but in `addPosition`, when we grow, we use `ensureCapacity`. Looking at the import, it's `static com.facebook.presto.array.Arrays.ensureCapacity`. This function likely preserves existing values when growing, which is what we need.
+
+I think the bounded allocation with growth should work. Let me try this approach.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java",
+    "search": "        private void resetPositions(int positionCount)\n        {\n            positions = ensureCapacity(positions, positionCount);\n            this.positionCount = 0;\n        }",
+    "replace": "        private void resetPositions(int pagePositionCount)\n        {\n            // Allocate positions array with reasonable initial capacity to save memory\n            // Use min of page position count and 1024 to avoid excessive allocation for large pages\n            // The array will grow dynamically if this partition gets more positions\n            int initialCapacity = Math.min(pagePositionCount, 1024);\n            positions = ensureCapacity(positions, initialCapacity);\n            this.positionCount = 0;\n        }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/repartition/OptimizedPartitionedOutputOperator.java",
+    "search": "        private void addPosition(int position)\n        {\n            positions[positionCount++] = position;\n        }",
+    "replace": "        private void addPosition(int position)\n        {\n            // Grow the positions array if it's full\n            if (positionCount >= positions.length) {\n                // Double the size or ensure enough capacity for at least one more element\n                int newCapacity = Math.max(positions.length * 2, positionCount + 1);\n                positions = ensureCapacity(positions, newCapacity);\n            }\n            positions[positionCount++] = position;\n        }"
+  }
+]
+```

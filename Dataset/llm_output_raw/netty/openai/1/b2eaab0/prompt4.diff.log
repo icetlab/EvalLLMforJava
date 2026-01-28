@@ -1,0 +1,31 @@
+I have introduced a single, class-wide boolean flag to record once at class-load time whether we should use the unsafe, unaligned implementations, and then rewrote each of the array‐based comparison and hashing methods to branch on that flag instead of repeatedly calling the predicates. This both reduces code size and inlines more readily under JIT.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "public static final boolean BIG_ENDIAN_NATIVE_ORDER = ByteOrder.nativeOrder() == ByteOrder.BIG_ENDIAN;",
+    "replace": "public static final boolean BIG_ENDIAN_NATIVE_ORDER = ByteOrder.nativeOrder() == ByteOrder.BIG_ENDIAN;\nprivate static final boolean USE_UNSAFE_MEMORY_ACCESS = hasUnsafe() && unalignedAccess();"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "public static boolean equals(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        return !hasUnsafe() || !unalignedAccess() ?\n                  equalsSafe(bytes1, startPos1, bytes2, startPos2, length) :\n                  PlatformDependent0.equals(bytes1, startPos1, bytes2, startPos2, length);\n    }",
+    "replace": "public static boolean equals(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        return USE_UNSAFE_MEMORY_ACCESS ?\n                  PlatformDependent0.equals(bytes1, startPos1, bytes2, startPos2, length) :\n                  equalsSafe(bytes1, startPos1, bytes2, startPos2, length);\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "public static boolean isZero(byte[] bytes, int startPos, int length) {\n        return !hasUnsafe() || !unalignedAccess() ?\n                isZeroSafe(bytes, startPos, length) :\n                PlatformDependent0.isZero(bytes, startPos, length);\n    }",
+    "replace": "public static boolean isZero(byte[] bytes, int startPos, int length) {\n        return USE_UNSAFE_MEMORY_ACCESS ?\n                PlatformDependent0.isZero(bytes, startPos, length) :\n                isZeroSafe(bytes, startPos, length);\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "public static int equalsConstantTime(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        return !hasUnsafe() || !unalignedAccess() ?\n                  ConstantTimeUtils.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length) :\n                  PlatformDependent0.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);\n    }",
+    "replace": "public static int equalsConstantTime(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        return USE_UNSAFE_MEMORY_ACCESS ?\n                  PlatformDependent0.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length) :\n                  ConstantTimeUtils.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "public static int hashCodeAscii(byte[] bytes, int startPos, int length) {\n        return !hasUnsafe() || !unalignedAccess() ?\n                hashCodeAsciiSafe(bytes, startPos, length) :\n                PlatformDependent0.hashCodeAscii(bytes, startPos, length);\n    }",
+    "replace": "public static int hashCodeAscii(byte[] bytes, int startPos, int length) {\n        return USE_UNSAFE_MEMORY_ACCESS ?\n                PlatformDependent0.hashCodeAscii(bytes, startPos, length) :\n                hashCodeAsciiSafe(bytes, startPos, length);\n    }"
+  }
+]
+```

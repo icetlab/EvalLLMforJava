@@ -1,0 +1,158 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java b/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
+index ce0ca747f2..146ae2c7a6 100644
+--- a/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
++++ b/presto-main/src/main/java/com/facebook/presto/tdigest/TDigest.java
+@@ -108,21 +108,23 @@ public class TDigest
+ 
+     private double totalWeight;
+ 
+-    private final double[] weight;
++    private double[] weight;
+ 
+-    private final double[] mean;
++    private double[] mean;
+ 
+     private double unmergedWeight;
+ 
+     // this is the index of the next temporary centroid
+     // this is a more Java-like convention than activeCentroids uses
+     private int tempUsed;
+-    private final double[] tempWeight;
+-    private final double[] tempMean;
++    private double[] tempWeight;
++    private double[] tempMean;
+ 
+     // array used for sorting the temp centroids
+     // to avoid allocations during operation
+-    private final int[] order;
++    private int[] order;
++
++    private static final int MAX_UNMERGED_SIZE = 200;
+ 
+     private TDigest(double compression)
+     {
+@@ -138,16 +140,6 @@ public class TDigest
+         // compression is how many we actually keep
+         this.compression = 2 * publicCompression;
+ 
+-        // having a big buffer is good for speed
+-        int bufferSize = 5 * (int) ceil(this.publicCompression + sizeFudge);
+-        int size = (int) ceil(this.compression + sizeFudge);
+-
+-        weight = new double[size];
+-        mean = new double[size];
+-        tempWeight = new double[bufferSize];
+-        tempMean = new double[bufferSize];
+-        order = new int[bufferSize];
+-
+         activeCentroids = 0;
+     }
+ 
+@@ -172,6 +164,7 @@ public class TDigest
+             double max = sliceInput.readDouble();
+             double publicCompression = max(10, sliceInput.readDouble());
+             TDigest r = new TDigest(publicCompression);
++            r.initialize();
+             r.setMinMax(min, max);
+             r.totalWeight = sliceInput.readDouble();
+             r.activeCentroids = sliceInput.readInt();
+@@ -195,7 +188,17 @@ public class TDigest
+         checkArgument(!Double.isNaN(x), "Cannot add NaN to t-digest");
+         checkArgument(w > 0L, "weight must be > 0");
+ 
+-        if (tempUsed >= tempWeight.length - activeCentroids - 1) {
++        if (weight == null) { // not initialized
++            if (tempMean == null) {
++                tempMean = new double[MAX_UNMERGED_SIZE];
++                tempWeight = new double[MAX_UNMERGED_SIZE];
++            }
++            if (tempUsed >= tempMean.length) {
++                initialize();
++            }
++        }
++
++        if (weight != null && tempUsed >= tempWeight.length - activeCentroids - 1) {
+             mergeNewValues();
+         }
+         int where = tempUsed++;
+@@ -215,6 +218,11 @@ public class TDigest
+         checkArgument(other != null, "Cannot merge with a null t-digest");
+         checkArgument(this.publicCompression == other.getCompressionFactor(), "TDigests must have the same compression, found (%s, %s)", this.publicCompression,
+                 other.getCompressionFactor());
++
++        if (weight == null) {
++            initialize();
++        }
++
+         List<Centroid> tmp = new ArrayList<>();
+         for (Centroid centroid : other.centroids()) {
+             tmp.add(centroid);
+@@ -326,6 +334,12 @@ public class TDigest
+      */
+     public void compress()
+     {
++        if (weight == null) {
++            if (unmergedWeight == 0) {
++                return;
++            }
++            initialize();
++        }
+         mergeNewValues(true, publicCompression);
+     }
+ 
+@@ -543,6 +557,12 @@ public class TDigest
+ 
+     public int centroidCount()
+     {
++        if (weight == null) {
++            if (unmergedWeight == 0) {
++                return 0;
++            }
++            initialize();
++        }
+         mergeNewValues();
+         return activeCentroids;
+     }
+@@ -610,6 +630,9 @@ public class TDigest
+ 
+     public long estimatedInMemorySizeInBytes()
+     {
++        if (weight == null) {
++            return INSTANCE_SIZE + sizeOf(tempMean) + sizeOf(tempWeight);
++        }
+         return INSTANCE_SIZE + sizeOf(weight) + sizeOf(mean) + sizeOf(tempWeight) + sizeOf(tempMean) + sizeOf(order);
+     }
+ 
+@@ -645,6 +668,32 @@ public class TDigest
+         return max;
+     }
+ 
++    private void initialize()
++    {
++        if (weight != null) {
++            return;
++        }
++
++        // having a big buffer is good for speed
++        int bufferSize = 5 * (int) ceil(this.publicCompression + sizeFudge);
++        int size = (int) ceil(this.compression + sizeFudge);
++
++        weight = new double[size];
++        mean = new double[size];
++
++        double[] oldTempMean = tempMean;
++        double[] oldTempWeight = tempWeight;
++
++        tempWeight = new double[bufferSize];
++        tempMean = new double[bufferSize];
++        order = new int[bufferSize];
++
++        if (tempUsed > 0) {
++            arraycopy(oldTempMean, 0, tempMean, 0, tempUsed);
++            arraycopy(oldTempWeight, 0, tempWeight, 0, tempUsed);
++        }
++    }
++
+     public String toString()
+     {
+         return format("TDigest\nCompression:%s\nCentroid Count:%s\nSize:%s\nMin:%s Median:%s Max:%s",

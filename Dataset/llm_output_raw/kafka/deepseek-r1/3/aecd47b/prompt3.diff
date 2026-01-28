@@ -1,0 +1,34 @@
+diff --git a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+index 679b59249d..f090f5a0dc 100644
+--- a/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
++++ b/clients/src/main/java/org/apache/kafka/common/utils/Checksums.java
+@@ -30,6 +30,8 @@ import java.util.zip.Checksum;
+  */
+ public final class Checksums {
+ 
++    private static final ThreadLocal<byte[]> BYTE_ARRAY_CACHE = ThreadLocal.withInitial(() -> new byte[4096]);
++
+     private Checksums() {
+     }
+ 
+@@ -41,9 +43,17 @@ public final class Checksums {
+         if (buffer.hasArray()) {
+             checksum.update(buffer.array(), buffer.position() + buffer.arrayOffset() + offset, length);
+         } else {
+-            int start = buffer.position() + offset;
+-            for (int i = start; i < start + length; i++)
+-                checksum.update(buffer.get(i));
++            // Use a duplicate buffer to avoid changing the original buffer's position
++            ByteBuffer dup = buffer.duplicate();
++            dup.position(dup.position() + offset);
++            byte[] temp = BYTE_ARRAY_CACHE.get();
++            int remaining = length;
++            while (remaining > 0) {
++                int toGet = Math.min(remaining, temp.length);
++                dup.get(temp, 0, toGet);
++                checksum.update(temp, 0, toGet);
++                remaining -= toGet;
++            }
+         }
+     }
+     

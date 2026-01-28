@@ -1,0 +1,28 @@
+My overall improvement strategy is to optimize the `getIndexInsensitive` method in `HpackStaticTable`. The original implementation uses a loop that performs an expensive, constant-time string comparison on the header name in each iteration for headers with multiple static table entries.
+
+My plan is to replace this generic loop with a more efficient, hardcoded approach. Since the static table is immutable, we can rely on the fixed indices of headers. The new implementation will:
+1.  First, check for a match at the primary index returned by `getIndex(name)`. This quickly handles all single-value headers and the first value of multi-value headers.
+2.  If that fails, a `switch` statement on the index will handle the few headers that have multiple values (`:method`, `:path`, `:scheme`, `:status`). This avoids the repeated, expensive name comparisons within a loop.
+3.  This change makes the `MAX_SAME_NAME_FIELD_INDEX` field and its corresponding initialization method `maxSameNameFieldIndex()` redundant. I will remove them for code cleanliness.
+
+This approach will significantly reduce the number of expensive operations for lookups that don't match the first entry of a multi-valued header, directly addressing the performance characteristics tested by the benchmarks.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "    private static final CharSequenceMap<Integer> STATIC_INDEX_BY_NAME = createMap();\n\n    private static final int MAX_SAME_NAME_FIELD_INDEX = maxSameNameFieldIndex();",
+    "replace": "    private static final CharSequenceMap<Integer> STATIC_INDEX_BY_NAME = createMap();"
+  },
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "    static int getIndexInsensitive(CharSequence name, CharSequence value) {\n        int index = getIndex(name);\n        if (index == NOT_FOUND) {\n            return NOT_FOUND;\n        }\n\n        // Compare values for the first name match\n        HpackHeaderField entry = getEntry(index);\n        if (equalsVariableTime(value, entry.value)) {\n            return index;\n        }\n\n        // Note this assumes all entries for a given header field are sequential.\n        index++;\n        while (index <= MAX_SAME_NAME_FIELD_INDEX) {\n            entry = getEntry(index);\n            if (!equalsVariableTime(name, entry.name)) {\n                // As far as fields with the same name are placed in the table sequentially\n                // and INDEX_BY_NAME returns index of the fist position, - it's safe to\n                // exit immediately.\n                return NOT_FOUND;\n            }\n            if (equalsVariableTime(value, entry.value)) {\n                return index;\n            }\n            index++;\n        }\n\n        return NOT_FOUND;\n    }",
+    "replace": "    static int getIndexInsensitive(CharSequence name, CharSequence value) {\n        int index = getIndex(name);\n        if (index == NOT_FOUND) {\n            return NOT_FOUND;\n        }\n\n        // Check the first entry.\n        if (equalsVariableTime(value, getEntry(index).value)) {\n            return index;\n        }\n\n        // If the first entry didn't match, check other entries with same name.\n        switch (index) {\n            case 2: // :method\n                return equalsVariableTime(value, getEntry(3).value) ? 3 : NOT_FOUND;\n            case 4: // :path\n                return equalsVariableTime(value, getEntry(5).value) ? 5 : NOT_FOUND;\n            case 6: // :scheme\n                return equalsVariableTime(value, getEntry(7).value) ? 7 : NOT_FOUND;\n            case 8: // :status\n                for (int i = 9; i <= 14; ++i) {\n                    if (equalsVariableTime(value, getEntry(i).value)) {\n                        return i;\n                    }\n                }\n                return NOT_FOUND;\n            default:\n                return NOT_FOUND;\n        }\n    }"
+  },
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "    /**\n     * Returns the last position in the array that contains multiple\n     * fields with the same name. Starting from this position, all\n     * names are unique. Similar to {@link #getIndexInsensitive(CharSequence, CharSequence)} method\n     * assumes all entries for a given header field are sequential\n     */\n    private static int maxSameNameFieldIndex() {\n        final int length = STATIC_TABLE.size();\n        HpackHeaderField cursor = getEntry(length);\n        for (int index = length - 1; index > 0; index--) {\n            HpackHeaderField entry = getEntry(index);\n            if (equalsVariableTime(entry.name, cursor.name)) {\n                return index + 1;\n            } else {\n                cursor = entry;\n            }\n        }\n        return length;\n    }",
+    "replace": ""
+  }
+]
+```

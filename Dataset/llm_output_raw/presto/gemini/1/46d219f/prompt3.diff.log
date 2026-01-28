@@ -1,0 +1,11 @@
+The performance of `map_concat` is improved by providing more accurate initial capacity estimates for internal data structures. Specifically, the `TypedSet` used for tracking keys and the `InterleavedBlockBuilder` for constructing the result map are now initialized with sizes based on the number of map entries (key-value pairs), rather than the total number of positions in the blocks (keys and values counted separately). This reduces memory overhead and avoids potential reallocations, leading to better performance, especially for large maps.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapConcatFunction.java",
+    "search": "        TypedSet typedSet = new TypedSet(keyType, rightMap.getPositionCount());\n        BlockBuilder blockBuilder = new InterleavedBlockBuilder(ImmutableList.of(keyType, valueType), new BlockBuilderStatus(), leftMap.getPositionCount() + rightMap.getPositionCount());",
+    "replace": "        TypedSet typedSet = new TypedSet(keyType, rightMap.getPositionCount() / 2);\n        BlockBuilder blockBuilder = new InterleavedBlockBuilder(ImmutableList.of(keyType, valueType), new BlockBuilderStatus(), (leftMap.getPositionCount() + rightMap.getPositionCount()) / 2);"
+  }
+]
+```

@@ -1,0 +1,104 @@
+diff --git a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+index e5b4945e17..cbd8717310 100644
+--- a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
++++ b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+@@ -291,7 +291,9 @@ class AclAuthorizer extends Authorizer with Logging {
+     def isEmptyAclAndAuthorized(acls: Set[AclEntry]): Boolean = {
+       if (acls.isEmpty) {
+         // No ACLs found for this resource, permission is determined by value of config allow.everyone.if.no.acl.found
+-        authorizerLogger.debug(s"No acl found for resource $resource, authorized = $shouldAllowEveryoneIfNoAclIsFound")
++        if (authorizerLogger.underlying.isDebugEnabled) {
++          authorizerLogger.debug(s"No acl found for resource $resource, authorized = $shouldAllowEveryoneIfNoAclIsFound")
++        }
+         shouldAllowEveryoneIfNoAclIsFound
+       } else false
+     }
+@@ -317,7 +319,11 @@ class AclAuthorizer extends Authorizer with Logging {
+       //we allow an operation if no acls are found and user has configured to allow all users
+       //when no acls are found or if no deny acls are found and at least one allow acls matches.
+       val acls = matchingAcls(resource.resourceType, resource.name)
+-      isEmptyAclAndAuthorized(acls) || (!denyAclExists(acls) && allowAclExists(acls))
++      if (acls.isEmpty) {
++        shouldAllowEveryoneIfNoAclIsFound
++      } else {
++        !denyAclExists(acls) && allowAclExists(acls)
++      }
+     }
+ 
+     // Evaluate if operation is allowed
+@@ -336,23 +342,29 @@ class AclAuthorizer extends Authorizer with Logging {
+ 
+   private def matchingAcls(resourceType: ResourceType, resourceName: String): Set[AclEntry] = {
+     inReadLock(lock) {
+-      val wildcard = aclCache.get(new ResourcePattern(resourceType, ResourcePattern.WILDCARD_RESOURCE, PatternType.LITERAL))
+-        .map(_.acls)
+-        .getOrElse(Set.empty)
+-
+-      val literal = aclCache.get(new ResourcePattern(resourceType, resourceName, PatternType.LITERAL))
+-        .map(_.acls)
+-        .getOrElse(Set.empty)
+-
+-      val prefixed = aclCache
+-        .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))
+-        .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))
+-        .filterKeys(resource => resourceName.startsWith(resource.name))
+-        .values
+-        .flatMap { _.acls }
+-        .toSet
+-
+-      prefixed ++ wildcard ++ literal
++      val wildcardResource = new ResourcePattern(resourceType, ResourcePattern.WILDCARD_RESOURCE, PatternType.LITERAL)
++      val literalResource = new ResourcePattern(resourceType, resourceName, PatternType.LITERAL)
++      
++      val wildcard = aclCache.get(wildcardResource).map(_.acls).getOrElse(Set.empty)
++      val literal = aclCache.get(literalResource).map(_.acls).getOrElse(Set.empty)
++      
++      // Optimize prefixed lookup: only iterate if there might be prefixed resources
++      val prefixed = if (aclCache.nonEmpty && resourceName.nonEmpty) {
++        val firstChar = resourceName.charAt(0)
++        aclCache
++          .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))
++          .to(new ResourcePattern(resourceType, String.valueOf(firstChar), PatternType.PREFIXED))
++          .filterKeys(resource => resourceName.startsWith(resource.name))
++          .values
++          .flatMap(_.acls)
++          .toSet
++      } else Set.empty[AclEntry]
++      
++      // Use optimized set union
++      if (prefixed.isEmpty && wildcard.isEmpty) literal
++      else if (prefixed.isEmpty && literal.isEmpty) wildcard
++      else if (wildcard.isEmpty && literal.isEmpty) prefixed
++      else prefixed ++ wildcard ++ literal
+     }
+   }
+ 
+@@ -362,13 +374,23 @@ class AclAuthorizer extends Authorizer with Logging {
+                                 host: String,
+                                 permissionType: AclPermissionType,
+                                 acls: Set[AclEntry]): Boolean = {
+-    acls.find { acl =>
++    // Early exit for empty sets
++    if (acls.isEmpty) return false
++    
++    val isWildcardHost = host == AclEntry.WildcardHost
++    val isWildcardPrincipal = principal == AclEntry.WildcardPrincipal
++    
++    // Use exists instead of find+exists to avoid creating intermediate Option
++    acls.exists { acl =>
+       acl.permissionType == permissionType &&
+-        (acl.kafkaPrincipal == principal || acl.kafkaPrincipal == AclEntry.WildcardPrincipal) &&
++        (acl.kafkaPrincipal == principal || acl.kafkaPrincipal == AclEntry.WildcardPrincipal || isWildcardPrincipal) &&
+         (operation == acl.operation || acl.operation == AclOperation.ALL) &&
+-        (acl.host == host || acl.host == AclEntry.WildcardHost)
+-    }.exists { acl =>
+-      authorizerLogger.debug(s"operation = $operation on resource = $resource from host = $host is $permissionType based on acl = $acl")
++        (acl.host == host || acl.host == AclEntry.WildcardHost || isWildcardHost)
++    } && {
++      // Only compute debug message if logging is enabled at debug level
++      if (authorizerLogger.underlying.isDebugEnabled) {
++        authorizerLogger.debug(s"operation = $operation on resource = $resource from host = $host is $permissionType")
++      }
+       true
+     }
+   }

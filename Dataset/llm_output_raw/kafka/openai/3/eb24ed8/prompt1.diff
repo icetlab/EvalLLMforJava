@@ -1,0 +1,72 @@
+diff --git a/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java b/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java
+index 352d12d834..eef76b8a55 100644
+--- a/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java
++++ b/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java
+@@ -30,6 +30,8 @@ import java.lang.invoke.MethodType;
+ import java.nio.ByteBuffer;
+ import java.util.zip.GZIPInputStream;
+ import java.util.zip.GZIPOutputStream;
++import java.util.Map;
++import java.util.HashMap;
+ 
+ /**
+  * The compression type to use
+@@ -145,6 +147,16 @@ public enum CompressionType {
+         this.rate = rate;
+     }
+ 
++    // Static caches for fast lookup by id and name
++    private static final CompressionType[] TYPES_BY_ID = values();
++    private static final Map<String, CompressionType> TYPES_BY_NAME = new HashMap<>();
++
++    static {
++        for (CompressionType type : values()) {
++            TYPES_BY_NAME.put(type.name, type);
++        }
++    }
++
+     /**
+      * Wrap bufferStream with an OutputStream that will compress data with this CompressionType.
+      *
+@@ -167,34 +179,17 @@ public enum CompressionType {
+     public abstract InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier);
+ 
+     public static CompressionType forId(int id) {
+-        switch (id) {
+-            case 0:
+-                return NONE;
+-            case 1:
+-                return GZIP;
+-            case 2:
+-                return SNAPPY;
+-            case 3:
+-                return LZ4;
+-            case 4:
+-                return ZSTD;
+-            default:
+-                throw new IllegalArgumentException("Unknown compression type id: " + id);
++        if (id >= 0 && id < TYPES_BY_ID.length) {
++            return TYPES_BY_ID[id];
+         }
++        throw new IllegalArgumentException("Unknown compression type id: " + id);
+     }
+ 
+     public static CompressionType forName(String name) {
+-        if (NONE.name.equals(name))
+-            return NONE;
+-        else if (GZIP.name.equals(name))
+-            return GZIP;
+-        else if (SNAPPY.name.equals(name))
+-            return SNAPPY;
+-        else if (LZ4.name.equals(name))
+-            return LZ4;
+-        else if (ZSTD.name.equals(name))
+-            return ZSTD;
+-        else
++        CompressionType type = TYPES_BY_NAME.get(name);
++        if (type != null) {
++            return type;
++        }
+         throw new IllegalArgumentException("Unknown compression name: " + name);
+     }
+ 

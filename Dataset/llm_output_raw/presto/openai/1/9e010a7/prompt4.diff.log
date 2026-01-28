@@ -1,0 +1,16 @@
+The change adds a fast‐path for casts where both key and value types are identical—avoiding the expensive TypedSet/builders—and simply returns the original map block. It also adds an `identityMapCast` helper.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java",
+    "search": "Type toMapType = functionAndTypeManager.getParameterizedType(\n        \"map\",\n        ImmutableList.of(\n                TypeSignatureParameter.of(toKeyType.getTypeSignature()),\n                TypeSignatureParameter.of(toValueType.getTypeSignature())));",
+    "replace": "Type toMapType = functionAndTypeManager.getParameterizedType(\n        \"map\",\n        ImmutableList.of(\n                TypeSignatureParameter.of(toKeyType.getTypeSignature()),\n                TypeSignatureParameter.of(toValueType.getTypeSignature())));\n\n        // Fast‐path when no actual key/value conversion is needed\n        if (fromKeyType.equals(toKeyType) && fromValueType.equals(toValueType)) {\n            MethodHandle identity = methodHandle(\n                    MapToMapCast.class,\n                    \"identityMapCast\",\n                    Type.class,\n                    SqlFunctionProperties.class,\n                    Block.class);\n            MethodHandle target = MethodHandles.insertArguments(identity, 0, toMapType);\n            return new BuiltInScalarFunctionImplementation(\n                    true,\n                    ImmutableList.of(valueTypeArgumentProperty(RETURN_NULL_ON_NULL)),\n                    target);\n        }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java",
+    "search": "        return (Block) toMapType.getObject(mapBlockBuilder, mapBlockBuilder.getPositionCount() - 1);\n    }\n}",
+    "replace": "        return (Block) toMapType.getObject(mapBlockBuilder, mapBlockBuilder.getPositionCount() - 1);\n    }\n\n    @UsedByGeneratedCode\n    public static Block identityMapCast(\n            Type toMapType,\n            SqlFunctionProperties properties,\n            Block fromMap)\n    {\n        return fromMap;\n    }\n}"
+  }
+]
+```

@@ -1,0 +1,11 @@
+The change pre-allocates each `BlockBuilder` with the expected number of entries (the page’s position count) instead of using the default small size and then growing dynamically, reducing reallocations and improving projection performance.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/project/GeneratedPageProjection.java",
+    "search": "blockBuilders = blockBuilders.stream().map(blockBuilder -> blockBuilder.newBlockBuilderLike(null)).collect(toImmutableList());",
+    "replace": "int expectedEntries = page.getPositionCount();\n        blockBuilders = projections.stream()\n                .map(RowExpression::getType)\n                .map(type -> type.createBlockBuilder(null, expectedEntries))\n                .collect(toImmutableList());"
+  }
+]
+```

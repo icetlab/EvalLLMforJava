@@ -1,0 +1,44 @@
+diff --git a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+index 86f06981ff..5f0c2dddf8 100644
+--- a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
++++ b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+@@ -357,7 +357,17 @@ class AclAuthorizer extends Authorizer with Logging {
+         .flatMap { _.acls }
+         .toSet
+ 
+-      prefixed ++ wildcard ++ literal
++      // Optimize union operation for performance
++      // Start with the smallest set to minimize hash computations
++      val sizes = Seq(prefixed.size, wildcard.size, literal.size)
++      val sets = Seq(prefixed, wildcard, literal)
++      val sortedSets = sets.zip(sizes).sortBy(_._2).map(_._1)
++      
++      sortedSets.foldLeft(Set.empty[AclEntry]) { (acc, set) =>
++        if (acc.isEmpty) set
++        else if (set.isEmpty) acc
++        else acc.union(set)
++      }
+     }
+   }
+ 
+@@ -367,14 +377,15 @@ class AclAuthorizer extends Authorizer with Logging {
+                                 host: String,
+                                 permissionType: AclPermissionType,
+                                 acls: Set[AclEntry]): Boolean = {
+-    acls.find { acl =>
++    // Use exists instead of find+exists to avoid creating Option object
++    acls.exists { acl =>
+       acl.permissionType == permissionType &&
+         (acl.kafkaPrincipal == principal || acl.kafkaPrincipal == AclEntry.WildcardPrincipal) &&
+         (operation == acl.operation || acl.operation == AclOperation.ALL) &&
+-        (acl.host == host || acl.host == AclEntry.WildcardHost)
+-    }.exists { acl =>
+-      authorizerLogger.debug(s"operation = $operation on resource = $resource from host = $host is $permissionType based on acl = $acl")
+-      true
++        (acl.host == host || acl.host == AclEntry.WildcardHost) && {
++          authorizerLogger.debug(s"operation = $operation on resource = $resource from host = $host is $permissionType based on acl = $acl")
++          true
++        }
+     }
+   }
+ 

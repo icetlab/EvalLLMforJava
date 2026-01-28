@@ -1,0 +1,28 @@
+## Explanation
+
+The performance issue is in the `getIPv6ByName` method, which contains an inefficient loop for shifting bytes when handling compressed IPv6 addresses. The current implementation uses nested loops for shifting array elements, which can be optimized by using `System.arraycopy` for bulk data movement. Additionally, some conditional checks can be simplified.
+
+The main inefficiencies are:
+1. The manual byte shifting loops for compressed addresses can be replaced with `System.arraycopy`.
+2. Some boundary checks can be streamlined.
+
+We'll make two atomic changes:
+1. Replace the manual byte shifting loop with `System.arraycopy` for better performance.
+2. Simplify the conditional logic for the shifting operation.
+
+## Changes
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/NetUtil.java",
+    "search": "        i = currentIndex + compressLength;\n        if (needsShift || i >= bytes.length) {\n            // Right shift array\n            if (i >= bytes.length) {\n                ++compressBegin;\n            }\n            for (i = currentIndex; i < bytes.length; ++i) {\n                for (begin = bytes.length - 1; begin >= compressBegin; --begin) {\n                    bytes[begin] = bytes[begin - 1];\n                }\n                bytes[begin] = 0;\n                ++compressBegin;\n            }\n        } else {\n            // Selectively move elements\n            for (i = 0; i < compressLength; ++i) {\n                begin = i + compressBegin;\n                currentIndex = begin + compressLength;\n                if (currentIndex < bytes.length) {\n                    bytes[currentIndex] = bytes[begin];\n                    bytes[begin] = 0;\n                } else {\n                    break;\n                }\n            }\n        }",
+    "replace": "        i = currentIndex + compressLength;\n        if (needsShift || i >= bytes.length) {\n            // Right shift array\n            if (i >= bytes.length) {\n                ++compressBegin;\n            }\n            int shiftStart = compressBegin;\n            int shiftLength = bytes.length - shiftStart;\n            if (shiftLength > 0) {\n                System.arraycopy(bytes, shiftStart, bytes, shiftStart + 1, shiftLength - 1);\n            }\n            bytes[shiftStart] = 0;\n        } else {\n            // Selectively move elements\n            if (compressLength > 0) {\n                System.arraycopy(bytes, compressBegin, bytes, compressBegin + compressLength, compressLength);\n                java.util.Arrays.fill(bytes, compressBegin, compressBegin + compressLength, (byte) 0);\n            }\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/NetUtil.java",
+    "search": "                if (ipv6Separators == 0) {\n                    compressLength = 12;\n                } else if (ipv6Separators >= IPV6_MIN_SEPARATORS &&\n                           (!isCompressed && (ipv6Separators == 6 && ip.charAt(0) != ':') ||\n                            isCompressed && (ipv6Separators < IPV6_MAX_SEPARATORS &&\n                                             (ip.charAt(0) != ':' || compressBegin <= 2)))) {\n                    compressLength -= 2;\n                } else {\n                    return null;\n                }",
+    "replace": "                if (ipv6Separators == 0) {\n                    compressLength = 12;\n                } else if (ipv6Separators >= IPV6_MIN_SEPARATORS) {\n                    if (!isCompressed) {\n                        if (ipv6Separators == 6 && ip.charAt(0) != ':') {\n                            compressLength -= 2;\n                        } else {\n                            return null;\n                        }\n                    } else {\n                        if (ipv6Separators < IPV6_MAX_SEPARATORS &&\n                            (ip.charAt(0) != ':' || compressBegin <= 2)) {\n                            compressLength -= 2;\n                        } else {\n                            return null;\n                        }\n                    }\n                } else {\n                    return null;\n                }"
+  }
+]
+```

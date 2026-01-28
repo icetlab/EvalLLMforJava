@@ -1,0 +1,21 @@
+I’ve introduced a small static-final flag to capture once (at class‐load time) whether to use the “unsafe + unaligned” fast path for byte‐array comparisons, and I’ve simplified the two hot methods (`equals` and `equalsConstantTime`) to branch on that flag rather than re-evaluating the predicates each call. This will reduce method size and help the JIT inline/shrink at the hot sites.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "private static final InternalLogger logger = InternalLoggerFactory.getInstance(PlatformDependent.class);",
+    "replace": "private static final InternalLogger logger = InternalLoggerFactory.getInstance(PlatformDependent.class);\n\n    // Capture once whether we can use the unsafe+unaligned fast path for byte[] ops\n    private static final boolean USE_UNSAFE_EQUALS = io.netty.util.internal.PlatformDependent0.hasUnsafe() && unalignedAccess();"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "public static boolean equals(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        return !hasUnsafe() || !unalignedAccess() ?\n                  equalsSafe(bytes1, startPos1, bytes2, startPos2, length) :\n                  PlatformDependent0.equals(bytes1, startPos1, bytes2, startPos2, length);\n    }",
+    "replace": "public static boolean equals(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        if (USE_UNSAFE_EQUALS) {\n            return PlatformDependent0.equals(bytes1, startPos1, bytes2, startPos2, length);\n        }\n        return equalsSafe(bytes1, startPos1, bytes2, startPos2, length);\n    }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "public static int equalsConstantTime(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        return !hasUnsafe() || !unalignedAccess() ?\n                  ConstantTimeUtils.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length) :\n                  PlatformDependent0.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);\n    }",
+    "replace": "public static int equalsConstantTime(byte[] bytes1, int startPos1, byte[] bytes2, int startPos2, int length) {\n        if (USE_UNSAFE_EQUALS) {\n            return PlatformDependent0.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);\n        }\n        return ConstantTimeUtils.equalsConstantTime(bytes1, startPos1, bytes2, startPos2, length);\n    }"
+  }
+]
+```

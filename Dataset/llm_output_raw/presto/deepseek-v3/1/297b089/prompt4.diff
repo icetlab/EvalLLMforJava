@@ -1,0 +1,90 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java
+index 79b56c6971..ea8fc14c43 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java
+@@ -92,7 +92,6 @@ public class SliceDirectSelectiveStreamReader
+     private boolean allNulls;           // true if all requested positions are null
+     private boolean[] isNullVector;     // isNull flags for all positions up to the last positions requested in read()
+     private int[] lengthVector;         // lengths for all positions up to the last positions requested in read()
+-    private int lengthIndex;            // index into lengthVector array
+     private int[] offsets;              // offsets of requested positions only; specifies position boundaries for the data array
+     private byte[] data;                // data for requested positions only
+     private Slice dataAsSlice;          // data array wrapped in Slice
+@@ -186,10 +185,12 @@ public class SliceDirectSelectiveStreamReader
+         }
+ 
+         int streamPosition = 0;
++        int lengthIndex = 0;
+         for (int i = 0; i < positionCount; i++) {
+             int position = positions[i];
+             if (position > streamPosition) {
+-                skipData(streamPosition, position - streamPosition);
++                skipData(streamPosition, position - streamPosition, lengthIndex);
++                lengthIndex += countNonNulls(streamPosition, position - streamPosition);
+                 streamPosition = position;
+             }
+ 
+@@ -258,11 +259,13 @@ public class SliceDirectSelectiveStreamReader
+ 
+         int streamPosition = 0;
+         int dataToSkip = 0;
++        int lengthIndex = 0;
+ 
+         for (int i = 0; i < positionCount; i++) {
+             int position = positions[i];
+             if (position > streamPosition) {
+-                skipData(streamPosition, position - streamPosition);
++                skipData(streamPosition, position - streamPosition, lengthIndex);
++                lengthIndex += countNonNulls(streamPosition, position - streamPosition);
+                 streamPosition = position;
+             }
+ 
+@@ -330,7 +333,8 @@ public class SliceDirectSelectiveStreamReader
+                         positionsToSkip += 1 + nextPosition - streamPosition;
+                         streamPosition = nextPosition + 1;
+                     }
+-                    skipData(streamPosition, positionsToSkip);
++                    skipData(streamPosition, positionsToSkip, lengthIndex);
++                    lengthIndex += countNonNulls(streamPosition, positionsToSkip);
+                 }
+             }
+         }
+@@ -384,10 +388,11 @@ public class SliceDirectSelectiveStreamReader
+         }
+     }
+ 
+-    private void skipData(int start, int items)
++    private void skipData(int start, int items, int currentLengthIndex)
+             throws IOException
+     {
+         int dataToSkip = 0;
++        int lengthIndex = currentLengthIndex;
+         for (int i = 0; i < items; i++) {
+             if (presentStream == null || !isNullVector[start + i]) {
+                 dataToSkip += lengthVector[lengthIndex];
+@@ -400,6 +405,17 @@ public class SliceDirectSelectiveStreamReader
+         }
+     }
+ 
++    private int countNonNulls(int start, int items)
++    {
++        int count = 0;
++        for (int i = 0; i < items; i++) {
++            if (presentStream == null || !isNullVector[start + i]) {
++                count++;
++            }
++        }
++        return count;
++    }
++
+     // No nulls
+     private int evaluateFilter(int[] positions, int positionCount)
+     {
+@@ -629,7 +645,6 @@ public class SliceDirectSelectiveStreamReader
+     private int prepareForNextRead(int positionCount, int[] positions)
+             throws IOException
+     {
+-        lengthIndex = 0;
+         outputPositionCount = 0;
+ 
+         int totalLength = 0;

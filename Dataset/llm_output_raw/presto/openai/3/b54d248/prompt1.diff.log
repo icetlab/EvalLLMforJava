@@ -1,0 +1,11 @@
+I’ve optimized getPartition to replace the expensive modulo with a bitmask when the partition count is a power of two, while preserving the existing behavior for other cases.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/HashGenerator.java",
+    "search": "// clear the sign bit\n        rawHash &= 0x7fff_ffff_ffff_ffffL;\n\n        int partition = (int) (rawHash % partitionCount);",
+    "replace": "// clear the sign bit\n        rawHash &= 0x7fff_ffff_ffff_ffffL;\n\n        int partition;\n        // if partitionCount is power of two, use bitmask instead of modulo\n        if ((partitionCount & (partitionCount - 1)) == 0) {\n            partition = (int) (rawHash & (partitionCount - 1));\n        } else {\n            partition = (int) (rawHash % partitionCount);\n        }"
+  }
+]
+```

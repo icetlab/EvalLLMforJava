@@ -1,0 +1,38 @@
+Looking at the provided code and benchmark, I can see that the current `HttpRequestEncoder` has some performance issues in its URI normalization logic. The benchmark compares an "old" encoder (which uses `String.getBytes()` and manual copying) with the current "new" encoder (which uses `buf.writeCharSequence()`). However, both share the same complex URI processing logic that involves multiple string operations and conditional checks.
+
+The main performance improvements can be made by:
+1. Reducing string operations and avoiding unnecessary StringBuilder allocations
+2. Minimizing redundant index calculations
+3. Using more efficient string manipulation patterns
+
+Here are the specific improvements:
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java",
+    "search": "        // Add / as absolute path if no is present.\n        // See http://tools.ietf.org/html/rfc2616#section-5.1.2\n        String uri = request.uri();\n\n        if (uri.isEmpty()) {\n            uri += SLASH;\n        } else {\n            int start = uri.indexOf(\"://\");\n            if (start != -1 && uri.charAt(0) != SLASH) {\n                int startIndex = start + 3;\n                // Correctly handle query params.\n                // See https://github.com/netty/netty/issues/2732\n                int index = uri.indexOf(QUESTION_MARK, startIndex);\n                if (index == -1) {\n                    if (uri.lastIndexOf(SLASH) <= startIndex) {\n                        uri += SLASH;\n                    }\n                } else {\n                    if (uri.lastIndexOf(SLASH, index) <= startIndex) {\n                        int len = uri.length();\n                        StringBuilder sb = new StringBuilder(len + 1);\n                        sb.append(uri, 0, index)\n                          .append(SLASH)\n                          .append(uri, index, len);\n                        uri = sb.toString();\n                    }\n                }\n            }\n        }\n\n        buf.writeCharSequence(uri, CharsetUtil.UTF_8);",
+    "replace": "        // Add / as absolute path if no is present.\n        // See http://tools.ietf.org/html/rfc2616#section-5.1.2\n        String uri = request.uri();\n\n        if (uri.isEmpty()) {\n            buf.writeByte(SLASH);\n        } else {\n            int start = uri.indexOf(\"://\");\n            if (start != -1 && uri.charAt(0) != SLASH) {\n                int startIndex = start + 3;\n                // Correctly handle query params.\n                // See https://github.com/netty/netty/issues/2732\n                int index = uri.indexOf(QUESTION_MARK, startIndex);\n                if (index == -1) {\n                    if (uri.lastIndexOf(SLASH) <= startIndex) {\n                        // Write URI up to startIndex, then slash, then the rest\n                        buf.writeCharSequence(uri.substring(0, startIndex), CharsetUtil.UTF_8);\n                        buf.writeByte(SLASH);\n                        buf.writeCharSequence(uri.substring(startIndex), CharsetUtil.UTF_8);\n                    } else {\n                        buf.writeCharSequence(uri, CharsetUtil.UTF_8);\n                    }\n                } else {\n                    if (uri.lastIndexOf(SLASH, index) <= startIndex) {\n                        // Write URI up to index, then slash, then query part\n                        buf.writeCharSequence(uri.substring(0, index), CharsetUtil.UTF_8);\n                        buf.writeByte(SLASH);\n                        buf.writeCharSequence(uri.substring(index), CharsetUtil.UTF_8);\n                    } else {\n                        buf.writeCharSequence(uri, CharsetUtil.UTF_8);\n                    }\n                }\n            } else {\n                buf.writeCharSequence(uri, CharsetUtil.UTF_8);\n            }\n        }"
+  },
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java",
+    "search": "    private static final char SLASH = '/';\n    private static final char QUESTION_MARK = '?';",
+    "replace": "    private static final char SLASH = '/';\n    private static final byte SLASH_BYTE = '/';\n    private static final char QUESTION_MARK = '?';"
+  },
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java",
+    "search": "                        buf.writeByte(SLASH);",
+    "replace": "                        buf.writeByte(SLASH_BYTE);"
+  },
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java",
+    "search": "                        buf.writeByte(SLASH);",
+    "replace": "                        buf.writeByte(SLASH_BYTE);"
+  },
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java",
+    "search": "            buf.writeByte(SLASH);",
+    "replace": "            buf.writeByte(SLASH_BYTE);"
+  }
+]
+```

@@ -1,0 +1,101 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+index 93aeb97e76..52631f1e24 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+@@ -343,26 +343,21 @@ public class ByteSelectiveStreamReader
+             nullsCopy = new boolean[positionCount];
+         }
+ 
+-        int positionIndex = 0;
+-        int nextPosition = positions[positionIndex];
+-        for (int i = 0; i < outputPositionCount; i++) {
+-            if (outputPositions[i] < nextPosition) {
+-                continue;
++        int readIndex = 0;
++        for (int writeIndex = 0; writeIndex < positionCount; writeIndex++) {
++            int position = positions[writeIndex];
++
++            while (outputPositions[readIndex] < position) {
++                readIndex++;
+             }
+ 
+-            assert outputPositions[i] == nextPosition;
++            assert outputPositions[readIndex] == position;
+ 
+-            valuesCopy[positionIndex] = this.values[i];
++            valuesCopy[writeIndex] = this.values[readIndex];
+             if (nullsCopy != null) {
+-                nullsCopy[positionIndex] = this.nulls[i];
+-            }
+-
+-            positionIndex++;
+-            if (positionIndex >= positionCount) {
+-                break;
++                nullsCopy[writeIndex] = this.nulls[readIndex];
+             }
+-
+-            nextPosition = positions[positionIndex];
++            readIndex++;
+         }
+ 
+         return new ByteArrayBlock(positionCount, Optional.ofNullable(nullsCopy), valuesCopy);
+@@ -401,26 +396,23 @@ public class ByteSelectiveStreamReader
+ 
+     private void compactValues(int[] positions, int positionCount, boolean compactNulls)
+     {
+-        int positionIndex = 0;
+-        int nextPosition = positions[positionIndex];
+-        for (int i = 0; i < outputPositionCount; i++) {
+-            if (outputPositions[i] < nextPosition) {
+-                continue;
++        int readIndex = 0;
++        for (int writeIndex = 0; writeIndex < positionCount; writeIndex++) {
++            int position = positions[writeIndex];
++
++            while (outputPositions[readIndex] < position) {
++                readIndex++;
+             }
+ 
+-            assert outputPositions[i] == nextPosition;
++            assert outputPositions[readIndex] == position;
+ 
+-            values[positionIndex] = values[i];
++            values[writeIndex] = values[readIndex];
+             if (compactNulls) {
+-                nulls[positionIndex] = nulls[i];
++                nulls[writeIndex] = nulls[readIndex];
+             }
+-            outputPositions[positionIndex] = nextPosition;
++            outputPositions[writeIndex] = position;
+ 
+-            positionIndex++;
+-            if (positionIndex >= positionCount) {
+-                break;
+-            }
+-            nextPosition = positions[positionIndex];
++            readIndex++;
+         }
+ 
+         outputPositionCount = positionCount;
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java
+index 720023399d..382049332d 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ReaderUtils.java
+@@ -117,12 +117,11 @@ final class ReaderUtils
+ 
+     public static void convertLengthVectorToOffsetVector(int[] vector)
+     {
+-        int currentLength = vector[0];
+-        vector[0] = 0;
+-        for (int i = 1; i < vector.length; i++) {
+-            int nextLength = vector[i];
+-            vector[i] = vector[i - 1] + currentLength;
+-            currentLength = nextLength;
++        long offset = 0;
++        for (int i = 0; i < vector.length; i++) {
++            long length = vector[i];
++            vector[i] = (int) offset;
++            offset += length;
+         }
+     }
+ }

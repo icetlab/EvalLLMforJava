@@ -1,0 +1,27 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java
+index 79b56c6971..f842083070 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/SliceDirectSelectiveStreamReader.java
+@@ -710,7 +710,21 @@ public class SliceDirectSelectiveStreamReader
+ 
+     private boolean useBatchMode(int positionCount, int totalPositionCount)
+     {
+-        return true;
++        // If there is no LENGTH stream or we need to enforce char truncation, do not batch
++        if (lengthStream == null || maxCodePointCount >= 0) {
++            return false;
++        }
++
++        double inputFilterRate = (double) (totalPositionCount - positionCount) / totalPositionCount;
++        if (filter == null) {
++            // No filter: batch when skipping <=50% of rows
++            return inputFilterRate >= 0.0 && inputFilterRate <= 0.5;
++        }
++        else {
++            // With filter: batch except when skip rate is around 10%
++            return (inputFilterRate >= 0.0 && inputFilterRate <= 0.05)
++                    || (inputFilterRate >= 0.15 && inputFilterRate <= 0.5);
++        }
+         // maxCodePointCount < 0 means it's unbounded varchar VARCHAR.
+         // If the types are VARCHAR(N) or CHAR(N), the length of the string need to be calculated and truncated.
+ //        if (lengthStream == null || maxCodePointCount >= 0) {

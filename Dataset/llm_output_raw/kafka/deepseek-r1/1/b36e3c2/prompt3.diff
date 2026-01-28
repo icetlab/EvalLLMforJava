@@ -1,0 +1,30 @@
+diff --git a/core/src/main/scala/kafka/log/LogValidator.scala b/core/src/main/scala/kafka/log/LogValidator.scala
+index 48b9f57d9a..666e5e5acf 100644
+--- a/core/src/main/scala/kafka/log/LogValidator.scala
++++ b/core/src/main/scala/kafka/log/LogValidator.scala
+@@ -234,16 +234,22 @@ private[log] object LogValidator extends Logging {
+ 
+     val firstBatch = getFirstBatchAndMaybeValidateNoMoreBatches(records, NoCompressionCodec)
+ 
+-    for (batch <- records.batches.asScala) {
++    val batchIter = records.batches.iterator()
++    while (batchIter.hasNext) {
++      val batch = batchIter.next()
+       validateBatch(topicPartition, firstBatch, batch, origin, toMagicValue, brokerTopicStats)
+ 
+-      val recordErrors = new ArrayBuffer[ApiRecordError](0)
+-      for ((record, batchIndex) <- batch.asScala.view.zipWithIndex) {
++      val recordErrors = new ArrayBuffer[ApiRecordError]
++      val recordIter = batch.iterator()
++      var batchIndex = 0
++      while (recordIter.hasNext && recordErrors.isEmpty) {
++        val record = recordIter.next()
+         validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,
+           timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)
+         // we fail the batch if any record fails, so we stop appending if any record fails
+         if (recordErrors.isEmpty)
+           builder.appendWithOffset(offsetCounter.getAndIncrement(), record)
++        batchIndex += 1
+       }
+ 
+       processRecordErrors(recordErrors)

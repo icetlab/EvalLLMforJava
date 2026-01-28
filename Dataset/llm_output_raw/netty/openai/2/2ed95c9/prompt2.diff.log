@@ -1,0 +1,16 @@
+I’ve added a simple one-entry cache to `getIndex` so repeated lookups of the same header name avoid the full map lookup, which should reduce overhead in hot paths without changing external behavior.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "private static final int MAX_SAME_NAME_FIELD_INDEX = maxSameNameFieldIndex();",
+    "replace": "private static final int MAX_SAME_NAME_FIELD_INDEX = maxSameNameFieldIndex();\n\n    // simple cache of last lookup to speed up repeated name lookups\n    private static volatile CharSequence lastName;\n    private static volatile int lastIndex;"
+  },
+  {
+    "filepath": "../netty/codec-http2/src/main/java/io/netty/handler/codec/http2/HpackStaticTable.java",
+    "search": "static int getIndex(CharSequence name) {\n        Integer index = STATIC_INDEX_BY_NAME.get(name);\n        if (index == null) {\n            return NOT_FOUND;\n        }\n        return index;\n    }",
+    "replace": "static int getIndex(CharSequence name) {\n        // check cache first\n        if (name == lastName || (lastName != null && lastName.equals(name))) {\n            return lastIndex;\n        }\n        Integer index = STATIC_INDEX_BY_NAME.get(name);\n        if (index == null) {\n            lastName = name;\n            lastIndex = NOT_FOUND;\n            return NOT_FOUND;\n        }\n        int idx = index;\n        lastName = name;\n        lastIndex = idx;\n        return idx;\n    }"
+  }
+]
+```

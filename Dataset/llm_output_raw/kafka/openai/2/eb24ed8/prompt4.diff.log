@@ -1,0 +1,16 @@
+The following changes wrap the Zstd JNI streams with Java buffered streams to batch up reads and writes, reducing JNI context switches and large per-stream internal buffer allocations.
+
+```json
+[
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {\n            try {\n                return (OutputStream) ZstdConstructors.OUTPUT.invoke(buffer);\n            } catch (Throwable e) {\n                throw new KafkaException(e);\n            }\n        }",
+    "replace": "public OutputStream wrapForOutput(ByteBufferOutputStream buffer, byte messageVersion) {\n            try {\n                OutputStream zstdOut = (OutputStream) ZstdConstructors.OUTPUT.invoke(buffer);\n                // Buffer uncompressed data to reduce JNI calls\n                return new BufferedOutputStream(zstdOut, 16 * 1024);\n            } catch (Throwable e) {\n                throw new KafkaException(e);\n            }\n        }"
+  },
+  {
+    "filepath": "../kafka/clients/src/main/java/org/apache/kafka/common/record/CompressionType.java",
+    "search": "public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {\n            try {\n                return (InputStream) ZstdConstructors.INPUT.invoke(new ByteBufferInputStream(buffer));\n            } catch (Throwable e) {\n                throw new KafkaException(e);\n            }\n        }",
+    "replace": "public InputStream wrapForInput(ByteBuffer buffer, byte messageVersion, BufferSupplier decompressionBufferSupplier) {\n            try {\n                InputStream zstdIn = (InputStream) ZstdConstructors.INPUT.invoke(new ByteBufferInputStream(buffer));\n                // Buffer decompressed data to reduce JNI calls\n                return new BufferedInputStream(zstdIn, 16 * 1024);\n            } catch (Throwable e) {\n                throw new KafkaException(e);\n            }\n        }"
+  }
+]
+```

@@ -1,0 +1,44 @@
+diff --git a/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java b/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java
+index c586b38f12..5dd39809c2 100644
+--- a/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java
++++ b/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapToMapCast.java
+@@ -215,23 +215,29 @@ public final class MapToMapCast
+     {
+         checkState(toMapType.getTypeParameters().size() == 2, "Expect two type parameters for toMapType");
+         Type toKeyType = toMapType.getTypeParameters().get(0);
++        
++        BlockBuilder mapBlockBuilder = toMapType.createBlockBuilder(null, 1);
++        BlockBuilder blockBuilder = mapBlockBuilder.beginBlockEntry();
++        
++        // Create a temporary single-position block builder for duplicate checking
++        BlockBuilder singleKeyBlockBuilder = toKeyType.createBlockBuilder(null, 1);
+         TypedSet typedSet = new TypedSet(toKeyType, fromMap.getPositionCount() / 2, "map-to-map cast");
+-        BlockBuilder keyBlockBuilder = toKeyType.createBlockBuilder(null, fromMap.getPositionCount() / 2);
++        
+         for (int i = 0; i < fromMap.getPositionCount(); i += 2) {
++            // Build the key in a single-position block for duplicate checking
++            singleKeyBlockBuilder = singleKeyBlockBuilder.newBlockBuilderLike(null, 1);
+             try {
+-                keyProcessFunction.invokeExact(fromMap, i, properties, keyBlockBuilder);
++                keyProcessFunction.invokeExact(fromMap, i, properties, singleKeyBlockBuilder);
+             }
+             catch (Throwable t) {
+                 throw internalError(t);
+             }
+-        }
+-        Block keyBlock = keyBlockBuilder.build();
+-
+-        BlockBuilder mapBlockBuilder = toMapType.createBlockBuilder(null, 1);
+-        BlockBuilder blockBuilder = mapBlockBuilder.beginBlockEntry();
+-        for (int i = 0; i < fromMap.getPositionCount(); i += 2) {
+-            if (typedSet.add(keyBlock, i / 2)) {
+-                toKeyType.appendTo(keyBlock, i / 2, blockBuilder);
++            Block singleKeyBlock = singleKeyBlockBuilder.build();
++            
++            if (typedSet.add(singleKeyBlock, 0)) {
++                // Write the key to the final block
++                toKeyType.appendTo(singleKeyBlock, 0, blockBuilder);
++                
+                 if (fromMap.isNull(i + 1)) {
+                     blockBuilder.appendNull();
+                     continue;

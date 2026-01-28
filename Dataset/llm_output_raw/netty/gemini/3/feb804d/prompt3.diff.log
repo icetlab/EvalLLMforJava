@@ -1,0 +1,29 @@
+My overall improvement strategy focuses on optimizing the scheduling and cancellation of tasks in `AbstractScheduledEventExecutor`. The key improvements are:
+
+1.  **Avoiding unnecessary work for cancelled tasks**: When a task is scheduled from outside the event loop and cancelled shortly after, the current implementation still enqueues a command to add it to the scheduled task queue, and another to remove it. I'll add a check to prevent adding an already-cancelled task to the queue, which saves both an add and a remove operation on the priority queue. This primarily benefits scenarios with high rates of task scheduling and cancellation from external threads.
+
+2.  **Reducing allocation during bulk cancellation**: The `cancelScheduledTasks` method currently converts the entire scheduled task queue to an array before iterating over it to cancel tasks. For a large number of scheduled tasks, this creates significant garbage collection pressure. I will change this to use an iterator, avoiding the intermediate array allocation.
+
+3.  **Improving code style and micro-optimizations**: I will replace an anonymous inner class implementation of a `Comparator` with a more concise and potentially more efficient method reference.
+
+These changes will improve performance by reducing object allocations and eliminating redundant operations, especially under high load.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "    private static final Comparator<ScheduledFutureTask<?>> SCHEDULED_FUTURE_TASK_COMPARATOR =\n            new Comparator<ScheduledFutureTask<?>>() {\n                @Override\n                public int compare(ScheduledFutureTask<?> o1, ScheduledFutureTask<?> o2) {\n                    return o1.compareTo(o2);\n                }\n            };",
+    "replace": "    private static final Comparator<ScheduledFutureTask<?>> SCHEDULED_FUTURE_TASK_COMPARATOR =\n            ScheduledFutureTask::compareTo;"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "        final ScheduledFutureTask<?>[] scheduledTasks =\n                scheduledTaskQueue.toArray(new ScheduledFutureTask<?>[0]);\n\n        for (ScheduledFutureTask<?> task: scheduledTasks) {\n            task.cancelWithoutRemove(false);\n        }",
+    "replace": "        for (ScheduledFutureTask<?> task: scheduledTaskQueue) {\n            task.cancelWithoutRemove(false);\n        }"
+  },
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java",
+    "search": "            final Runnable addToQueue = new Runnable() {\n                @Override\n                public void run() {\n                    scheduledTaskQueue().add(task.setId(nextTaskId++));\n                }\n            };",
+    "replace": "            final Runnable addToQueue = new Runnable() {\n                @Override\n                public void run() {\n                    if (!task.isCancelled()) {\n                        scheduledTaskQueue().add(task.setId(nextTaskId++));\n                    }\n                }\n            };"
+  }
+]
+```

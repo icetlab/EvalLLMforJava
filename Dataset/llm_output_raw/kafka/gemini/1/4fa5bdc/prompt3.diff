@@ -1,0 +1,73 @@
+diff --git a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+index 58860be864..b5ec51e323 100644
+--- a/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
++++ b/core/src/main/scala/kafka/security/authorizer/AclAuthorizer.scala
+@@ -58,6 +58,9 @@ object AclAuthorizer {
+   // If set to true when no acls are found for a resource, authorizer allows access to everyone. Defaults to false.
+   val AllowEveryoneIfNoAclIsFoundProp = "allow.everyone.if.no.acl.found"
+ 
++  private val DescribeAllowOps = Set[AclOperation](DESCRIBE, READ, WRITE, DELETE, ALTER)
++  private val DescribeConfigsAllowOps = Set[AclOperation](DESCRIBE_CONFIGS, ALTER_CONFIGS)
++
+   case class VersionedAcls(acls: Set[AclEntry], zkVersion: Int) {
+     def exists: Boolean = zkVersion != ZkVersion.UnknownVersion
+   }
+@@ -263,6 +266,16 @@ class AclAuthorizer extends Authorizer with Logging {
+   }
+ 
+   override def acls(filter: AclBindingFilter): lang.Iterable[AclBinding] = {
++    if (filter == AclBindingFilter.ANY) {
++      val totalAcls = aclCache.valuesIterator.map(_.acls.size).sum
++      val aclBindings = new util.ArrayList[AclBinding](totalAcls)
++      aclCache.foreach { case (resource, versionedAcls) =>
++        versionedAcls.acls.foreach { acl =>
++          aclBindings.add(new AclBinding(resource, acl.ace))
++        }
++      }
++      aclBindings
++    } else {
+       val aclBindings = new util.ArrayList[AclBinding]()
+       aclCache.foreach { case (resource, versionedAcls) =>
+         versionedAcls.acls.foreach { acl =>
+@@ -273,6 +286,7 @@ class AclAuthorizer extends Authorizer with Logging {
+       }
+       aclBindings
+     }
++  }
+ 
+   override def close(): Unit = {
+     aclChangeListeners.foreach(listener => listener.close())
+@@ -312,12 +326,11 @@ class AclAuthorizer extends Authorizer with Logging {
+       // Check if there are any Allow ACLs which would allow this operation.
+       // Allowing read, write, delete, or alter implies allowing describe.
+       // See #{org.apache.kafka.common.acl.AclOperation} for more details about ACL inheritance.
+-      val allowOps = operation match {
+-        case DESCRIBE => Set[AclOperation](DESCRIBE, READ, WRITE, DELETE, ALTER)
+-        case DESCRIBE_CONFIGS => Set[AclOperation](DESCRIBE_CONFIGS, ALTER_CONFIGS)
+-        case _ => Set[AclOperation](operation)
++      operation match {
++        case DESCRIBE => AclAuthorizer.DescribeAllowOps.exists(op => matchingAclExists(op, resource, principal, host, ALLOW, acls))
++        case DESCRIBE_CONFIGS => AclAuthorizer.DescribeConfigsAllowOps.exists(op => matchingAclExists(op, resource, principal, host, ALLOW, acls))
++        case _ => matchingAclExists(operation, resource, principal, host, ALLOW, acls)
+       }
+-      allowOps.exists(operation => matchingAclExists(operation, resource, principal, host, ALLOW, acls))
+     }
+ 
+     def aclsAllowAccess = {
+@@ -352,13 +365,9 @@ class AclAuthorizer extends Authorizer with Logging {
+       .map(_.acls)
+       .getOrElse(Set.empty)
+ 
+-    val prefixed = aclCacheSnapshot
+-      .from(new ResourcePattern(resourceType, resourceName, PatternType.PREFIXED))
+-      .to(new ResourcePattern(resourceType, resourceName.take(1), PatternType.PREFIXED))
+-      .filterKeys(resource => resourceName.startsWith(resource.name))
+-      .values
+-      .flatMap { _.acls }
+-      .toSet
++    val prefixed = (1 to resourceName.length).iterator.flatMap { i =>
++      aclCacheSnapshot.get(new ResourcePattern(resourceType, resourceName.substring(0, i), PatternType.PREFIXED))
++    }.flatMap(_.acls).toSet
+ 
+     new AclSets(prefixed, wildcard, literal)
+   }

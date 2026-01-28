@@ -1,0 +1,11 @@
+The change simplifies and optimizes the slash-insertion logic by replacing multiple `lastIndexOf`, `StringBuilder` allocations, and redundant checks with a single boundary check and `substring` operations, reducing temporary objects and method calls.
+
+```json
+[
+  {
+    "filepath": "../netty/codec-http/src/main/java/io/netty/handler/codec/http/HttpRequestEncoder.java",
+    "search": "                // Correctly handle query params.\n                // See https://github.com/netty/netty/issues/2732\n                int index = uri.indexOf(QUESTION_MARK, startIndex);\n                if (index == -1) {\n                    if (uri.lastIndexOf(SLASH) <= startIndex) {\n                        uri += SLASH;\n                    }\n                } else {\n                    if (uri.lastIndexOf(SLASH, index) <= startIndex) {\n                        int len = uri.length();\n                        StringBuilder sb = new StringBuilder(len + 1);\n                        sb.append(uri, 0, index)\n                          .append(SLASH)\n                          .append(uri, index, len);\n                        uri = sb.toString();\n                    }\n                }",
+    "replace": "                // insert slash if no path after host\n                int index = uri.indexOf(QUESTION_MARK, startIndex);\n                if (uri.length() <= startIndex || uri.charAt(startIndex) != SLASH) {\n                    if (index == -1) {\n                        uri = uri + SLASH;\n                    } else {\n                        uri = uri.substring(0, index) + SLASH + uri.substring(index);\n                    }\n                }"
+  }
+]
+```

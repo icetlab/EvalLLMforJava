@@ -1,0 +1,35 @@
+## Explanation
+
+The performance issue is that the `ReplaceField` SMT uses `ArrayList.contains()` for filtering fields, which has O(N) complexity. When configured with a large numbers of include/exclude fields, this leads to poor performance. The solution is to convert the `exclude` and `include` lists to `HashSet` implementations, which provide O(1) lookup time for the filter operations.
+
+Changes:
+1. Change the type of `exclude` and `include` from `List<String>` to `Set<String>`.
+2. Update the `filter()` method to use `Set.contains()` instead of `List.contains()`.
+3. Update the configuration parsing to store the fields in `HashSet` instead of `ArrayList`.
+
+These changes maintain the same functionality while improving performance for large field lists.
+
+```json
+[
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "import java.util.Collections;\nimport java.util.HashMap;\nimport java.util.List;\nimport java.util.Map;",
+    "replace": "import java.util.Collections;\nimport java.util.HashMap;\nimport java.util.HashSet;\nimport java.util.List;\nimport java.util.Map;\nimport java.util.Set;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "    private List<String> exclude;\n    private List<String> include;\n    private Map<String, String> renames;\n    private Map<String, String> reverseRenames;",
+    "replace": "    private Set<String> exclude;\n    private Set<String> include;\n    private Map<String, String> renames;\n    private Map<String, String> reverseRenames;"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "    @Override\n    public void configure(Map<String, ?> configs) {\n        final SimpleConfig config = new SimpleConfig(CONFIG_DEF, ConfigUtils.translateDeprecatedConfigs(configs, new String[][]{\n            {ConfigName.INCLUDE, \"whitelist\"},\n            {ConfigName.EXCLUDE, \"blacklist\"},\n        }));\n\n        exclude = config.getList(ConfigName.EXCLUDE);\n        include = config.getList(ConfigName.INCLUDE);\n        renames = parseRenameMappings(config.getList(ConfigName.RENAME));\n        reverseRenames = invert(renames);\n\n        schemaUpdateCache = new SynchronizedCache<>(new LRUCache<>(16));\n    }",
+    "replace": "    @Override\n    public void configure(Map<String, ?> configs) {\n        final SimpleConfig config = new SimpleConfig(CONFIG_DEF, ConfigUtils.translateDeprecatedConfigs(configs, new String[][]{\n            {ConfigName.INCLUDE, \"whitelist\"},\n            {ConfigName.EXCLUDE, \"blacklist\"},\n        }));\n\n        exclude = new HashSet<>(config.getList(ConfigName.EXCLUDE));\n        include = new HashSet<>(config.getList(ConfigName.INCLUDE));\n        renames = parseRenameMappings(config.getList(ConfigName.RENAME));\n        reverseRenames = invert(renames);\n\n        schemaUpdateCache = new SynchronizedCache<>(new LRUCache<>(16));\n    }"
+  },
+  {
+    "filepath": "../kafka/connect/transforms/src/main/java/org/apache/kafka/connect/transforms/ReplaceField.java",
+    "search": "    boolean filter(String fieldName) {\n        return !exclude.contains(fieldName) && (include.isEmpty() || include.contains(fieldName));\n    }",
+    "replace": "    boolean filter(String fieldName) {\n        return !exclude.contains(fieldName) && (include.isEmpty() || include.contains(fieldName));\n    }"
+  }
+]
+```

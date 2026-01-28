@@ -1,0 +1,11 @@
+I’ve added a fast path in readNoFilter() to handle contiguous positions when nulls are present, reading the presence bits in bulk and then a single bulk read for non-null data, avoiding per-position skipping and branching. 
+
+```json
+[
+  {
+    "filepath": "../presto/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java",
+    "search": "if (presentStream == null && positions[positionCount - 1] == positionCount - 1) {\n            // contiguous chunk of rows, no nulls\n            dataStream.next(values, positionCount);\n            outputPositionCount = positionCount;\n            return positionCount;\n        }\n\n        int streamPosition = 0;",
+    "replace": "if (presentStream == null && positions[positionCount - 1] == positionCount - 1) {\n            // contiguous chunk of rows, no nulls\n            dataStream.next(values, positionCount);\n            outputPositionCount = positionCount;\n            return positionCount;\n        }\n        else if (presentStream != null && positions[0] == 0 && positions[positionCount - 1] == positionCount - 1) {\n            // contiguous chunk of rows with possible nulls\n            int length = positionCount;\n            int nonNullCount = 0;\n            // read nulls and count non-nulls\n            for (int i = 0; i < length; i++) {\n                if (!presentStream.nextBit()) {\n                    nulls[i] = true;\n                } else {\n                    nulls[i] = false;\n                    nonNullCount++;\n                }\n            }\n            // read non-null values in one bulk\n            if (nonNullCount > 0) {\n                byte[] tempValues = new byte[nonNullCount];\n                dataStream.next(tempValues, nonNullCount);\n                int tempIndex = 0;\n                for (int i = 0; i < length; i++) {\n                    if (!nulls[i]) {\n                        values[i] = tempValues[tempIndex++];\n                    } else {\n                        values[i] = 0;\n                    }\n                }\n            }\n            outputPositionCount = positionCount;\n            return positionCount;\n        }\n\n        int streamPosition = 0;"
+  }
+]
+```

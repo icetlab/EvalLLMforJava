@@ -1,0 +1,220 @@
+[
+    {
+        "jmhVersion" : "1.21",
+        "benchmark" : "io.netty.microbench.channel.epoll.EpollSocketChannelBenchmark.executeMulti",
+        "mode" : "thrpt",
+        "threads" : 3,
+        "forks" : 1,
+        "jvm" : "/usr/lib/jvm/java-8-openjdk-amd64/jre/bin/java",
+        "jvmArgs" : [
+            "-server",
+            "-dsa",
+            "-da",
+            "-ea:io.netty...",
+            "-XX:+HeapDumpOnOutOfMemoryError",
+            "-Dio.netty.leakDetection.level=disabled",
+            "-Xms768m",
+            "-Xmx768m",
+            "-XX:MaxDirectMemorySize=768m",
+            "-Djmh.executor=CUSTOM",
+            "-Djmh.executor.class=io.netty.microbench.util.AbstractMicrobenchmark$HarnessExecutor"
+        ],
+        "jdkVersion" : "1.8.0_462",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.462-b08",
+        "warmupIterations" : 5,
+        "warmupTime" : "10 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 15,
+        "measurementTime" : "10 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 139164.32236683168,
+            "scoreError" : 13123.572728900668,
+            "scoreConfidence" : [
+                126040.749637931,
+                152287.89509573235
+            ],
+            "scorePercentiles" : {
+                "0.0" : 125303.31009771914,
+                "50.0" : 135460.06411968626,
+                "90.0" : 160069.07149354904,
+                "95.0" : 163140.95887437096,
+                "99.0" : 163140.95887437096,
+                "99.9" : 163140.95887437096,
+                "99.99" : 163140.95887437096,
+                "99.999" : 163140.95887437096,
+                "99.9999" : 163140.95887437096,
+                "100.0" : 163140.95887437096
+            },
+            "scoreUnit" : "ops/s",
+            "rawData" : [
+                [
+                    125350.97302072431,
+                    139982.3136651717,
+                    131629.1948283239,
+                    148477.34867458025,
+                    132279.5453883564,
+                    135460.06411968626,
+                    158021.1465730011,
+                    153564.30463916674,
+                    131182.82224157808,
+                    163140.95887437096,
+                    128121.77483080295,
+                    140965.89082662135,
+                    146619.54330634803,
+                    127365.64441602418,
+                    125303.31009771914
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.21",
+        "benchmark" : "io.netty.microbench.channel.epoll.EpollSocketChannelBenchmark.executeSingle",
+        "mode" : "thrpt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/usr/lib/jvm/java-8-openjdk-amd64/jre/bin/java",
+        "jvmArgs" : [
+            "-server",
+            "-dsa",
+            "-da",
+            "-ea:io.netty...",
+            "-XX:+HeapDumpOnOutOfMemoryError",
+            "-Dio.netty.leakDetection.level=disabled",
+            "-Xms768m",
+            "-Xmx768m",
+            "-XX:MaxDirectMemorySize=768m",
+            "-Djmh.executor=CUSTOM",
+            "-Djmh.executor.class=io.netty.microbench.util.AbstractMicrobenchmark$HarnessExecutor"
+        ],
+        "jdkVersion" : "1.8.0_462",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.462-b08",
+        "warmupIterations" : 5,
+        "warmupTime" : "10 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 15,
+        "measurementTime" : "10 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 63532.55238397338,
+            "scoreError" : 12518.869384300926,
+            "scoreConfidence" : [
+                51013.682999672455,
+                76051.4217682743
+            ],
+            "scorePercentiles" : {
+                "0.0" : 43097.94537587482,
+                "50.0" : 61289.37828509864,
+                "90.0" : 82882.3134414694,
+                "95.0" : 89346.37119255308,
+                "99.0" : 89346.37119255308,
+                "99.9" : 89346.37119255308,
+                "99.99" : 89346.37119255308,
+                "99.999" : 89346.37119255308,
+                "99.9999" : 89346.37119255308,
+                "100.0" : 89346.37119255308
+            },
+            "scoreUnit" : "ops/s",
+            "rawData" : [
+                [
+                    58547.41326022364,
+                    65058.31176848803,
+                    61289.37828509864,
+                    68724.24139175922,
+                    89346.37119255308,
+                    56652.243619484114,
+                    43097.94537587482,
+                    78572.94160741361,
+                    52113.48155777214,
+                    68983.75394300168,
+                    57345.130132748585,
+                    53215.59859694004,
+                    75848.53093142305,
+                    57486.515438146205,
+                    66706.4286586737
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.21",
+        "benchmark" : "io.netty.microbench.channel.epoll.EpollSocketChannelBenchmark.pingPong",
+        "mode" : "thrpt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/usr/lib/jvm/java-8-openjdk-amd64/jre/bin/java",
+        "jvmArgs" : [
+            "-server",
+            "-dsa",
+            "-da",
+            "-ea:io.netty...",
+            "-XX:+HeapDumpOnOutOfMemoryError",
+            "-Dio.netty.leakDetection.level=disabled",
+            "-Xms768m",
+            "-Xmx768m",
+            "-XX:MaxDirectMemorySize=768m",
+            "-Djmh.executor=CUSTOM",
+            "-Djmh.executor.class=io.netty.microbench.util.AbstractMicrobenchmark$HarnessExecutor"
+        ],
+        "jdkVersion" : "1.8.0_462",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.462-b08",
+        "warmupIterations" : 5,
+        "warmupTime" : "10 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 15,
+        "measurementTime" : "10 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 18204.934312420723,
+            "scoreError" : 497.22732561475533,
+            "scoreConfidence" : [
+                17707.706986805966,
+                18702.16163803548
+            ],
+            "scorePercentiles" : {
+                "0.0" : 17303.892046094035,
+                "50.0" : 18273.146442026067,
+                "90.0" : 18790.31499770217,
+                "95.0" : 18798.533366564192,
+                "99.0" : 18798.533366564192,
+                "99.9" : 18798.533366564192,
+                "99.99" : 18798.533366564192,
+                "99.999" : 18798.533366564192,
+                "99.9999" : 18798.533366564192,
+                "100.0" : 18798.533366564192
+            },
+            "scoreUnit" : "ops/s",
+            "rawData" : [
+                [
+                    18759.76153965564,
+                    18571.280149784016,
+                    18580.67403180319,
+                    18798.533366564192,
+                    18784.83608512749,
+                    18080.16487009612,
+                    17750.407795864547,
+                    18273.146442026067,
+                    17736.340186413905,
+                    18450.444623497267,
+                    17851.783669056287,
+                    17303.892046094035,
+                    18204.408375844374,
+                    17649.946443332825,
+                    18278.395061150895
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    }
+]
+
+

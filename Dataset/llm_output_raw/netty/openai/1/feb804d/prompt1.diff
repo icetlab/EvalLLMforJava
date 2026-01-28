@@ -1,0 +1,30 @@
+diff --git a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+index c132aa5b20..1cb7660bc6 100644
+--- a/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
++++ b/common/src/main/java/io/netty/util/concurrent/AbstractScheduledEventExecutor.java
+@@ -98,7 +98,7 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
+     protected void cancelScheduledTasks() {
+         assert inEventLoop();
+         PriorityQueue<ScheduledFutureTask<?>> scheduledTaskQueue = this.scheduledTaskQueue;
+-        if (isNullOrEmpty(scheduledTaskQueue)) {
++        if (scheduledTaskQueue == null || scheduledTaskQueue.isEmpty()) {
+             return;
+         }
+ 
+diff --git a/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java b/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
+index 5ffe824119..815874a7fd 100644
+--- a/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
++++ b/common/src/main/java/io/netty/util/concurrent/ScheduledFutureTask.java
+@@ -33,9 +33,9 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
+     }
+ 
+     static long deadlineNanos(long delay) {
+-        long deadlineNanos = nanoTime() + delay;
+-        // Guard against overflow
+-        return deadlineNanos < 0 ? Long.MAX_VALUE : deadlineNanos;
++        long currentNanoTime = nanoTime();
++        long maxDeadline = Long.MAX_VALUE - currentNanoTime;
++        return delay > maxDeadline ? Long.MAX_VALUE : currentNanoTime + delay;
+     }
+ 
+     static long initialNanoTime() {

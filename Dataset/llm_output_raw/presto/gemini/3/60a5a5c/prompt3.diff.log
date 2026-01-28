@@ -1,0 +1,22 @@
+My overall improvement strategy focuses on reducing object allocations and unnecessary data copying, which are common sources of performance degradation in data-intensive Java applications.
+
+First, in `PartitionedOutputOperator`, I will replace the use of a Java Stream with a more direct loop-and-builder pattern for serializing pages. While streams are expressive, they can introduce overhead. For performance-critical code like this, a traditional loop using an `ArrayList` or a Guava `ImmutableList.Builder` is often more efficient, especially as it allows for pre-sizing the collection to avoid reallocations.
+
+Second, in `PagesSerde`, I will address an inefficiency in the `serialize` method. The current implementation may perform an unnecessary copy of the data slice after compression. Specifically, if a page is successfully compressed (but not encrypted), its data is already in a right-sized buffer. The subsequent `Slices.copyOf(slice)` call is redundant in this case and results in extra CPU cycles and memory allocation. I will introduce a flag to track whether compression occurred and use it to conditionally skip this unnecessary copy.
+
+These changes are designed to enhance performance by minimizing memory churn and redundant processing, while fully preserving the existing functionality and correctness, as validated by the provided unit tests.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/execution/buffer/PagesSerde.java",
+    "search": "        if (compressor.isPresent()) {\n            ByteBuffer compressionBuffer = ByteBuffer.allocate(compressor.get().maxCompressedLength(uncompressedSize));\n            compressor.get().compress(slice.toByteBuffer(), compressionBuffer);\n            compressionBuffer.flip();\n            if ((((double) compressionBuffer.remaining()) / uncompressedSize) <= MINIMUM_COMPRESSION_RATIO) {\n                slice = Slices.wrappedBuffer(compressionBuffer);\n                markers = COMPRESSED.set(markers);\n            }\n        }\n\n        if (spillCipher.isPresent()) {\n            slice = Slices.wrappedBuffer(spillCipher.get().encrypt(slice.toByteBuffer()));\n            markers = ENCRYPTED.set(markers);\n        }\n        else {\n            //  Encryption disabled, slice data is likely much smaller than its backing buffer\n            //  either because of compression or dynamic sizing of the initial output slice\n            slice = Slices.copyOf(slice);\n        }",
+    "replace": "        boolean compressed = false;\n        if (compressor.isPresent()) {\n            ByteBuffer compressionBuffer = ByteBuffer.allocate(compressor.get().maxCompressedLength(uncompressedSize));\n            compressor.get().compress(slice.toByteBuffer(), compressionBuffer);\n            compressionBuffer.flip();\n            if ((((double) compressionBuffer.remaining()) / uncompressedSize) <= MINIMUM_COMPRESSION_RATIO) {\n                slice = Slices.wrappedBuffer(compressionBuffer);\n                markers = COMPRESSED.set(markers);\n                compressed = true;\n            }\n        }\n\n        if (spillCipher.isPresent()) {\n            slice = Slices.wrappedBuffer(spillCipher.get().encrypt(slice.toByteBuffer()));\n            markers = ENCRYPTED.set(markers);\n        }\n        else if (!compressed) {\n            //  Encryption disabled, slice data is likely much smaller than its backing buffer\n            //  either because of compression or dynamic sizing of the initial output slice\n            slice = Slices.copyOf(slice);\n        }"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/PartitionedOutputOperator.java",
+    "search": "                    List<SerializedPage> serializedPages = splitPage(pagePartition, DEFAULT_MAX_PAGE_SIZE_IN_BYTES).stream()\n                            .map(serde::serialize)\n                            .collect(toImmutableList());",
+    "replace": "                    List<Page> pages = splitPage(pagePartition, DEFAULT_MAX_PAGE_SIZE_IN_BYTES);\n                    java.util.List<SerializedPage> serializedPages = new java.util.ArrayList<>(pages.size());\n                    for (Page page : pages) {\n                        serializedPages.add(serde.serialize(page));\n                    }"
+  }
+]
+```

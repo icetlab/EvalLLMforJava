@@ -1,0 +1,74 @@
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+index da887a9ba3..630d55510f 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/reader/ByteSelectiveStreamReader.java
+@@ -258,6 +258,21 @@ public class ByteSelectiveStreamReader
+     {
+         // filter == null implies outputRequired == true
+         int streamPosition = 0;
++        
++        // Fast path: contiguous positions with no nulls
++        if (presentStream == null && positionCount > 0 && isContiguous(positions, positionCount)) {
++            if (positions[0] > streamPosition) {
++                skip(positions[0] - streamPosition);
++                streamPosition = positions[0];
++            }
++            // Read all values in bulk using the optimized method
++            dataStream.next(values, 0, positionCount);
++            streamPosition += positionCount;
++            outputPositionCount = positionCount;
++            return streamPosition;
++        }
++        
++        // Original code for non-contiguous positions or with nulls
+         for (int i = 0; i < positionCount; i++) {
+             int position = positions[i];
+             if (position > streamPosition) {
+@@ -279,6 +294,18 @@ public class ByteSelectiveStreamReader
+         outputPositionCount = positionCount;
+         return streamPosition;
+     }
++    
++    private boolean isContiguous(int[] positions, int positionCount) {
++        if (positionCount <= 1) {
++            return true;
++        }
++        for (int i = 1; i < positionCount; i++) {
++            if (positions[i] != positions[i - 1] + 1) {
++                return false;
++            }
++        }
++        return true;
++    }
+ 
+     private void skip(int items)
+             throws IOException
+diff --git a/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java b/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java
+index 21edc123eb..f9a771bfb2 100644
+--- a/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java
++++ b/presto-orc/src/main/java/com/facebook/presto/orc/stream/ByteInputStream.java
+@@ -118,6 +118,24 @@ public class ByteInputStream
+         }
+         return buffer[offset++];
+     }
++    
++    public void next(byte[] values, int offset, int length)
++            throws IOException
++    {
++        int remaining = length;
++        int destOffset = offset;
++        
++        while (remaining > 0) {
++            if (this.offset == this.length) {
++                readNextBlock();
++            }
++            int toCopy = Math.min(remaining, this.length - this.offset);
++            System.arraycopy(buffer, this.offset, values, destOffset, toCopy);
++            this.offset += toCopy;
++            destOffset += toCopy;
++            remaining -= toCopy;
++        }
++    }
+ 
+     public void nextVector(Type type, long items, BlockBuilder builder)
+             throws IOException

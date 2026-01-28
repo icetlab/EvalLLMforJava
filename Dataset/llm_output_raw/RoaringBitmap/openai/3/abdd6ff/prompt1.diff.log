@@ -1,0 +1,26 @@
+I’ve replaced stream-based loops with explicit loops to reduce boxing and lambda overhead in sum and toPairList methods, and improved batch sizing logic in parallelExec for more balanced workloads.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "int batchSize = foundSet.getCardinality() / parallelism;\n    // fix when batchSize < parallelism\n    batchSize = Math.max(batchSize, parallelism);\n\n    // todo RoaringBitmap's batchIterator return max 2^16\n    batchSize = Math.min(batchSize, 65536);",
+    "replace": "int total = foundSet.getCardinality();\n    // compute balanced batch size (ceil division)\n    int batchSize = (total + parallelism - 1) / parallelism;\n    if (batchSize < 1) {\n      batchSize = 1;\n    }\n    // cap to RoaringBitmap batchIterator max\n    batchSize = Math.min(batchSize, 65536);"
+  },
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "Long sum = IntStream.range(0, this.bitCount())\n        .mapToLong(x -> (long) (1 << x) * ImmutableRoaringBitmap.andCardinality(this.bA[x], foundSet))\n        .sum();",
+    "replace": "long sum = 0L;\n    for (int x = 0; x < this.bitCount(); x++) {\n      sum += ((long)1 << x) * ImmutableRoaringBitmap.andCardinality(this.bA[x], foundSet);\n    }"
+  },
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "public List<Pair<Integer, Integer>> toPairList() {\n    List<Pair<Integer, Integer>> pairList = new ArrayList<>();\n    this.ebM.forEach((IntConsumer) cid -> {\n      pairList.add(Pair.newPair(cid, this.getValue(cid).getKey()));\n    });\n    return pairList;\n  }",
+    "replace": "public List<Pair<Integer, Integer>> toPairList() {\n    List<Pair<Integer, Integer>> pairList = new ArrayList<>();\n    IntIterator it = this.ebM.getIntIterator();\n    while (it.hasNext()) {\n      int cid = it.next();\n      pairList.add(Pair.newPair(cid, this.getValue(cid).getKey()));\n    }\n    return pairList;\n  }"
+  },
+  {
+    "filepath": "../RoaringBitmap/bsi/src/main/java/org/roaringbitmap/bsi/buffer/BitSliceIndexBase.java",
+    "search": "public List<Pair<Integer, Integer>> toPairList(ImmutableRoaringBitmap foundSet) {\n    List<Pair<Integer, Integer>> pairList = new ArrayList<>();\n    ImmutableRoaringBitmap bitmap = ImmutableRoaringBitmap.and(this.ebM, foundSet);\n    bitmap.forEach((IntConsumer) cid -> {\n      pairList.add(Pair.newPair(cid, this.getValue(cid).getKey()));\n    });\n    return pairList;\n  }",
+    "replace": "public List<Pair<Integer, Integer>> toPairList(ImmutableRoaringBitmap foundSet) {\n    List<Pair<Integer, Integer>> pairList = new ArrayList<>();\n    ImmutableRoaringBitmap bitmap = ImmutableRoaringBitmap.and(this.ebM, foundSet);\n    IntIterator it = bitmap.getIntIterator();\n    while (it.hasNext()) {\n      int cid = it.next();\n      pairList.add(Pair.newPair(cid, this.getValue(cid).getKey()));\n    }\n    return pairList;\n  }"
+  }
+]
+```

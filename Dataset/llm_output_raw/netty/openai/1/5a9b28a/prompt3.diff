@@ -1,0 +1,24 @@
+diff --git a/common/src/main/java/io/netty/util/Recycler.java b/common/src/main/java/io/netty/util/Recycler.java
+index a17a9906c4..4031786f69 100644
+--- a/common/src/main/java/io/netty/util/Recycler.java
++++ b/common/src/main/java/io/netty/util/Recycler.java
+@@ -333,13 +333,16 @@ public abstract class Recycler<T> {
+         }
+ 
+         void release(DefaultHandle<T> handle, boolean guarded) {
+-            if (guarded) {
++            Thread o = this.owner;
++            // Use unguarded (lazySet) for same-thread to cut down on full atomics
++            if (o != null && Thread.currentThread() == o) {
++                handle.unguardedToAvailable();
++            } else if (guarded) {
+                 handle.toAvailable();
+             } else {
+                 handle.unguardedToAvailable();
+             }
+-            Thread owner = this.owner;
+-            if (owner != null && Thread.currentThread() == owner && batch.size() < chunkSize) {
++            if (o != null && Thread.currentThread() == o && batch.size() < chunkSize) {
+                 accept(handle);
+             } else if (owner != null && isTerminated(owner)) {
+                 this.owner = null;

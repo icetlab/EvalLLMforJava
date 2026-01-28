@@ -1,0 +1,11 @@
+I’ve added a fast path in `stIntersection` for the case where exactly one input is an envelope: it first checks envelope–geometry bounding conditions to return early for disjoint or fully contained cases, avoiding the expensive general intersection. 
+
+```json
+[
+  {
+    "filepath": "../presto/presto-geospatial/src/main/java/com/facebook/presto/plugin/geospatial/GeoFunctions.java",
+    "search": "}\n\n        OGCGeometry leftGeometry = EsriGeometrySerde.deserialize(left);",
+    "replace": "}\n\n        // Cheap envelope-geometry intersection\n        boolean leftEnv = deserializeType(left) == GeometrySerializationType.ENVELOPE;\n        boolean rightEnv = deserializeType(right) == GeometrySerializationType.ENVELOPE;\n        if (leftEnv ^ rightEnv) {\n            Slice envelopeSlice = leftEnv ? left : right;\n            Slice geometrySlice = leftEnv ? right : left;\n            Envelope envelope = deserializeEnvelope(envelopeSlice);\n            if (envelope.isEmpty()) {\n                return EMPTY_POLYGON;\n            }\n            Envelope geometryEnvelope = deserializeEnvelope(geometrySlice);\n            if (!envelope.intersect(geometryEnvelope)) {\n                return EMPTY_POLYGON;\n            }\n            // if envelope fully contains geometry, return it directly\n            if (envelope.getXMin() <= geometryEnvelope.getXMin() &&\n                envelope.getXMax() >= geometryEnvelope.getXMax() &&\n                envelope.getYMin() <= geometryEnvelope.getYMin() &&\n                envelope.getYMax() >= geometryEnvelope.getYMax()) {\n                return geometrySlice;\n            }\n        }\n\n        OGCGeometry leftGeometry = EsriGeometrySerde.deserialize(left);"
+  }
+]
+```

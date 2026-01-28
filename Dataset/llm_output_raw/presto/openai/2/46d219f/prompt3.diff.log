@@ -1,0 +1,16 @@
+I’ve reduced the memory and hashing overhead by using the actual number of map entries (positionCount/2) when sizing the TypedSet and the InterleavedBlockBuilder, rather than the raw position counts.
+
+```json
+[
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapConcatFunction.java",
+    "search": "TypedSet typedSet = new TypedSet(keyType, rightMap.getPositionCount());",
+    "replace": "TypedSet typedSet = new TypedSet(keyType, rightMap.getPositionCount() / 2);"
+  },
+  {
+    "filepath": "../presto/presto-main/src/main/java/com/facebook/presto/operator/scalar/MapConcatFunction.java",
+    "search": "BlockBuilder blockBuilder = new InterleavedBlockBuilder(ImmutableList.of(keyType, valueType), new BlockBuilderStatus(), leftMap.getPositionCount() + rightMap.getPositionCount());",
+    "replace": "BlockBuilder blockBuilder = new InterleavedBlockBuilder(ImmutableList.of(keyType, valueType), new BlockBuilderStatus(), (leftMap.getPositionCount() + rightMap.getPositionCount()) / 2);"
+  }
+]
+```

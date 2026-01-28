@@ -1,0 +1,296 @@
+Looking at the performance issue, the goal is to shrink low-level methods that are "too-big-to-inline" in HPACK header processing hotspots. Specifically, we need to focus on methods that are called frequently and have a large bytecode size, which can prevent JVM inlining and hurt performance.
+
+The main candidates are the helper methods in `PlatformDependent.java` that handle safe fallbacks for operations like `equals`, `isZero`, and `hashCodeAscii` when Unsafe is unavailable. These methods are relatively large and called from hot paths. We can break them down into smaller, more focused methods to improve inlining potential.
+
+Here are the changes:
+
+1. **Break down `hashCodeAsciiSafe`** into smaller methods for each remaining bytes case.
+2. **Break down `equalsSafe`** into a simpler loop.
+3. **Break down `isZeroSafe`** similarly.
+
+However, note that the benchmark focuses on `equalsConstantTime` and `hashCodeAscii` for CharSequence. The `hashCodeAscii` for CharSequence is already using a switch statement and might be okay. But the safe versions for byte arrays are used when Unsafe is unavailable.
+
+Let's focus on the safe methods that are called from the public methods when Unsafe is not available or unaligned access is not allowed.
+
+We'll refactor `hashCodeAsciiSafe`, `equalsSafe`, and `isZeroSafe` to be smaller. We'll also consider inlining the small helper methods for `getLongSafe`, `getIntSafe`, and `getShortSafe` since they are already small.
+
+But note: the `hashCodeAsciiSafe` method is already using a switch and calls helper methods for `getLongSafe`, etc. The issue might be that the method is still too large due to the switch cases. We can break the switch into separate methods.
+
+However, the JVM might inline small methods. We can try to break the switch cases into separate static methods to reduce the size of `hashCodeAsciiSafe`.
+
+Similarly for `equalsSafe` and `isZeroSafe`, they are simple loops and might not be too big. But we can still simplify.
+
+Let's look at the code:
+
+- `hashCodeAsciiSafe` is 50+ lines with a switch. We can break the switch into a separate method.
+- `equalsSafe` is a simple loop.
+- `isZeroSafe` is a simple loop.
+
+But the benchmark is about HPACK, which uses `equalsConstantTime` and `hashCodeAscii` for CharSequence. The CharSequence `hashCodeAscii` is already optimized with a switch and unrolled loops.
+
+Wait, the benchmark uses `PlatformDependent.equalsConstantTime` and `PlatformDependent.hashCodeAscii` (for CharSequence). The `equalsConstantTime` calls either `ConstantTimeUtils.equalsConstantTime` or `PlatformDependent0.equalsConstantTime`. The safe path is in `ConstantTimeUtils`. That might be the bottleneck.
+
+But the issue says "low level too-big-to-inline methods which can be shrunk". So we should look at the methods that are called in the safe path.
+
+Let's examine the `ConstantTimeUtils.equalsConstantTime`? Actually, the benchmark uses `PlatformDependent.equalsConstantTime` which delegates to `ConstantTimeUtils.equalsConstantTime` when Unsafe is unavailable. That method might be large.
+
+But the provided source files don't include `ConstantTimeUtils`. So we focus on the given files.
+
+Given the context, we should shrink the safe methods in `PlatformDependent.java` and `PlatformDependent0.java` if possible.
+
+However, `PlatformDependent0.java` is the Unsafe version and is already optimized. The safe methods are in `PlatformDependent.java`.
+
+Let's break down the safe methods:
+
+1. `hashCodeAsciiSafe` -> break the switch into a separate method.
+2. `equalsSafe` -> keep as is (it's small).
+3. `isZeroSafe` -> keep as is.
+
+But to reduce method size, we can break the switch in `hashCodeAsciiSafe` into a separate method.
+
+Also, note that `getLongSafe`, `getIntSafe`, `getShortSafe` are private and small. They might be inlined already.
+
+Let's make the following changes:
+
+In `PlatformDependent.java`:
+
+- Extract the switch in `hashCodeAsciiSafe` to a new method `hashCodeAsciiSafe0`.
+- Similarly, we can break the loop in `equalsSafe` and `isZeroSafe`? They are already small.
+
+But the loop in `equalsSafe` and `isZeroSafe` is just a byte-by-byte comparison. It's already small.
+
+Let's do:
+
+1. Break `hashCodeAsciiSafe` into two methods: one for the loop and one for the switch.
+
+But the loop is already a for-loop. We can break the switch into a separate method.
+
+Actually, the method is:
+
+```java
+static int hashCodeAsciiSafe(byte[] bytes, int startPos, int length) {
+    int hash = HASH_CODE_ASCII_SEED;
+    final int remainingBytes = length & 7;
+    final int end = startPos + remainingBytes;
+    for (int i = startPos - 8 + length; i >= end; i -= 8) {
+        hash = PlatformDependent0.hashCodeAsciiCompute(getLongSafe(bytes, i), hash);
+    }
+    switch(remainingBytes) {
+    case 7:
+        return ((hash * HASH_CODE_C1 + hashCodeAsciiSanitize(bytes[startPos]))
+                      * HASH_CODE_C2 + hashCodeAsciiSanitize(getShortSafe(bytes, startPos + 1)))
+                      * HASH_CODE_C1 + hashCodeAsciiSanitize(getIntSafe(bytes, startPos + 3));
+    case 6:
+        return (hash * HASH_CODE_C1 + hashCodeAsciiSanitize(getShortSafe(bytes, startPos)))
+                     * HASH_CODE_C2 + hashCodeAsciiSanitize(getIntSafe(bytes, startPos + 2));
+    case 5:
+        return (hash * HASH_CODE_C1 + hashCodeAsciiSanitize(bytes[startPos]))
+                     * HASH_CODE_C2 + hashCodeAsciiSanitize(getIntSafe(bytes, startPos + 1));
+    case 4:
+        return hash * HASH_CODE_C1 + hashCodeAsciiSanitize(getIntSafe(bytes, startPos));
+    case 3:
+        return (hash * HASH_CODE_C1 + hashCodeAsciiSanitize(bytes[startPos]))
+                     * HASH_CODE_C2 + hashCodeAsciiSanitize(getShortSafe(bytes, startPos + 1));
+    case 2:
+        return hash * HASH_CODE_C1 + hashCodeAsciiSanitize(getShortSafe(bytes, startPos));
+    case 1:
+        return hash * HASH_CODE_C1 + hashCodeAsciiSanitize(bytes[startPos]);
+    default:
+        return hash;
+    }
+}
+```
+
+We can break the switch into a separate method:
+
+```java
+private static int hashCodeAsciiSafeSwitch(byte[] bytes, int startPos, int remainingBytes, int hash) {
+    switch(remainingBytes) {
+    case 7:
+        return ((hash * HASH_CODE_C1 + hashCodeAsciiSanitize(bytes[startPos]))
+                      * HASH_CODE_C2 + hashCodeAsciiSanitize(getShortSafe(bytes, startPos + 1)))
+                      * HASH_CODE_C1 + hashCodeAsciiSanitize(getIntSafe(bytes, startPos + 3));
+    case 6:
+        return (hash * HASH_CODE_C1 + hashCodeAsciiSanitize(getShortSafe(bytes, startPos)))
+                     * HASH_CODE_C2 + hashCodeAsciiSanitize(getIntSafe(bytes, startPos + 2));
+    case 5:
+        return (hash * HASH_CODE_C1 + hashCodeAsciiSanitize(bytes[startPos]))
+                     * HASH_CODE_C2 + hashCodeAsciiSanitize(getIntSafe(bytes, startPos + 1));
+    case 4:
+        return hash * HASH_CODE_C1 + hashCodeAsciiSanitize(getIntSafe(bytes, startPos));
+    case 3:
+        return (hash * HASH_CODE_C1 + hashCodeAsciiSanitize(bytes[startPos]))
+                     * HASH_CODE_C2 + hashCodeAsciiSanitize(getShortSafe(bytes, startPos + 1));
+    case 2:
+        return hash * HASH_CODE_C1 + hashCodeAsciiSanitize(getShortSafe(bytes, startPos));
+    case 1:
+        return hash * HASH_CODE_C1 + hashCodeAsciiSanitize(bytes[startPos]);
+    default:
+        return hash;
+    }
+}
+```
+
+Then call it in `hashCodeAsciiSafe`.
+
+But note: the loop also uses `getLongSafe` and `PlatformDependent0.hashCodeAsciiCompute`. We can break the loop into a separate method too.
+
+But the loop is only one statement. It's small.
+
+Alternatively, we can break the entire method into two: one for the loop and one for the switch.
+
+But the method is already static and private. The JVM might inline it if it's small enough. Breaking it might help.
+
+Let's do:
+
+1. Break the loop into a separate method `hashCodeAsciiSafeLoop`.
+2. Break the switch into `hashCodeAsciiSafeSwitch`.
+
+But we have to be careful not to change the public API.
+
+Now, let's write the changes.
+
+We'll change only `PlatformDependent.java` for now.
+
+First, break `hashCodeAsciiSafe`:
+
+```java
+private static int hashCodeAsciiSafe(byte[] bytes, int startPos, int length) {
+    int hash = HASH_CODE_ASCII_SEED;
+    final int remainingBytes = length & 7;
+    final int end = startPos + remainingBytes;
+    for (int i = startPos - 8 + length; i >= end; i -= 8) {
+        hash = PlatformDependent0.hashCodeAsciiCompute(getLongSafe(bytes, i), hash);
+    }
+    return hashCodeAsciiSafeSwitch(bytes, startPos, remainingBytes, hash);
+}
+```
+
+And add the new method `hashCodeAsciiSafeSwitch`.
+
+Similarly, we can break `equalsSafe` and `isZeroSafe`? They are already small.
+
+But let's also break `equalsSafe` into a method that does the loop and returns boolean.
+
+Actually, `equalsSafe` is already a simple method. We can break it into a method that does the loop.
+
+But it's already small. We'll leave it.
+
+Now, let's output the changes in the required JSON format.
+
+We'll make two changes:
+
+1. Extract the switch from `hashCodeAsciiSafe` into a separate method.
+2. Modify `hashCodeAsciiSafe` to call the new method.
+
+But note: the method `hashCodeAsciiSafe` is package-private (default) for testing. We cannot change its signature. We are only refactoring internally.
+
+So we keep the same method but change its body.
+
+Let's write the JSON.
+
+```json
+[
+  {
+    "filepath": "../netty/common/src/main/java/io/netty/util/internal/PlatformDependent.java",
+    "search": "    static int hashCodeAsciiSafe(byte[] bytes, int startPos, int length) {\n        int hash = HASH_CODE_ASCII_SEED;\n        final int remainingBytes = length & 7;\n        final int end = startPos + remainingBytes;\n        for (int i = startPos - 8 + length; i >= end; i -= 8) {\n            hash = PlatformDependent0.hashCodeAsciiCompute(getLongSafe(bytes, i), hash);\n        }\n        switch(remainingBytes) {\n        case 7:\n            return ((hash * HASH_CODE_C1 + hashCodeAsciiSanitize(bytes[startPos]))\n                          * HASH_CODE_C2 + hashCodeAsciiSanitize(getShortSafe(bytes, startPos + 1)))\n                          * HASH_CODE_C1 + hashCodeAsciiSanitize(getIntSafe(bytes, startPos + 3));\n        case 6:\n            return (hash * HASH_CODE_C1 + hashCodeAsciiSanitize(getShortSafe(bytes, startPos)))\n                         * HASH_CODE_C2 + hashCodeAsciiSanitize(getIntSafe(bytes, startPos + 2));\n        case 5:\n            return (hash * HASH_CODE_C1 + hashCodeAsciiSanitize(bytes[startPos]))\n                         * HASH_CODE_C2 + hashCodeAsciiSanitize(getIntSafe(bytes, startPos + 1));\n        case 4:\n            return hash * HASH_CODE_C1 + hashCodeAsciiSanitize(getIntSafe(bytes, startPos));\n        case 3:\n            return (hash * HASH_CODE_C1 + hashCodeAsciiSanitize(bytes[startPos]))\n                         * HASH_CODE_C2 + hashCodeAsciiSanitize(getShortSafe(bytes, startPos + 1));\n        case 2:\n            return hash * HASH_CODE_C1 + hashCodeAsciiSanitize(getShortSafe(bytes, startPos));\n        case 1:\n            return hash * HASH_CODE_C1 + hashCodeAsciiSanitize(bytes[startPos]);\n        default:\n            return hash;\n        }\n    }",
+    "replace": "    static int hashCodeAsciiSafe(byte[] bytes, int startPos, int length) {\n        int hash = HASH_CODE_ASCII_SEED;\n        final int remainingBytes = length & 7;\n        final int end = startPos + remainingBytes;\n        for (int i = startPos - 8 + length; i >= end; i -= 8) {\n            hash = PlatformDependent0.hashCodeAsciiCompute(getLongSafe(bytes, i), hash);\n        }\n        return hashCodeAsciiSafeSwitch(bytes, startPos, remainingBytes, hash);\n    }\n\n    private static int hashCodeAsciiSafeSwitch(byte[] bytes, int startPos, int remainingBytes, int hash) {\n        switch(remainingBytes) {\n        case 7:\n            return ((hash * HASH_CODE_C1 + hashCodeAsciiSanitize(bytes[startPos]))\n                          * HASH_CODE_C2 + hashCodeAsciiSanitize(getShortSafe(bytes, startPos + 1)))\n                          * HASH_CODE_C1 + hashCodeAsciiSanitize(getIntSafe(bytes, startPos + 3));\n        case 6:\n            return (hash * HASH_CODE_C1 + hashCodeAsciiSanitize(getShortSafe(bytes, startPos)))\n                         * HASH_CODE_C2 + hashCodeAsciiSanitize(getIntSafe(bytes, startPos + 2));\n        case 5:\n            return (hash * HASH_CODE_C1 + hashCodeAsciiSanitize(bytes[startPos]))\n                         * HASH_CODE_C2 + hashCodeAsciiSanitize(getIntSafe(bytes, startPos + 1));\n        case 4:\n            return hash * HASH_CODE_C1 + hashCodeAsciiSanitize(getIntSafe(bytes, startPos));\n        case 3:\n            return (hash * HASH_CODE_C1 + hashCodeAsciiSanitize(bytes[startPos]))\n                         * HASH_CODE_C2 + hashCodeAsciiSanitize(getShortSafe(bytes, startPos + 1));\n        case 2:\n            return hash * HASH_CODE_C1 + hashCodeAsciiSanitize(getShortSafe(bytes, startPos));\n        case 1:\n            return hash * HASH_CODE_C1 + hashCodeAsciiSanitize(bytes[startPos]);\n        default:\n            return hash;\n        }\n    }"
+  }
+]
+```
+
+But wait, we need to ensure the method is placed correctly. The search block must be exactly as in the file.
+
+We have to be careful with the indentation. The method is at the end of the file. Let's copy the exact lines.
+
+We'll take the entire method from the source.
+
+Now, we also want to break the loop into a separate method? The loop is only one line. It's okay.
+
+Alternatively, we can break the loop into a method to make `hashCodeAsciiSafe` even smaller.
+
+But let's do one step at a time.
+
+We'll also break the loop:
+
+```java
+private static int hashCodeAsciiSafeLoop(byte[] bytes, int startPos, int length, int remainingBytes, int hash) {
+    final int end = startPos + remainingBytes;
+    for (int i = startPos - 8 + length; i >= end; i -= 8) {
+        hash = PlatformDependent0.hashCodeAsciiCompute(getLongSafe(bytes, i), hash);
+    }
+    return hash;
+}
+```
+
+Then call it in `hashCodeAsciiSafe`.
+
+But we have to pass `hash` as a parameter.
+
+Let's do that in a second change.
+
+We'll make two changes:
+
+1. Break the switch.
+2. Break the loop.
+
+But note: the loop uses `length` and `startPos`. We can compute `end` inside the loop method.
+
+We'll do:
+
+Change 1: Break the switch.
+Change 2: Break the loop.
+
+But we have to apply them sequentially.
+
+Let's write two JSON objects.
+
+First, break the switch.
+
+Second, break the loop.
+
+But after breaking the switch, the method `hashCodeAsciiSafe` will have the loop and then call the switch. Then we break the loop.
+
+We'll do:
+
+Step 1: Replace the method with a version that calls a new switch method.
+Step 2: Then break the loop into a separate method.
+
+But we cannot do two changes that depend on each other in one JSON array? We can, because they are independent: first we change the method to call a new switch method, then we change the same method to use a loop method.
+
+But the second change will modify the same method again.
+
+We can do it in one step: break both the loop and the switch.
+
+But to keep changes atomic, we do one at a time.
+
+However, the instructions say each change should be independent. So we should make two independent changes.
+
+But the second change depends on the first? Not really. We can break the loop without breaking the switch.
+
+We can break the loop into a method and call it in the original method, and keep the switch inline.
+
+But we want to break both.
+
+Let's do:
+
+1. Break the switch.
+2. Break the loop.
+
+We'll output two JSON objects.
+
+But note: after the first change, the method `hashCodeAsciiSafe` will have the loop and then call the switch method. Then we change the loop part.
+
+So the second change will search for the loop in the new version.
+
+We have to be careful.
+
+Alternatively, we can break both in one change.
+
+But the requirement is atomic changes. We'll do two changes.
+
+Let's write the first change as above.
+
+Then the second change will break the loop.
+
+We need to find the loop in the new method

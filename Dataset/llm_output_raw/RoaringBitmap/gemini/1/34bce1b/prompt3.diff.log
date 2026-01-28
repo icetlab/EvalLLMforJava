@@ -1,0 +1,11 @@
+The overall improvement is to replace the `shiftLeftFromSpecifiedPosition` method's implementation, which relies on object allocation (`byte[]`) and `System.arraycopy`, with a more performant version using bitwise operations. The new implementation avoids creating temporary objects, thus reducing memory allocation and garbage collection overhead. It achieves the same byte-shifting logic by manipulating the integer directly with bit masks and shifts. Additionally, explicit boundary checks are added to preserve the original method's failure behavior for invalid arguments, ensuring functional equivalence.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/IntegerUtil.java",
+    "search": "  public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    byte[] initialVal = toBDBytes(v);\n    System.arraycopy(initialVal, pos + 1, initialVal, pos, count);\n    return fromBDBytes(initialVal);\n  }",
+    "replace": "  public static int shiftLeftFromSpecifiedPosition(int v, int pos, int count) {\n    if (count == 0) {\n      return v;\n    }\n    // Replicate System.arraycopy bounds checks to preserve original behavior for invalid arguments.\n    if (pos < 0 || count < 0 || pos + 1 + count > 4) {\n      throw new ArrayIndexOutOfBoundsException();\n    }\n\n    // Mask for bytes that are preserved (high and low parts).\n    int preservedMask = (pos == 0 ? 0 : (-1 << (32 - pos * 8))) | (-1 >>> ((pos + count) * 8));\n\n    // The new middle part is constructed from v's bytes shifted left by one byte,\n    // masked to the area of replaced bytes.\n    int middlePart = (v << 8) & ~preservedMask;\n\n    return (v & preservedMask) | middlePart;\n  }"
+  }
+]
+```

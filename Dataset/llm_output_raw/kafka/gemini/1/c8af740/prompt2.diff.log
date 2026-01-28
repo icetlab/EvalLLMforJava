@@ -1,0 +1,13 @@
+The current implementation of `removeExpiredProducers` uses Java streams to identify and collect expired producer IDs and verification state entries into lists, and then iterates over these lists to remove the entries from the respective maps. This approach is inefficient due to the creation of intermediate collections and multiple iterations over the data.
+
+To improve performance, I will refactor this method to use `Map.entrySet().removeIf()`. This allows for in-place removal of entries that satisfy the expiration predicate, using a single iteration and avoiding the overhead of creating temporary lists. This change simplifies the code and makes it more efficient by reducing memory allocations and processing time. The logic for determining expiration remains unchanged, ensuring functional correctness.
+
+```json
+[
+  {
+    "filepath": "../kafka/storage/src/main/java/org/apache/kafka/storage/internals/log/ProducerStateManager.java",
+    "search": "    public void removeExpiredProducers(long currentTimeMs) {\n        List<Long> keys = producers.entrySet().stream()\n                .filter(entry -> isProducerExpired(currentTimeMs, entry.getValue()))\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        removeProducerIds(keys);\n\n        List<Long> verificationKeys = verificationStates.entrySet().stream()\n                .filter(entry -> currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs())\n                .map(Map.Entry::getKey)\n                .collect(Collectors.toList());\n        verificationKeys.forEach(verificationStates::remove);\n    }",
+    "replace": "    public void removeExpiredProducers(long currentTimeMs) {\n        producers.entrySet().removeIf(entry -> isProducerExpired(currentTimeMs, entry.getValue()));\n        producerIdCount = producers.size();\n\n        verificationStates.entrySet().removeIf(entry ->\n            currentTimeMs - entry.getValue().timestamp() >= producerStateManagerConfig.producerIdExpirationMs());\n    }"
+  }
+]
+```
