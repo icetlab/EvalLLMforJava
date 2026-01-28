@@ -4,6 +4,7 @@ import re
 import glob
 from collections import defaultdict
 import csv
+import argparse
 
 def extract_score_data(file_path):
     """
@@ -87,17 +88,60 @@ def parse_version_from_filename(file_path):
         return {"model": "original", "prompt": "", "trial": ""}
     if "/dev/" in file_path:
         return {"model": "developer", "prompt": "", "trial": ""}
-    
-    # Regex to capture model-trial (e.g., gpt-1) and prompt number
-    # Example path: ../llm_output/kafka/gpt-1/4fa5bdc/prompt1_AclAuthorizerBenchmark.json
-    match = re.search(r'/(gpt|gemini)-(\d+)/.*?/(prompt\d+)_', file_path)
-    if match:
-        model = match.group(1)
-        trial = match.group(2)
-        prompt = match.group(3)
-        return {"model": model, "prompt": prompt, "trial": trial}
 
-    return {"model": "unknown", "prompt": "", "trial": ""}
+    # Normalize path separators
+    norm_path = file_path.replace("\\", "/")
+
+    # Extract prompt from filename (e.g., .../prompt1_FooBenchmark.json)
+    prompt_match = re.search(r'(prompt\d+)_', norm_path)
+    prompt = prompt_match.group(1) if prompt_match else ""
+
+    # Handle LLM outputs under llm_output_raw (and keep compatibility with old llm_output)
+    parts = norm_path.split("/")
+    base_idx = -1
+    for marker in ["llm_output_raw", "llm_output"]:
+        if marker in parts:
+            base_idx = parts.index(marker)
+            break
+
+    if base_idx != -1:
+        # Expected layouts:
+        #   .../llm_output_raw/<project>/<model-trial>/<hash>/promptX_*.json     (old)
+        #   .../llm_output_raw/<project>/<model>/<trial>/<hash>/promptX_*.json  (new)
+        # e.g., Dataset/llm_output_raw/kafka/gemini-1/4fa5bdc/prompt1_*.json
+        #       Dataset/llm_output_raw/kafka/gemini/2/4fa5bdc/prompt1_*.json
+        #       Dataset/llm_output_raw/kafka/openai/2/9bb2f78/prompt4_*.json
+        if len(parts) > base_idx + 3:
+            model_folder = parts[base_idx + 2]
+            # Old format: gpt-1, gemini-2
+            m_old = re.match(r'^(gpt|gemini)-(\d+)$', model_folder)
+            if m_old:
+                base_model = m_old.group(1)
+                trial = m_old.group(2)
+                model = base_model
+            else:
+                # New format: openai/<trial>/..., gemini/<trial>/..., deepseek-r1/<trial>/...
+                base_model = model_folder  # e.g., "openai", "gemini", "deepseek-r1", "deepseek-v3"
+                # Trial is next path segment if numeric
+                trial = ""
+                if len(parts) > base_idx + 3 and parts[base_idx + 3].isdigit():
+                    trial = parts[base_idx + 3]
+
+                # Map folder names to canonical model ids used in analysis
+                if base_model == "openai":
+                    # OpenAI o4-mini is represented as 'gpt' in downstream analysis
+                    model = "gpt"
+                else:
+                    model = base_model
+
+                # DeepSeek models have a single trial (treat as 1)
+                if model.startswith("deepseek-"):
+                    trial = "1"
+
+            return {"model": model, "prompt": prompt, "trial": trial or ""}
+
+    # Fallback
+    return {"model": "unknown", "prompt": prompt, "trial": ""}
 
 
 def get_hash_from_filename(file_path):
@@ -168,12 +212,30 @@ def print_results(results, output_path="benchmark_summary.csv"):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Extract JMH JSON benchmark results and build a normalized summary CSV.")
+    parser.add_argument("--project", default="RoaringBitmap", help="Project name (e.g., kafka, netty, presto, RoaringBitmap)")
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Directory to write summary CSV into (default: Analysis/preprocessing/summary_csv_raw)",
+    )
+    args = parser.parse_args()
 
-    project_name = "kafka"
+    project_name = args.project
 
-    org_files = glob.glob(f"../../Dataset/baseline_raw/{project_name}/org/*.json", recursive=True)
-    dev_files = glob.glob(f"./../Dataset/baseline_raw/{project_name}/dev/*.json", recursive=True)
-    llm_files = glob.glob(f"./../Dataset/llm_output_raw/{project_name}/**/*.json", recursive=True)
+    # Make paths robust regardless of current working directory.
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
+
+    dataset_dir = os.path.join(repo_root, "Dataset")
+    org_glob = os.path.join(dataset_dir, "baseline_raw", project_name, "org", "*.json")
+    dev_glob = os.path.join(dataset_dir, "baseline_raw", project_name, "dev", "*.json")
+    # All LLM benchmark outputs are now stored under llm_output_raw
+    llm_raw_glob = os.path.join(dataset_dir, "llm_output_raw", project_name, "**", "*.json")
+
+    org_files = glob.glob(org_glob, recursive=True)
+    dev_files = glob.glob(dev_glob, recursive=True)
+    llm_files = glob.glob(llm_raw_glob, recursive=True)
 
     files = org_files + dev_files + llm_files
     all_results = defaultdict(list)
@@ -198,6 +260,12 @@ if __name__ == "__main__":
                 "params": params
             })
 
-    output_filename = f"{project_name}_benchmark_summary.csv"
+    if args.output_dir is None:
+        output_dir = os.path.join(script_dir, "summary_csv_raw")
+    else:
+        output_dir = args.output_dir
+
+    os.makedirs(output_dir, exist_ok=True)
+    output_filename = os.path.join(output_dir, f"{project_name}_benchmark_summary.csv")
     print_results(all_results, output_path=output_filename)
     print(f"Benchmark summary has been saved to {output_filename}")

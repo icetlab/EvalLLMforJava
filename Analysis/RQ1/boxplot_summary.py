@@ -28,34 +28,43 @@ def create_plots_from_csv_file(input_path, output_dir="comparison_plots"):
     prompt_map = {
         "prompt1": "NoHint",
         "prompt2": "Problem",
-        "prompt3": "Benchmark",
+        "prompt3": "Bench.",
         "prompt4": "Both"
     }
     df_long['Prompt'] = df_long['prompt'].map(prompt_map)
 
     def rename_model(model_name):
         if 'gpt' in model_name.lower():
-            return 'OpenAI o4 mini'
+            return 'o4 mini'
         if 'gemini' in model_name.lower():
-            return 'Gemini 2.5 Pro'
+            return 'Gemini'
+        if 'deepseek-r1' in model_name.lower() or model_name == 'deepseek-r1':
+            return 'DS-R1'
+        if 'deepseek-v3' in model_name.lower() or model_name == 'deepseek-v3':
+            return 'DS-V3'
         return model_name
         
     df_long['Model'] = df_long['model'].apply(rename_model)
 
     # --- 2. Create Plots ---
+    # Increase figure width to accommodate more models
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     sns.set_style("whitegrid")
 
     # Define Custom Color Palettes
-    palette_plot1 = ["#9E9EE0", "#FFF2CC"]  # Vibrant Coral and Teal
-    palette_plot2 = ["#9E9EE0", "#FFF2CC", "#D3D3D3", "#90EE90"]  # Turquoise, Gold, GreenYellow, HotPink
+    # For plot1 (by Prompt, hue=Model): 4 models - Original palette
+    palette_plot1 = ["#9E9EE0", "#FFF2CC", "#D3D3D3", "#90EE90"]  # OpenAI, Gemini, DeepSeek V3, DeepSeek R1
+    # For plot2 (by Model, hue=Prompt): 4 prompts - Gentle pastel palette
+    # Order: NoHint, Bench, Problem, Both
+    palette_plot2 = ["#F5A5A5", "#E6D3C8", "#B3D9FF", "#D9B3E6"]  # NoHint (soft pastel red), Bench (soft pastel beige), Problem (soft pastel blue), Both (soft pastel purple)
 
     # --- Plot 1: Prompt-Centric View ---
     ax1 = axes[0]
-    prompt_order = ["NoHint", "Problem", "Benchmark", "Both"]
+    prompt_order = ["NoHint", "Bench.", "Problem", "Both"]
+    model_order_plot1 = ['o4 mini', 'Gemini', 'DS-V3', 'DS-R1']
     
     sns.boxplot(data=df_long, x='Prompt', y='final_score', hue='Model', order=prompt_order, 
-                showfliers=True, ax=ax1, palette=palette_plot1, width=0.5, linewidth=2)
+                hue_order=model_order_plot1, showfliers=False, ax=ax1, palette=palette_plot1, width=0.5, linewidth=2)
     
     ax1.axhline(y=1.0, color='r', linestyle='--', linewidth=2, label='Baseline')
     # Add developer median line
@@ -69,13 +78,64 @@ def create_plots_from_csv_file(input_path, output_dir="comparison_plots"):
     ax1.tick_params(axis='x', labelsize=19)
     ax1.tick_params(axis='y', labelsize=19)
     ax1.legend(loc='upper left', fontsize=13, frameon=False)
+    
+    # --- Print Box Plot Statistics for Plot 1 (by Prompt) ---
+    print("\n" + "=" * 80)
+    print("Box Plot Statistics - By Prompt Strategy")
+    print("=" * 80)
+    
+    def calculate_box_stats(group):
+        """Calculate box plot statistics for a group"""
+        if len(group) == 0:
+            return None
+        scores_series = pd.Series(group['final_score'].values)
+        q1 = scores_series.quantile(0.25)
+        median = scores_series.median()
+        q3 = scores_series.quantile(0.75)
+        iqr = q3 - q1
+        lower_fence = q1 - 1.5 * iqr
+        upper_fence = q3 + 1.5 * iqr
+        whisker_lower = scores_series[scores_series >= lower_fence].min()
+        whisker_upper = scores_series[scores_series <= upper_fence].max()
+        return {
+            'count': len(scores_series),
+            'min': float(scores_series.min()),
+            'q1': float(q1),
+            'median': float(median),
+            'q3': float(q3),
+            'max': float(scores_series.max()),
+            'mean': float(scores_series.mean()),
+            'iqr': float(iqr),
+            'whisker_lower': float(whisker_lower),
+            'whisker_upper': float(whisker_upper)
+        }
+    
+    for prompt in prompt_order:
+        print(f"\n--- Prompt: {prompt} ---")
+        prompt_data = df_long[df_long['Prompt'] == prompt]
+        for model in model_order_plot1:
+            model_data = prompt_data[prompt_data['Model'] == model]
+            if len(model_data) > 0:
+                stats = calculate_box_stats(model_data)
+                if stats:
+                    print(f"  {model}:")
+                    print(f"    Count: {stats['count']}")
+                    print(f"    Min: {stats['min']:.4f}")
+                    print(f"    Q1 (25%): {stats['q1']:.4f}")
+                    print(f"    Median (50%): {stats['median']:.4f}")
+                    print(f"    Q3 (75%): {stats['q3']:.4f}")
+                    print(f"    Max: {stats['max']:.4f}")
+                    print(f"    Mean: {stats['mean']:.4f}")
+                    print(f"    IQR: {stats['iqr']:.4f}")
+                    print(f"    Whisker Lower: {stats['whisker_lower']:.4f}")
+                    print(f"    Whisker Upper: {stats['whisker_upper']:.4f}")
 
     # --- Plot 2: Model-Centric View ---
     ax2 = axes[1]
-    model_order = ['OpenAI o4 mini', 'Gemini 2.5 Pro']
+    model_order = ['o4 mini', 'Gemini', 'DS-V3', 'DS-R1']
     
     sns.boxplot(data=df_long, x='Model', y='final_score', hue='Prompt', order=model_order, 
-                hue_order=prompt_order, showfliers=True, ax=ax2, palette=palette_plot2, width=0.5, linewidth=2)
+                hue_order=prompt_order, showfliers=False, ax=ax2, palette=palette_plot2, width=0.5, linewidth=2)
 
     ax2.axhline(y=1.0, color='r', linestyle='--', linewidth=2, label='Baseline')
     # Add developer median line
@@ -88,7 +148,32 @@ def create_plots_from_csv_file(input_path, output_dir="comparison_plots"):
     ax2.set_ylabel('')
     ax2.tick_params(axis='x', labelsize=19)
     ax2.tick_params(axis='y', labelsize=19)
-    ax2.legend(loc='upper left', fontsize=13, frameon=False)
+    ax2.legend(loc='upper right', fontsize=13, frameon=False)
+    
+    # --- Print Box Plot Statistics for Plot 2 (by Model) ---
+    print("\n" + "=" * 80)
+    print("Box Plot Statistics - By Model")
+    print("=" * 80)
+    
+    for model in model_order:
+        print(f"\n--- Model: {model} ---")
+        model_data = df_long[df_long['Model'] == model]
+        for prompt in prompt_order:
+            prompt_data = model_data[model_data['Prompt'] == prompt]
+            if len(prompt_data) > 0:
+                stats = calculate_box_stats(prompt_data)
+                if stats:
+                    print(f"  {prompt}:")
+                    print(f"    Count: {stats['count']}")
+                    print(f"    Min: {stats['min']:.4f}")
+                    print(f"    Q1 (25%): {stats['q1']:.4f}")
+                    print(f"    Median (50%): {stats['median']:.4f}")
+                    print(f"    Q3 (75%): {stats['q3']:.4f}")
+                    print(f"    Max: {stats['max']:.4f}")
+                    print(f"    Mean: {stats['mean']:.4f}")
+                    print(f"    IQR: {stats['iqr']:.4f}")
+                    print(f"    Whisker Lower: {stats['whisker_lower']:.4f}")
+                    print(f"    Whisker Upper: {stats['whisker_upper']:.4f}")
 
     # --- Final Touches ---
     plt.tight_layout()
@@ -108,7 +193,7 @@ def create_plots_from_csv_file(input_path, output_dir="comparison_plots"):
 
 if __name__ == "__main__":
     # Define the path to your input CSV file
-    input_csv_file = '../preprocessing/representative_benchmark_scores.csv'
+    input_csv_file = '../preprocessing/summary_tables/representative_benchmark_scores.csv'
 
     # Define the directory where the output plot will be saved
     output_plot_directory = "."

@@ -87,6 +87,31 @@ def calculate_representative_benchmark_scores(data, output_path):
     output_cols = ['project', 'hash_value', 'model', 'prompt', 'trial', 'final_score']
     final_scores_df = final_scores_df.reindex(columns=output_cols)
     
+    # Fill NaN values for prompt and trial to ensure proper grouping (especially for developer entries)
+    final_scores_df['prompt'] = final_scores_df['prompt'].fillna('')
+    final_scores_df['trial'] = final_scores_df['trial'].fillna('')
+    
+    # --- 5. Remove duplicates: If there are multiple entries for the same (project, hash_value, model, prompt, trial),
+    # take the mean of their final_scores to avoid counting duplicates from multiple benchmark runs
+    print(f"\nBefore deduplication: {len(final_scores_df)} rows")
+    
+    # Check how many developer entries we have before deduplication
+    dev_count_before = len(final_scores_df[final_scores_df['model'] == 'developer'])
+    print(f"Developer entries before deduplication: {dev_count_before}")
+    
+    duplicates_before = final_scores_df.duplicated(subset=['project', 'hash_value', 'model', 'prompt', 'trial'], keep=False).sum()
+    if duplicates_before > 0:
+        print(f"Found {duplicates_before} duplicate entries (same project/hash/model/prompt/trial)")
+        # Group by the key columns and take the mean of final_score for duplicates with same trial
+        final_scores_df = final_scores_df.groupby(['project', 'hash_value', 'model', 'prompt', 'trial'], as_index=False)['final_score'].mean()
+        print(f"After deduplication (taking mean): {len(final_scores_df)} rows")
+        
+        # Check how many developer entries we have after deduplication
+        dev_count_after = len(final_scores_df[final_scores_df['model'] == 'developer'])
+        print(f"Developer entries after deduplication: {dev_count_after}")
+    else:
+        print("No duplicates found")
+    
     # Sort for readability
     final_scores_df.sort_values(by=['project', 'hash_value', 'model', 'prompt', 'trial'], inplace=True)
 
