@@ -70,7 +70,7 @@ print(f"Selected {len(selected)} median entries")
 # Organize by project
 projects = sorted(set(p for p, _, _, _ in selected.keys()))
 # Use all four models
-models = ['gpt', 'gemini', 'deepseek-v3', 'deepseek-r1']
+models = ['gemini', 'deepseek-r1']
 prompts = ['prompt1', 'prompt3', 'prompt2', 'prompt4']  # Order: NH, Bench, Prob, Both
 
 # Generate LaTeX

@@ -1,0 +1,69 @@
+\begin{table}[h!]
+\centering
+\scriptsize
+\caption{$pss$ scores by task, grouped by project and sorted by magnitude of the developer improvement.}
+\label{tab:hash_performance_summary}
+\resizebox{0.9\textwidth}{!}{%
+\begin{tabular}{@{}c l l c c c c c c c c c c c c c c c c @{}}
+\toprule
+& \multicolumn{2}{c}{\textbf{ }} & \multicolumn{4}{c}{\textbf{o4-mini}} & \multicolumn{4}{c}{\textbf{Gemini 2.5 Pro}} & \multicolumn{4}{c}{\textbf{DeepSeek V3}} & \multicolumn{4}{c}{\textbf{DeepSeek R1}} \\
+\cmidrule(lr){4-7} \cmidrule(lr){8-11} \cmidrule(lr){12-15} \cmidrule(lr){16-19}
+\textbf{Project} & \textbf{Hash} & \textbf{Dev} & NH & Bench & Prob & Both & NH & Bench & Prob & Both & NH & Bench & Prob & Both & NH & Bench & Prob & Both \\
+\midrule
+\multirow{6}{*}{\rotatebox[origin=c]{90}{\textbf{RoaringBitmap}}} & \href{https://github.com/RoaringBitmap/RoaringBitmap/commit/34bce1b}{34bce1b} & 4.99 & 4.07 & 4.01 & 3.88 & 3.62 & 1.72 & 4.28 & \cellcolor{lightgreen}{5.16} & 2.39 \\
+ & \href{https://github.com/RoaringBitmap/RoaringBitmap/commit/53ba593}{53ba593} & 2.14 & 1.30 & 1.34 & 1.00 & 1.97 & 1.00 & 1.34 & \cellcolor{lightred}{0.93} & \cellcolor{lightred}{0.93} \\
+ & \href{https://github.com/RoaringBitmap/RoaringBitmap/commit/b5b4af6}{b5b4af6} & 1.94 & 1.93 & 1.32 & 1.14 & 1.92 & \cellcolor{lightred}{0.99} & - & 1.00 & \cellcolor{lightred}{0.89} \\
+ & \href{https://github.com/RoaringBitmap/RoaringBitmap/commit/abdd6ff}{abdd6ff} & 1.14 & \cellcolor{lightred}{0.99} & 1.07 & 1.01 & 1.06 & \cellcolor{lightgreen}{1.17} & 1.06 & \cellcolor{lightred}{0.99} & 1.07 \\
+ & \href{https://github.com/RoaringBitmap/RoaringBitmap/commit/1de6825}{1de6825} & 1.11 & 1.11 & 1.11 & 1.11 & 1.11 & - & 1.11 & - & - \\
+ & Avg & 1.92 & 1.62 & 1.53 & 1.38 & 1.74 & 1.15 & 1.47 & 1.36 & 1.16 \\
+\midrule
+\multirow{11}{*}{\rotatebox[origin=c]{90}{\textbf{Kafka}}} & \href{https://github.com/apache/kafka/commit/b25c96a}{b25c96a} & 1401.47 & \cellcolor{lightgreen}{1898.94} & \cellcolor{lightgreen}{1905.23} & \cellcolor{lightgreen}{1879.81} & \cellcolor{lightgreen}{1901.39} & - & \cellcolor{lightgreen}{1932.48} & \cellcolor{lightgreen}{1946.33} & \cellcolor{lightgreen}{1918.99} \\
+ & \href{https://github.com/apache/kafka/commit/9bb2f78}{9bb2f78} & 654.58 & 647.27 & 549.45 & 654.25 & 632.65 & 534.61 & \cellcolor{lightgreen}{663.91} & \cellcolor{lightgreen}{664.91} & 634.21 \\
+ & \href{https://github.com/apache/kafka/commit/4fa5bdc}{4fa5bdc} & 4.54 & 3.95 & 4.34 & 4.10 & 3.79 & 1.10 & - & 1.03 & 1.05 \\
+ & \href{https://github.com/apache/kafka/commit/cfc34ca}{cfc34ca} & 3.95 & - & 3.68 & - & 1.83 & - & - & - & - \\
+ & \href{https://github.com/apache/kafka/commit/e3ccf20}{e3ccf20} & 2.81 & \cellcolor{lightred}{0.96} & \cellcolor{lightred}{0.93} & \cellcolor{lightgreen}{3.45} & \cellcolor{lightgreen}{4.12} & - & - & \cellcolor{lightred}{0.39} & \cellcolor{lightred}{0.91} \\
+ & \href{https://github.com/apache/kafka/commit/c8af740}{c8af740} & 2.10 & \cellcolor{lightgreen}{2.14} & \cellcolor{lightgreen}{2.19} & \cellcolor{lightgreen}{2.18} & \cellcolor{lightgreen}{2.19} & - & 1.13 & 2.07 & - \\
+ & \href{https://github.com/apache/kafka/commit/e2e2c62}{e2e2c62} & 2.04 & 1.66 & - & - & 1.06 & - & \cellcolor{lightred}{0.97} & - & - \\
+ & \href{https://github.com/apache/kafka/commit/c05403f}{c05403f} & 1.55 & 1.24 & 1.24 & 1.52 & 1.24 & 1.30 & 1.23 & 1.29 & 1.54 \\
+ & \href{https://github.com/apache/kafka/commit/922a95a}{922a95a} & 1.28 & 1.14 & \cellcolor{lightgreen}{8.81} & 1.26 & 1.26 & - & - & - & 1.20 \\
+ & \href{https://github.com/apache/kafka/commit/aecd47b}{aecd47b} & 1.05 & \cellcolor{lightgreen}{2.42} & \cellcolor{lightgreen}{2.30} & \cellcolor{lightgreen}{1.06} & \cellcolor{lightgreen}{1.06} & \cellcolor{lightgreen}{2.58} & \cellcolor{lightgreen}{2.43} & \cellcolor{lightgreen}{1.05} & 1.05 \\
+ & Avg & 7.27 & 5.96 & 7.81 & 6.14 & 6.49 & 2.14 & 4.60 & 4.13 & 4.32 \\
+\midrule
+\multirow{11}{*}{\rotatebox[origin=c]{90}{\textbf{Netty}}} & \href{https://github.com/netty/netty/commit/2ed95c9}{2ed95c9} & 6.30 & 1.05 & 1.89 & 1.12 & \cellcolor{lightred}{0.81} & \cellcolor{lightred}{0.99} & - & 2.92 & - \\
+ & \href{https://github.com/netty/netty/commit/87ec2f8}{87ec2f8} & 3.00 & \cellcolor{lightred}{1.00} & 1.01 & 2.50 & 2.52 & - & - & 1.11 & 2.46 \\
+ & \href{https://github.com/netty/netty/commit/b2eaab0}{b2eaab0} & 1.80 & 1.00 & 1.00 & 1.00 & 1.52 & 1.03 & 1.10 & 1.05 & 1.04 \\
+ & \href{https://github.com/netty/netty/commit/83a19d5}{83a19d5} & 1.71 & 1.35 & \cellcolor{lightred}{0.83} & 1.28 & 1.24 & \cellcolor{lightred}{0.68} & \cellcolor{lightred}{0.61} & \cellcolor{lightred}{0.59} & \cellcolor{lightred}{0.75} \\
+ & \href{https://github.com/netty/netty/commit/2791f0f}{2791f0f} & 1.45 & 1.01 & 1.03 & 1.37 & 1.42 & - & - & 1.18 & \cellcolor{lightgreen}{1.47} \\
+ & \href{https://github.com/netty/netty/commit/67d3a78}{67d3a78} & 1.25 & \cellcolor{lightred}{0.99} & 1.07 & 1.22 & 1.02 & - & \cellcolor{lightred}{0.91} & \cellcolor{lightgreen}{1.28} & \cellcolor{lightgreen}{1.25} \\
+ & \href{https://github.com/netty/netty/commit/deea51e}{deea51e} & 1.25 & \cellcolor{lightred}{1.00} & 1.13 & 1.11 & 1.25 & - & - & - & - \\
+ & \href{https://github.com/netty/netty/commit/5a9b28a}{5a9b28a} & 1.21 & \cellcolor{lightred}{0.95} & 1.14 & 1.09 & 1.08 & \cellcolor{lightred}{0.38} & \cellcolor{lightred}{0.58} & \cellcolor{lightred}{0.34} & \cellcolor{lightred}{0.80} \\
+ & \href{https://github.com/netty/netty/commit/8a8337e}{8a8337e} & 1.19 & 1.06 & 1.04 & 1.11 & 1.01 & 1.04 & 1.14 & \cellcolor{lightgreen}{1.30} & \cellcolor{lightgreen}{1.21} \\
+ & \href{https://github.com/netty/netty/commit/feb804d}{feb804d} & 1.10 & 1.07 & 1.09 & 1.08 & \cellcolor{lightgreen}{1.11} & \cellcolor{lightred}{0.67} & - & \cellcolor{lightred}{0.65} & \cellcolor{lightred}{0.69} \\
+ & Avg & 1.71 & 1.04 & 1.10 & 1.24 & 1.24 & 0.84 & 0.91 & 0.98 & 1.09 \\
+\midrule
+\multirow{20}{*}{\rotatebox[origin=c]{90}{\textbf{Presto}}} & \href{https://github.com/prestodb/presto/commit/bfb18d6}{bfb18d6} & 145169.44 & 1.03 & 1.03 & 1.03 & 117653.53 & 1.03 & 1.03 & 1.04 & - \\
+ & \href{https://github.com/prestodb/presto/commit/20dcaed}{20dcaed} & 2142.71 & 2119.50 & 2126.92 & 2129.77 & 2136.70 & - & - & - & - \\
+ & \href{https://github.com/prestodb/presto/commit/239f726}{239f726} & 1033.72 & \cellcolor{lightred}{1.00} & \cellcolor{lightgreen}{1087.83} & \cellcolor{lightred}{1.00} & 1.03 & - & 1.02 & \cellcolor{lightgreen}{1060.24} & \cellcolor{lightgreen}{1087.03} \\
+ & \href{https://github.com/prestodb/presto/commit/8d7f587}{8d7f587} & 136.32 & - & 1.01 & 130.84 & 132.86 & - & - & - & - \\
+ & \href{https://github.com/prestodb/presto/commit/ee74e4b}{ee74e4b} & 38.54 & 1.00 & 1.00 & 1.00 & - & - & \cellcolor{lightred}{0.99} & \cellcolor{lightred}{0.99} & \cellcolor{lightred}{0.99} \\
+ & \href{https://github.com/prestodb/presto/commit/8abba9e}{8abba9e} & 30.27 & - & 30.05 & - & - & - & - & - & - \\
+ & \href{https://github.com/prestodb/presto/commit/3f63ade}{3f63ade} & 12.86 & \cellcolor{lightred}{0.98} & \cellcolor{lightred}{0.93} & 7.27 & 8.41 & 1.03 & - & - & - \\
+ & \href{https://github.com/prestodb/presto/commit/46d219f}{46d219f} & 10.12 & \cellcolor{lightred}{0.97} & 1.01 & 10.03 & 10.02 & - & - & - & - \\
+ & \href{https://github.com/prestodb/presto/commit/a26f440}{a26f440} & 9.66 & \cellcolor{lightred}{0.98} & \cellcolor{lightred}{0.89} & \cellcolor{lightred}{1.00} & \cellcolor{lightred}{0.99} & \cellcolor{lightred}{0.96} & \cellcolor{lightred}{0.96} & - & \cellcolor{lightred}{0.95} \\
+ & \href{https://github.com/prestodb/presto/commit/4e71bf3}{4e71bf3} & 2.45 & 1.75 & 1.83 & 2.27 & 2.33 & 1.19 & 1.02 & - & 1.94 \\
+ & \href{https://github.com/prestodb/presto/commit/3a4f2e3}{3a4f2e3} & 1.89 & \cellcolor{lightred}{1.00} & 1.00 & 1.10 & 1.11 & 1.21 & 1.02 & 1.05 & 1.07 \\
+ & \href{https://github.com/prestodb/presto/commit/6908344}{6908344} & 1.87 & \cellcolor{lightred}{0.97} & - & 1.86 & \cellcolor{lightgreen}{2.22} & - & - & - & - \\
+ & \href{https://github.com/prestodb/presto/commit/9e010a7}{9e010a7} & 1.80 & \cellcolor{lightred}{0.98} & \cellcolor{lightred}{0.92} & \cellcolor{lightred}{0.87} & \cellcolor{lightred}{0.87} & \cellcolor{lightred}{0.90} & \cellcolor{lightred}{0.74} & \cellcolor{lightred}{0.74} & \cellcolor{lightred}{0.77} \\
+ & \href{https://github.com/prestodb/presto/commit/53aa7f6}{53aa7f6} & 1.40 & 1.01 & 1.00 & 1.00 & 1.00 & 1.00 & 1.00 & 1.01 & \cellcolor{lightred}{0.99} \\
+ & \href{https://github.com/prestodb/presto/commit/b54d248}{b54d248} & 1.29 & 1.20 & 1.26 & 1.26 & 1.23 & 1.21 & 1.23 & 1.09 & - \\
+ & \href{https://github.com/prestodb/presto/commit/efd0834}{efd0834} & 1.18 & - & - & \cellcolor{lightred}{1.00} & \cellcolor{lightred}{1.00} & - & - & - & \cellcolor{lightred}{0.98} \\
+ & \href{https://github.com/prestodb/presto/commit/c3cb7a9}{c3cb7a9} & 1.10 & 1.00 & 1.10 & 1.01 & \cellcolor{lightred}{1.00} & \cellcolor{lightred}{0.96} & \cellcolor{lightred}{0.99} & 1.09 & \cellcolor{lightred}{0.98} \\
+ & \href{https://github.com/prestodb/presto/commit/297b089}{297b089} & 1.07 & 1.04 & 1.00 & 1.02 & 1.04 & 1.06 & 1.00 & 1.05 & \cellcolor{lightgreen}{1.07} \\
+ & \href{https://github.com/prestodb/presto/commit/659c3ee}{659c3ee} & 1.06 & \cellcolor{lightgreen}{1.08} & 1.01 & - & - & 1.05 & 1.05 & \cellcolor{lightred}{0.99} & \cellcolor{lightgreen}{1.07} \\
+ & Avg & 13.42 & 1.56 & 2.69 & 2.65 & 4.99 & 1.03 & 1.00 & 1.44 & 1.48 \\
+\midrule
+ & Overall & 5.86 & 1.94 & 2.62 & 2.51 & 3.42 & 1.18 & 1.45 & 1.67 & 1.72 \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
