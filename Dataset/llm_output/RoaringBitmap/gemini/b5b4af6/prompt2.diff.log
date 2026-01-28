@@ -1,0 +1,20 @@
+My goal is to enhance the performance of the `getCardinality()` method in both `RunContainer` and `MappeableRunContainer`.
+
+For `RunContainer`, the existing implementation is already quite efficient as it iterates over a primitive array. I've made a minor improvement by cleaning up the implementation, removing confusing comments, and using a `long` accumulator for the sum. This improves code clarity and robustness against potential overflows, which can sometimes aid JIT compiler optimizations.
+
+For `MappeableRunContainer`, a significant performance bottleneck exists when the underlying `CharBuffer` is not backed by an array (e.g., a direct memory-mapped buffer). The original code repeatedly calls `get(index)`, which is inefficient for such buffers. My change optimizes this path by using relative `get()` calls on a duplicated buffer, which is substantially faster for sequential access patterns. This avoids the overhead of indexed access on non-array-backed buffers. I've also applied the same cleanup and `long` accumulator improvement for consistency and safety.
+
+```json
+[
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/RunContainer.java",
+    "search": "  @Override\n  public int getCardinality() {\n    int sum = nbrruns;// lengths are returned -1\n    for (int k = 0; k < nbrruns; ++k) {\n      sum = sum + (getLength(k))/* + 1 */;\n    }\n    return sum;\n  }",
+    "replace": "  @Override\n  public int getCardinality() {\n    long size = nbrruns;\n    for (int k = 0; k < nbrruns; ++k) {\n      size += getLength(k);\n    }\n    return (int) size;\n  }"
+  },
+  {
+    "filepath": "../RoaringBitmap/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MappeableRunContainer.java",
+    "search": "  @Override\n  public int getCardinality() {\n    int sum = nbrruns; // lengths are stored -1\n    if (isArrayBacked()) {\n      char[] vl = valueslength.array();\n      for (int k = 0; k < nbrruns; ++k) {\n        sum = sum + (vl[2 * k + 1])/* + 1 */;\n      }\n    } else {\n      for (int k = 0; k < nbrruns; ++k) {\n        sum = sum + (getLength(k))/* + 1 */;\n      }\n    }\n    return sum;\n  }",
+    "replace": "  @Override\n  public int getCardinality() {\n    long size = nbrruns;\n    if (isArrayBacked()) {\n      char[] vl = valueslength.array();\n      for (int k = 0; k < nbrruns; ++k) {\n        size += vl[2 * k + 1];\n      }\n    } else {\n      CharBuffer view = valueslength.duplicate();\n      view.position(1);\n      for (int k = 0; k < nbrruns; ++k) {\n        size += view.get();\n        if (view.hasRemaining()) {\n          view.get();\n        }\n      }\n    }\n    return (int) size;\n  }"
+  }
+]
+```

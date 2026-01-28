@@ -1,0 +1,118 @@
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/RunContainer.java b/RoaringBitmap/src/main/java/org/roaringbitmap/RunContainer.java
+index dc605afc..fe0bc122 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/RunContainer.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/RunContainer.java
+@@ -381,7 +381,7 @@ public final class RunContainer extends Container implements Cloneable {
+   public Container and(RunContainer x) {
+     int maxRunsAfterIntersection = nbrruns + x.nbrruns;
+     RunContainer answer = new RunContainer(new char[2 * maxRunsAfterIntersection], 0);
+-    if (isEmpty()) {
++    if (this.nbrruns == 0 || x.nbrruns == 0) {
+       return answer;
+     }
+     int rlepos = 0;
+@@ -458,7 +458,7 @@ public final class RunContainer extends Container implements Cloneable {
+   @Override
+   public int andCardinality(ArrayContainer x) {
+     if (this.nbrruns == 0) {
+-      return x.cardinality;
++      return 0;
+     }
+     int rlepos = 0;
+     int arraypos = 0;
+@@ -500,6 +500,9 @@ public final class RunContainer extends Container implements Cloneable {
+ 
+   @Override
+   public int andCardinality(RunContainer x) {
++    if (this.nbrruns == 0 || x.nbrruns == 0) {
++      return 0;
++    }
+     int cardinality = 0;
+     int rlepos = 0;
+     int xrlepos = 0;
+@@ -1006,9 +1009,9 @@ public final class RunContainer extends Container implements Cloneable {
+ 
+   @Override
+   public int getCardinality() {
+-    int sum = nbrruns;// lengths are returned -1
+-    for (int k = 0; k < nbrruns; ++k) {
+-      sum = sum + (getLength(k))/* + 1 */;
++    int sum = nbrruns;
++    for (int k = 1; k < 2 * nbrruns; k += 2) {
++      sum += valueslength[k];
+     }
+     return sum;
+   }
+@@ -1414,6 +1417,9 @@ public final class RunContainer extends Container implements Cloneable {
+ 
+   @Override
+   public boolean intersects(RunContainer x) {
++    if (this.nbrruns == 0 || x.nbrruns == 0) {
++      return false;
++    }
+     int rlepos = 0;
+     int xrlepos = 0;
+     int start = this.getValue(rlepos);
+@@ -1715,7 +1721,7 @@ public final class RunContainer extends Container implements Cloneable {
+ 
+   private RunContainer lazyandNot(ArrayContainer x) {
+     if (x.isEmpty()) {
+-      return this;
++      return (RunContainer) this.clone();
+     }
+     RunContainer answer = new RunContainer(new char[2 * (this.nbrruns + x.cardinality)], 0);
+     int rlepos = 0;
+diff --git a/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MappeableRunContainer.java b/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MappeableRunContainer.java
+index 28c87f31..383272bb 100644
+--- a/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MappeableRunContainer.java
++++ b/RoaringBitmap/src/main/java/org/roaringbitmap/buffer/MappeableRunContainer.java
+@@ -473,6 +473,9 @@ public final class MappeableRunContainer extends MappeableContainer implements C
+   public MappeableContainer and(MappeableRunContainer x) {
+     MappeableRunContainer answer =
+         new MappeableRunContainer(CharBuffer.allocate(2 * (this.nbrruns + x.nbrruns)), 0);
++    if (this.nbrruns == 0 || x.nbrruns == 0) {
++      return answer;
++    }
+     char[] vl = answer.valueslength.array();
+     int rlepos = 0;
+     int xrlepos = 0;
+@@ -916,8 +919,8 @@ public final class MappeableRunContainer extends MappeableContainer implements C
+     int sum = nbrruns; // lengths are stored -1
+     if (isArrayBacked()) {
+       char[] vl = valueslength.array();
+-      for (int k = 0; k < nbrruns; ++k) {
+-        sum = sum + (vl[2 * k + 1])/* + 1 */;
++      for (int k = 1; k < 2 * nbrruns; k += 2) {
++        sum += vl[k];
+       }
+     } else {
+       for (int k = 0; k < nbrruns; ++k) {
+@@ -1337,6 +1340,9 @@ public final class MappeableRunContainer extends MappeableContainer implements C
+ 
+   @Override
+   public boolean intersects(MappeableRunContainer x) {
++    if (this.nbrruns == 0 || x.nbrruns == 0) {
++      return false;
++    }
+     int rlepos = 0;
+     int xrlepos = 0;
+     int start = (this.getValue(rlepos));
+@@ -1634,7 +1640,7 @@ public final class MappeableRunContainer extends MappeableContainer implements C
+ 
+   private MappeableRunContainer lazyandNot(MappeableArrayContainer x) {
+     if (x.isEmpty()) {
+-      return this;
++      return (MappeableRunContainer) this.clone();
+     }
+     MappeableRunContainer answer =
+         new MappeableRunContainer(CharBuffer.allocate(2 * (this.nbrruns + x.cardinality)), 0);
+@@ -2528,6 +2534,9 @@ public final class MappeableRunContainer extends MappeableContainer implements C
+ 
+   @Override
+   public int andCardinality(MappeableRunContainer x) {
++    if (this.nbrruns == 0 || x.nbrruns == 0) {
++      return 0;
++    }
+     int cardinality = 0;
+     int rlepos = 0;
+     int xrlepos = 0;
